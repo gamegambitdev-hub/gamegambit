@@ -1,13 +1,11 @@
 import { motion } from 'framer-motion';
 import { Trophy, Medal, TrendingUp, Crown, Flame, Loader2 } from 'lucide-react';
-import { Header } from '@/components/layout/Header';
-import { Footer } from '@/components/landing/Footer';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { truncateAddress, formatSol } from '@/lib/constants';
 import { useLeaderboard, Player } from '@/hooks/usePlayer';
-import { PageTransition, staggerContainer, staggerItem } from '@/components/PageTransition';
+import { staggerContainer, staggerItem } from '@/components/PageTransition';
 
 const getRankIcon = (rank: number) => {
   switch (rank) {
@@ -145,107 +143,101 @@ export default function Leaderboard() {
   const { data: streakData, isLoading: streakLoading } = useLeaderboard('streak');
 
   return (
-    <PageTransition>
-      <div className="min-h-screen bg-background">
-        <Header />
-        <main className="pt-24 pb-16">
-          <div className="container px-4">
-            <div className="text-center mb-12">
-              <motion.h1
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-4xl font-bold mb-4"
-              >
-                <span className="gradient-text-gold">Leaderboard</span>
-              </motion.h1>
-              <motion.p
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="text-muted-foreground"
-              >
-                Top players ranked by earnings and win rate
-              </motion.p>
-            </div>
+    <div className="py-8 pb-16">
+      <div className="container px-4">
+        <div className="text-center mb-12">
+          <motion.h1
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-4xl font-bold mb-4"
+          >
+            <span className="gradient-text-gold">Leaderboard</span>
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="text-muted-foreground"
+          >
+            Top players ranked by earnings and win rate
+          </motion.p>
+        </div>
 
-            {/* Top 3 Podium */}
-            {earningsData && earningsData.length >= 3 && <Podium players={earningsData} />}
+        {/* Top 3 Podium */}
+        {earningsData && earningsData.length >= 3 && <Podium players={earningsData} />}
 
-            {/* Tabs */}
-            <Tabs defaultValue="earnings" className="max-w-4xl mx-auto">
-              <TabsList className="bg-muted/50 mb-6 grid grid-cols-3 w-full max-w-md mx-auto">
-                <TabsTrigger value="earnings" className="font-gaming">
-                  <TrendingUp className="h-4 w-4 mr-2" />
-                  Earnings
-                </TabsTrigger>
-                <TabsTrigger value="wins" className="font-gaming">
-                  <Trophy className="h-4 w-4 mr-2" />
-                  Wins
-                </TabsTrigger>
-                <TabsTrigger value="streak" className="font-gaming">
-                  <Flame className="h-4 w-4 mr-2" />
-                  Streak
-                </TabsTrigger>
-              </TabsList>
+        {/* Tabs */}
+        <Tabs defaultValue="earnings" className="max-w-4xl mx-auto">
+          <TabsList className="bg-muted/50 mb-6 grid grid-cols-3 w-full max-w-md mx-auto">
+            <TabsTrigger value="earnings" className="font-gaming">
+              <TrendingUp className="h-4 w-4 mr-2" />
+              Earnings
+            </TabsTrigger>
+            <TabsTrigger value="wins" className="font-gaming">
+              <Trophy className="h-4 w-4 mr-2" />
+              Wins
+            </TabsTrigger>
+            <TabsTrigger value="streak" className="font-gaming">
+              <Flame className="h-4 w-4 mr-2" />
+              Streak
+            </TabsTrigger>
+          </TabsList>
 
-              <TabsContent value="earnings">
-                {earningsLoading ? (
-                  <div className="flex justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  </div>
-                ) : earningsData && earningsData.length > 0 ? (
-                  <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
-                    {earningsData.map((player, index) => (
-                      <motion.div key={player.wallet_address} variants={staggerItem}>
-                        <LeaderboardRow player={player} rank={index + 1} sortBy="earnings" />
-                      </motion.div>
-                    ))}
+          <TabsContent value="earnings">
+            {earningsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : earningsData && earningsData.length > 0 ? (
+              <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
+                {earningsData.map((player, index) => (
+                  <motion.div key={player.wallet_address} variants={staggerItem}>
+                    <LeaderboardRow player={player} rank={index + 1} sortBy="earnings" />
                   </motion.div>
-                ) : (
-                  <EmptyLeaderboard />
-                )}
-              </TabsContent>
+                ))}
+              </motion.div>
+            ) : (
+              <EmptyLeaderboard />
+            )}
+          </TabsContent>
 
-              <TabsContent value="wins">
-                {winsLoading ? (
-                  <div className="flex justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  </div>
-                ) : winsData && winsData.length > 0 ? (
-                  <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
-                    {winsData.map((player, index) => (
-                      <motion.div key={player.wallet_address} variants={staggerItem}>
-                        <LeaderboardRow player={player} rank={index + 1} sortBy="wins" />
-                      </motion.div>
-                    ))}
+          <TabsContent value="wins">
+            {winsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : winsData && winsData.length > 0 ? (
+              <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
+                {winsData.map((player, index) => (
+                  <motion.div key={player.wallet_address} variants={staggerItem}>
+                    <LeaderboardRow player={player} rank={index + 1} sortBy="wins" />
                   </motion.div>
-                ) : (
-                  <EmptyLeaderboard />
-                )}
-              </TabsContent>
+                ))}
+              </motion.div>
+            ) : (
+              <EmptyLeaderboard />
+            )}
+          </TabsContent>
 
-              <TabsContent value="streak">
-                {streakLoading ? (
-                  <div className="flex justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  </div>
-                ) : streakData && streakData.length > 0 ? (
-                  <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
-                    {streakData.map((player, index) => (
-                      <motion.div key={player.wallet_address} variants={staggerItem}>
-                        <LeaderboardRow player={player} rank={index + 1} sortBy="streak" />
-                      </motion.div>
-                    ))}
+          <TabsContent value="streak">
+            {streakLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : streakData && streakData.length > 0 ? (
+              <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
+                {streakData.map((player, index) => (
+                  <motion.div key={player.wallet_address} variants={staggerItem}>
+                    <LeaderboardRow player={player} rank={index + 1} sortBy="streak" />
                   </motion.div>
-                ) : (
-                  <EmptyLeaderboard />
-                )}
-              </TabsContent>
-            </Tabs>
-          </div>
-        </main>
-        <Footer />
+                ))}
+              </motion.div>
+            ) : (
+              <EmptyLeaderboard />
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
-    </PageTransition>
+    </div>
   );
 }
