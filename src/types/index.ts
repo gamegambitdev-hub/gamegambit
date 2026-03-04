@@ -4,6 +4,7 @@
  */
 
 import { Database } from '@/integrations/supabase/types'
+import type { Gamegambit } from '@/lib/idl/gamegambit'
 
 /**
  * SUPABASE TABLE TYPES (auto-generated, re-exported for convenience)
@@ -35,60 +36,202 @@ export const GAME_TYPES = ['chess', 'codm', 'pubg'] as const
 export const WAGER_STATUSES = ['created', 'joined', 'voting', 'retractable', 'disputed', 'resolved'] as const
 
 /**
- * SOLANA PROGRAM IDL TYPES
+ * SOLANA PROGRAM IDL EXPORTS
+ * Re-exported for type-safe program interactions
  */
-export interface SolanaPlayerAccount {
-  wallet: string
-  totalWins: number
-  totalLosses: number
-  totalEarnings: number // in lamports
-  totalWagered: number // in lamports
-  isBanned: boolean
-  banExpiresAt: number | null // Unix timestamp
-  createdAt: number // Unix timestamp
-  bumps: {
-    playerBump: number
-  }
+export type GameGambitIDL = Gamegambit
+export const PROGRAM_ADDRESS = 'E2Vd3U91kMrgwp8JCXcLSn7bt3NowDmGwoBYsVRhGfMR'
+
+/**
+ * INSTRUCTION DISCRIMINATORS (from IDL)
+ */
+export const INSTRUCTION_DISCRIMINATORS = {
+  initialize_player: [79, 249, 88, 177, 220, 62, 56, 128],
+  create_wager: [210, 82, 178, 75, 253, 34, 84, 120],
+  join_wager: [119, 81, 120, 160, 80, 8, 75, 239],
+  resolve_wager: [31, 179, 1, 228, 83, 224, 1, 123],
+  close_wager: [167, 240, 85, 147, 127, 50, 69, 203],
+  submit_vote: [115, 242, 100, 0, 49, 178, 242, 133],
+  retract_vote: [227, 0, 85, 234, 243, 42, 133, 162],
+  ban_player: [20, 123, 183, 191, 29, 55, 244, 21],
+} as const
+
+/**
+ * EVENT DISCRIMINATORS (from IDL)
+ */
+export const EVENT_DISCRIMINATORS = {
+  wager_created: [177, 41, 34, 111, 170, 96, 157, 62],
+  wager_joined: [74, 213, 37, 114, 201, 144, 6, 12],
+  wager_resolved: [166, 83, 14, 127, 130, 175, 204, 13],
+  wager_closed: [157, 212, 28, 112, 6, 143, 187, 185],
+  vote_submitted: [21, 54, 43, 190, 87, 214, 250, 218],
+  vote_retracted: [48, 194, 255, 216, 156, 13, 121, 241],
+  player_banned: [164, 0, 117, 147, 4, 138, 149, 196],
+} as const
+
+/**
+ * ACCOUNT DISCRIMINATORS (from IDL)
+ */
+export const ACCOUNT_DISCRIMINATORS = {
+  player_profile: [82, 226, 99, 87, 164, 130, 181, 80],
+  wager_account: [43, 206, 233, 140, 104, 50, 20, 243],
+} as const
+
+/**
+ * WAGER STATUS ENUM (from IDL)
+ */
+export enum SolanaWagerStatus {
+  Created = 0,
+  Joined = 1,
+  Voting = 2,
+  Retractable = 3,
+  Disputed = 4,
+  Closed = 5,
+  Resolved = 6,
 }
 
-export interface SolanaWagerAccount {
-  id: string
-  playerA: string
-  playerB: string | null
-  game: number // Enum index
-  stakeAmount: number // in lamports
-  status: number // Enum index (0=Created, 1=Joined, 2=Voting, etc.)
-  createdAt: number // Unix timestamp
-  countdownStartedAt: number | null
-  winner: string | null
-  platformFeeCollected: boolean
-  bumps: {
-    wagerBump: number
-  }
+export const WAGER_STATUS_NAMES: Record<SolanaWagerStatus, string> = {
+  [SolanaWagerStatus.Created]: 'Created',
+  [SolanaWagerStatus.Joined]: 'Joined',
+  [SolanaWagerStatus.Voting]: 'Voting',
+  [SolanaWagerStatus.Retractable]: 'Retractable',
+  [SolanaWagerStatus.Disputed]: 'Disputed',
+  [SolanaWagerStatus.Closed]: 'Closed',
+  [SolanaWagerStatus.Resolved]: 'Resolved',
 }
 
 /**
- * IDL INSTRUCTION TYPES
+ * SOLANA PROGRAM ERRORS (from IDL)
  */
-export interface CreateWagerInstruction {
-  wagerId: string
-  gameType: number
-  stakeAmount: number
+export enum SolanaErrorCode {
+  InvalidStatus = 6000,
+  Unauthorized = 6001,
+  RetractPeriodNotExpired = 6002,
+  RetractExpired = 6003,
+  InvalidAmount = 6004,
+  InvalidMatchId = 6005,
+  LichessGameIdTooLong = 6006,
+  InvalidVote = 6007,
+  AlreadyVoted = 6008,
+  InvalidWinner = 6009,
+  InvalidPlayer = 6010,
+  PlayerBanned = 6011,
+  WagerExpired = 6012,
+  InvalidPlatformWallet = 6013,
+  ArithmeticOverflow = 6014,
+  InsufficientFunds = 6015,
 }
 
-export interface JoinWagerInstruction {
-  wagerId: string
+/**
+ * SOLANA PROGRAM ACCOUNT TYPES
+ */
+export interface PlayerProfile {
+  player: string // pubkey
+  isBanned: boolean
+  banExpiresAt: number // i64 (Unix timestamp or 0)
+  lastActive: number // i64 (Unix timestamp)
+  bump: number
 }
 
-export interface SubmitVoteInstruction {
-  wagerId: string
-  voteForPlayerA: boolean
+export interface WagerAccount {
+  bump: number
+  playerA: string // pubkey
+  playerB: string // pubkey (or system program if not joined)
+  matchId: number // u64
+  stakeLamports: number // u64
+  lichessGameId: string
+  status: SolanaWagerStatus
+  requiresModerator: boolean
+  votePlayerA: string | null // Option<pubkey>
+  votePlayerB: string | null // Option<pubkey>
+  winner: string | null // Option<pubkey>
+  voteTimestamp: number // i64
+  retractDeadline: number // i64
+  createdAt: number // i64
+  expiresAt: number // i64
+  resolvedAt: number // i64
 }
 
-export interface ResolveWagerInstruction {
+/**
+ * SOLANA EVENT TYPES (from IDL)
+ */
+export interface WagerCreatedEvent {
+  wagerId: string
+  playerA: string
+  matchId: number
+  stakeLamports: number
+}
+
+export interface WagerJoinedEvent {
+  wagerId: string
+  playerB: string
+  stakeLamports: number
+}
+
+export interface WagerResolvedEvent {
   wagerId: string
   winner: string
+  playerA: string
+  playerB: string
+  totalPayout: number
+  platformFee: number
 }
+
+export interface WagerClosedEvent {
+  wagerId: string
+  closedBy: string
+}
+
+export interface VoteSubmittedEvent {
+  wagerId: string
+  player: string
+  votedWinner: string
+}
+
+export interface VoteRetractedEvent {
+  wagerId: string
+  player: string
+}
+
+export interface PlayerBannedEvent {
+  player: string
+  isBanned: boolean
+  banExpiresAt: number
+}
+
+/**
+ * SOLANA INSTRUCTION TYPES (from IDL)
+ */
+export interface InitializePlayerInstruction {
+  // No args
+}
+
+export interface CreateWagerInstructionArgs {
+  matchId: number
+  stakeLamports: number
+  lichessGameId: string
+  requiresModerator: boolean
+}
+
+export interface JoinWagerInstructionArgs {
+  stakeLamports: number
+}
+
+export interface SubmitVoteInstructionArgs {
+  votedWinner: string
+}
+
+export interface ResolveWagerInstructionArgs {
+  winner: string
+}
+
+export interface BanPlayerInstructionArgs {
+  banDuration: number // i64
+}
+
+/**
+ * DERIVED / CALCULATED TYPES
+ */
 
 /**
  * DOMAIN TYPES - Application-specific models
