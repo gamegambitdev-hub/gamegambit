@@ -468,3 +468,25 @@ export type Async<T> = Promise<T>
 export type Result<T, E = Error> =
   | { ok: true; value: T }
   | { ok: false; error: E }
+
+/**
+ * UTILITY FUNCTIONS
+ */
+
+/**
+ * Convert lamports (smallest SOL unit) to SOL
+ * @param lamports - Amount in lamports
+ * @returns Amount in SOL
+ */
+export function lamportsToSol(lamports: number): number {
+  return lamports / 1_000_000_000
+}
+
+/**
+ * Convert SOL to lamports
+ * @param sol - Amount in SOL
+ * @returns Amount in lamports
+ */
+export function solToLamports(sol: number): number {
+  return Math.round(sol * 1_000_000_000)
+}
