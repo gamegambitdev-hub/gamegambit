@@ -14,17 +14,11 @@ import {
   lamportsToSol,
 } from '@/types'
 import {
-  getGameGambitProgram,
-  deriveWagerAccountPDA,
-  buildCreateWagerInstruction,
   validateWagerArgs,
 } from '@/lib/solana-program-utils'
-import { withRateLimit } from '@/lib/rate-limiting'
-import { withDatabaseOptimization } from '@/lib/database-optimization'
-import { withDataConsistency } from '@/lib/data-consistency'
 
 /**
- * POST /api/wagers/create
+ * POST /api/wagers
  * Create a new wager on-chain and sync to database
  */
 export async function POST(request: NextRequest) {
@@ -83,9 +77,6 @@ export async function POST(request: NextRequest) {
         'Player is banned'
       )
     }
-
-    // Derive wager PDA (this would happen on-chain, shown here for reference)
-    // const [wagerPDA] = deriveWagerAccountPDA(new PublicKey(playerWallet), matchId)
 
     // Create database record (will be updated after on-chain confirmation)
     const { data: newWager, error: wagerError } = await supabase
@@ -147,45 +138,45 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * GET /api/wagers/[wagerId]
- * Fetch wager details with proper type safety
+ * GET /api/wagers
+ * Fetch list of wagers with pagination
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { wagerId: string } }
-) {
+export async function GET(request: NextRequest) {
   try {
+    const searchParams = request.nextUrl.searchParams
+    const limit = Math.min(parseInt(searchParams.get('limit') || '10'), 100)
+    const offset = parseInt(searchParams.get('offset') || '0')
+    const playerWallet = searchParams.get('playerWallet')
+
     const supabase = createClient()
 
-    const { data: wager, error } = await supabase
+    let query = supabase
       .from('wagers')
       .select(`
         *,
         players!player_a_wallet(username, avatar),
         player_b:players!player_b_wallet(username, avatar)
       `)
-      .eq('id', params.wagerId)
-      .single()
 
-    if (error || !wager) {
+    if (playerWallet) {
+      query = query.or(`player_a_wallet.eq.${playerWallet},player_b_wallet.eq.${playerWallet}`)
+    }
+
+    const { data: wagers, error } = await query
+      .range(offset, offset + limit - 1)
+      .order('created_at', { ascending: false })
+
+    if (error) {
       throw new GameGambitError(
-        ERROR_CODES.WAGER_NOT_FOUND.code,
-        ERROR_CODES.WAGER_NOT_FOUND.statusCode,
-        'Wager not found'
+        ERROR_CODES.DATABASE_ERROR.code,
+        ERROR_CODES.DATABASE_ERROR.statusCode,
+        'Failed to fetch wagers'
       )
     }
 
     return NextResponse.json({
       success: true,
-      data: {
-        wager,
-        displayData: {
-          stakeInSol: lamportsToSol(wager.stake_amount),
-          status: wager.status,
-          playerA: wager.players?.username || wager.player_a_wallet,
-          playerB: wager.player_b?.username || wager.player_b_wallet,
-        },
-      },
+      data: wagers || [],
     })
   } catch (error) {
     if (error instanceof GameGambitError) {
