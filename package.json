@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
+    "@eslint/js": "^10.0.1",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
@@ -50,7 +51,9 @@
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "framer-motion": "^12.23.25",
+    "globals": "^17.4.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
     "next": "^15.0.0",
@@ -64,6 +67,7 @@
     "sonner": "^1.7.4",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
+    "typescript-eslint": "^8.56.1",
     "vaul": "^0.9.9",
     "zod": "^3.25.76"
   },
