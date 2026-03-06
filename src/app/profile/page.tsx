@@ -3,7 +3,12 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import dynamic from 'next/dynamic'
+
+const WalletMultiButton = dynamic(
+  () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
+  { ssr: false }
+)
 import { User, Trophy, Swords, Clock, Copy, Check, Loader2, Wallet, Edit2, Save, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
