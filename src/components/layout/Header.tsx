@@ -1,7 +1,7 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { motion } from 'framer-motion'
 import { Gamepad2, Menu, X, User } from 'lucide-react'
 import { useState } from 'react'
@@ -12,6 +12,11 @@ import { cn } from '@/lib/utils'
 import { truncateAddress } from '@/lib/constants'
 import { NotificationsDropdown } from '@/components/NotificationsDropdown'
 import { ThemeToggle } from '@/components/ThemeToggle'
+
+const WalletMultiButton = dynamic(
+  () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
+  { ssr: false }
+)
 
 const navItems = [
   { label: 'Dashboard', href: '/dashboard' },
@@ -80,7 +85,7 @@ export function Header() {
                 </Link>
               </>
             )}
-            
+
             {/* Custom styled wallet button */}
             <div className="[&_.wallet-adapter-button]:!bg-primary [&_.wallet-adapter-button]:!text-primary-foreground [&_.wallet-adapter-button]:!font-gaming [&_.wallet-adapter-button]:!text-xs [&_.wallet-adapter-button]:sm:!text-sm [&_.wallet-adapter-button]:!rounded-xl [&_.wallet-adapter-button]:!h-9 [&_.wallet-adapter-button]:sm:!h-10 [&_.wallet-adapter-button]:!px-3 [&_.wallet-adapter-button]:sm:!px-4 [&_.wallet-adapter-button]:hover:!shadow-neon [&_.wallet-adapter-button]:!transition-all">
               <WalletMultiButton />
@@ -128,7 +133,7 @@ export function Header() {
                   )}
                 </Link>
               )}
-              
+
               {navItems.map((item) => {
                 const isActive = pathname === item.href
                 return (
