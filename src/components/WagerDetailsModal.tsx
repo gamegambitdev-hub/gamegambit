@@ -70,7 +70,7 @@ export function WagerDetailsModal({
 
   const game = getGameData(wager.game);
   const timeDiff = Math.floor((Date.now() - new Date(wager.created_at).getTime()) / 60000);
-  const isResolved = wager.status === 'resolved' || wager.status === 'closed';
+  const isResolved = wager.status === 'resolved' || (wager.status as string) === 'closed';
   const isDraw = isResolved && !wager.winner_wallet;
   const winnerWallet = wager.winner_wallet;
 
