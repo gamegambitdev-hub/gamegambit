@@ -202,7 +202,7 @@ export function useCreateWager() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'create', ...wager },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -231,7 +231,7 @@ export function useJoinWager() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'join', wagerId },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -267,7 +267,7 @@ export function useSubmitVote() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'vote', wagerId, votedWinner },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -307,7 +307,7 @@ export function useEditWager() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'edit', wagerId, stake_lamports, lichess_game_id, stream_url, is_public },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -335,7 +335,7 @@ export function useDeleteWager() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'delete', wagerId },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -363,7 +363,7 @@ export function useSetReady() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'setReady', wagerId, ready },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -391,7 +391,7 @@ export function useStartGame() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'startGame', wagerId },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -440,7 +440,7 @@ export function useCheckGameComplete() {
 
       const { data, error } = await supabase.functions.invoke('secure-wager', {
         body: { action: 'checkGameComplete', wagerId },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
