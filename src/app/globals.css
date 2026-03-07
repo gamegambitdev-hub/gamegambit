@@ -766,3 +766,132 @@
 .wallet-adapter-modal-title {
   @apply !font-gaming;
 }
+
+/* ============================================
+   MOBILE RESPONSIVENESS FIXES
+   ============================================ */
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+main {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+.container {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Mobile first approach - small screens */
+@media (max-width: 640px) {
+  body {
+    font-size: 14px;
+  }
+
+  main {
+    padding-top: 0.5rem;
+  }
+
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 100%;
+  }
+
+  p, span, h1, h2, h3, h4, h5, h6 {
+    word-break: break-word;
+    overflow-wrap: break-word;
+    hyphens: auto;
+  }
+
+  [class*="card"] {
+    width: 100%;
+    overflow: hidden;
+  }
+
+  button {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  [class*="grid"] {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  input, textarea, select {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  header {
+    overflow-x: hidden;
+  }
+
+  footer {
+    overflow-x: hidden;
+    padding: 1rem;
+  }
+
+  .wallet-adapter-button {
+    width: auto;
+    min-width: auto;
+  }
+
+  nav {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  main {
+    padding-top: 0.5rem;
+  }
+
+  .container {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+@media (max-width: 375px) {
+  body {
+    font-size: 13px;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+  }
+
+  h2 {
+    font-size: 1.25rem;
+  }
+
+  .container {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  button {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+}
