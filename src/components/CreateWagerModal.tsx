@@ -36,13 +36,27 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
   const [error, setError] = useState('');
   const [opponentSearch, setOpponentSearch] = useState('');
   const [selectedOpponent, setSelectedOpponent] = useState<Player | null>(null);
-  
+
   const createWager = useCreateWager();
   const { data: balance } = useWalletBalance();
   const { data: searchResults, isLoading: searchLoading } = useSearchPlayers(opponentSearch);
 
   const stakeLamports = Math.floor(parseFloat(stakeAmount || '0') * 1_000_000_000);
   const balanceLamports = (balance || 0) * 1_000_000_000;
+
+  const handleLichessGameIdChange = (input: string) => {
+    let gameId = input.trim();
+
+    // Auto-extract game ID from full URL
+    if (gameId.includes('lichess.org/')) {
+      const match = gameId.match(/lichess\.org\/([a-zA-Z0-9]+)/);
+      if (match) {
+        gameId = match[1];
+      }
+    }
+
+    setLichessGameId(gameId);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,8 +86,8 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
         is_public: wagerMode === 'open',
         // Note: Challenge specific player would require backend support
       });
-      toast.success(wagerMode === 'challenge' && selectedOpponent 
-        ? `Challenge sent to ${selectedOpponent.username || truncateAddress(selectedOpponent.wallet_address)}!` 
+      toast.success(wagerMode === 'challenge' && selectedOpponent
+        ? `Challenge sent to ${selectedOpponent.username || truncateAddress(selectedOpponent.wallet_address)}!`
         : 'Wager created! Waiting for an opponent...');
       onOpenChange(false);
       onSuccess?.();
@@ -114,7 +128,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
             </div>
           </div>
         </DialogHeader>
-        
+
         <form onSubmit={handleSubmit} className="space-y-6 mt-4">
           {/* Wager Mode Selection */}
           <div className="space-y-2">
@@ -196,9 +210,9 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                       <p className="text-xs text-muted-foreground">{truncateAddress(selectedOpponent.wallet_address)}</p>
                     </div>
                   </div>
-                  <Button 
-                    type="button" 
-                    variant="ghost" 
+                  <Button
+                    type="button"
+                    variant="ghost"
                     size="icon"
                     onClick={handleClearOpponent}
                   >
@@ -296,15 +310,20 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
               </Label>
               <Input
                 id="lichessGameId"
-                placeholder="e.g., AbCdEfGh"
+                placeholder="Paste full URL or just the game code"
                 value={lichessGameId}
-                onChange={(e) => setLichessGameId(e.target.value)}
+                onChange={(e) => handleLichessGameIdChange(e.target.value)}
                 className="bg-background border-border"
                 disabled={createWager.isPending}
               />
-              <p className="text-xs text-muted-foreground">
-                Get ID from your Lichess game URL: <span className="text-primary">lichess.org/</span><span className="text-primary font-medium">AbCdEfGh</span>
-              </p>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">
+                  ✓ Paste full URL: <span className="text-primary font-mono text-[11px]">https://lichess.org/R31kll8h</span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  ✓ Or just the code: <span className="text-primary font-mono text-[11px]">R31kll8h</span>
+                </p>
+              </div>
             </div>
           )}
 
@@ -351,11 +370,11 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
               </div>
             )}
           </div>
-          
-          <Button 
-            type="submit" 
+
+          <Button
+            type="submit"
             variant="neon"
-            className="w-full h-12 text-lg font-gaming" 
+            className="w-full h-12 text-lg font-gaming"
             disabled={createWager.isPending || !stakeAmount}
           >
             {createWager.isPending ? (

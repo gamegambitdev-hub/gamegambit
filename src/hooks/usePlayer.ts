@@ -63,7 +63,7 @@ export function useCreatePlayer() {
 
       const { data, error } = await getSupabaseClient().functions.invoke('secure-player', {
         body: { action: 'create' },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
@@ -94,7 +94,7 @@ export function useUpdatePlayer() {
 
       const { data, error } = await getSupabaseClient().functions.invoke('secure-player', {
         body: { action: 'update', updates },
-        headers: { 'x-wallet-session': sessionToken },
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
       if (error) throw error;
