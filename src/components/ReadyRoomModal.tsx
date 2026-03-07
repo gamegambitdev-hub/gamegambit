@@ -1,26 +1,52 @@
-import { useState, useEffect, useCallback } from 'react';
+/**
+ * ReadyRoomModal.tsx
+ *
+ * Shown after Player B has joined a wager (DB-level join) but BEFORE
+ * on-chain funds are committed. The flow is:
+ *
+ *   1. Both players click "Ready"
+ *   2. Countdown starts (10 s)
+ *   3. At zero:
+ *      - Player A signs create_wager  (deposits stake into PDA escrow)
+ *      - Player B signs join_wager    (deposits matching stake)
+ *   4. Both tx confirmed → wager status → 'joined' on-chain
+ *   5. Modal closes, game link is shared
+ *
+ * The signing popups open sequentially.  Because the two players are on
+ * different devices each sees only THEIR own wallet popup.
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Check, X, Clock, ExternalLink, Swords, Loader2, AlertCircle } from 'lucide-react';
+import { Check, X, Clock, ExternalLink, Swords, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { Wager } from '@/hooks/useWagers';
 import { GAMES, formatSol } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useCreateWagerOnChain, useJoinWagerOnChain } from '@/hooks/useSolanaProgram';
+import { toast } from 'sonner';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ReadyRoomModalProps {
   wager: Wager | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Called when the local player toggles their ready state in Supabase */
   onReady: (ready: boolean) => void;
   onEditWager: () => void;
   isSettingReady?: boolean;
   currentWallet?: string;
 }
 
+type TxState = 'idle' | 'signing' | 'confirmed' | 'error';
+
 const COUNTDOWN_SECONDS = 10;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const getGameData = (game: string) => {
   switch (game) {
@@ -33,92 +59,170 @@ const getGameData = (game: string) => {
 
 const getGameLink = (game: string, gameId: string | null) => {
   if (!gameId) return null;
-  switch (game) {
-    case 'chess': return `https://lichess.org/${gameId}`;
-    default: return null;
-  }
+  if (game === 'chess') return `https://lichess.org/${gameId}`;
+  return null;
 };
 
-export function ReadyRoomModal({ 
-  wager, 
-  open, 
-  onOpenChange, 
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export function ReadyRoomModal({
+  wager,
+  open,
+  onOpenChange,
   onReady,
   onEditWager,
   isSettingReady,
-  currentWallet
+  currentWallet,
 }: ReadyRoomModalProps) {
-  const { data: playerA } = usePlayerByWallet(wager?.player_a_wallet || null);
-  const { data: playerB } = usePlayerByWallet(wager?.player_b_wallet || null);
+  const { data: playerA } = usePlayerByWallet(wager?.player_a_wallet ?? null);
+  const { data: playerB } = usePlayerByWallet(wager?.player_b_wallet ?? null);
+
   const [countdown, setCountdown] = useState<number | null>(null);
   const [localReady, setLocalReady] = useState(false);
+  const [txState, setTxState] = useState<TxState>('idle');
 
-  const isPlayerA = currentWallet === wager?.player_a_wallet;
-  const isPlayerB = currentWallet === wager?.player_b_wallet;
-  const myReadyState = isPlayerA ? wager?.ready_player_a : wager?.ready_player_b;
-  const opponentReadyState = isPlayerA ? wager?.ready_player_b : wager?.ready_player_a;
-  const bothReady = wager?.ready_player_a && wager?.ready_player_b;
+  // Prevent the on-chain call from firing twice if the component re-renders
+  // while the countdown is at 0.
+  const hasTriggeredTx = useRef(false);
 
-  // Handle countdown when both players are ready
-  useEffect(() => {
-    if (bothReady && wager?.countdown_started_at) {
-      const startTime = new Date(wager.countdown_started_at).getTime();
-      
-      const updateCountdown = () => {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const remaining = COUNTDOWN_SECONDS - elapsed;
-        
-        if (remaining <= 0) {
-          setCountdown(0);
-        } else {
-          setCountdown(remaining);
-        }
-      };
+  const createWagerOnChain = useCreateWagerOnChain();
+  const joinWagerOnChain = useJoinWagerOnChain();
 
-      updateCountdown();
-      const interval = setInterval(updateCountdown, 100);
-      return () => clearInterval(interval);
-    } else {
-      setCountdown(null);
-    }
-  }, [bothReady, wager?.countdown_started_at]);
-
-  // Sync local ready state with server state
-  useEffect(() => {
-    setLocalReady(myReadyState || false);
-  }, [myReadyState]);
-
-  const handleReadyClick = useCallback(() => {
-    const newReadyState = !localReady;
-    setLocalReady(newReadyState);
-    onReady(newReadyState);
-  }, [localReady, onReady]);
+  // ── Derived state ──────────────────────────────────────────────────────────
 
   if (!wager) return null;
+
+  const isPlayerA = currentWallet === wager.player_a_wallet;
+  const isPlayerB = currentWallet === wager.player_b_wallet;
+  const myReadyState = isPlayerA ? wager.ready_player_a : wager.ready_player_b;
+  const opponentReadyState = isPlayerA ? wager.ready_player_b : wager.ready_player_a;
+  const bothReady = !!(wager.ready_player_a && wager.ready_player_b);
+
+  // ── Sync local ready with server ───────────────────────────────────────────
+
+  useEffect(() => {
+    setLocalReady(myReadyState ?? false);
+  }, [myReadyState]);
+
+  // Reset tx state when the modal closes
+  useEffect(() => {
+    if (!open) {
+      setTxState('idle');
+      hasTriggeredTx.current = false;
+    }
+  }, [open]);
+
+  // ── Countdown ─────────────────────────────────────────────────────────────
+  // Only runs when both players are ready AND the server set countdown_started_at
+
+  useEffect(() => {
+    if (!bothReady || !wager.countdown_started_at) {
+      setCountdown(null);
+      return;
+    }
+
+    const startTime = new Date(wager.countdown_started_at).getTime();
+
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const remaining = COUNTDOWN_SECONDS - elapsed;
+      setCountdown(remaining <= 0 ? 0 : remaining);
+    };
+
+    tick();
+    const interval = setInterval(tick, 250);
+    return () => clearInterval(interval);
+  }, [bothReady, wager.countdown_started_at]);
+
+  // ── Trigger on-chain tx when countdown hits 0 ─────────────────────────────
+
+  useEffect(() => {
+    if (countdown !== 0 || hasTriggeredTx.current) return;
+    if (!isPlayerA && !isPlayerB) return; // spectator
+    if (txState !== 'idle') return;
+
+    hasTriggeredTx.current = true;
+    triggerOnChainDeposit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown]);
+
+  const triggerOnChainDeposit = useCallback(async () => {
+    if (!wager || !currentWallet) return;
+
+    setTxState('signing');
+
+    try {
+      if (isPlayerA) {
+        // Player A signs create_wager — this is what locks their stake
+        await createWagerOnChain.mutateAsync({
+          matchId: wager.match_id,
+          stakeLamports: wager.stake_lamports,
+          lichessGameId: wager.lichess_game_id ?? '',
+          requiresModerator: wager.requires_moderator,
+        });
+      } else if (isPlayerB) {
+        // Player B signs join_wager — this locks their stake
+        await joinWagerOnChain.mutateAsync({
+          playerAWallet: wager.player_a_wallet,
+          matchId: wager.match_id,
+          stakeLamports: wager.stake_lamports,
+          wagerId: wager.id,
+        });
+      }
+
+      setTxState('confirmed');
+      toast.success('Stake locked in escrow! Game starting…');
+    } catch (err) {
+      setTxState('error');
+      hasTriggeredTx.current = false; // allow retry
+      console.error('On-chain deposit failed:', err);
+    }
+  }, [wager, currentWallet, isPlayerA, isPlayerB, createWagerOnChain, joinWagerOnChain]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleReadyClick = useCallback(() => {
+    const next = !localReady;
+    setLocalReady(next);
+    onReady(next);
+  }, [localReady, onReady]);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   const game = getGameData(wager.game);
   const gameLink = getGameLink(wager.game, wager.lichess_game_id);
 
+  const txStatusLabel = {
+    idle: null,
+    signing: 'Waiting for wallet signature…',
+    confirmed: 'Stake confirmed on-chain ✓',
+    error: 'Transaction failed — please retry',
+  }[txState];
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg border-primary/30 bg-card max-h-[90vh] overflow-y-auto">
+      {/* ⚠️  No Description prop warning fix: pass aria-describedby={undefined} */}
+      <DialogContent
+        className="sm:max-w-lg border-primary/30 bg-card max-h-[90vh] overflow-y-auto"
+        aria-describedby={undefined}
+      >
         <DialogHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 sm:gap-3">
-              <div className="text-3xl sm:text-4xl">{game.icon}</div>
-              <div>
-                <DialogTitle className="text-lg sm:text-xl font-gaming">Ready Room</DialogTitle>
-                <Badge variant="joined">Match Found</Badge>
-              </div>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="text-3xl sm:text-4xl">{game.icon}</div>
+            <div>
+              <DialogTitle className="text-lg sm:text-xl font-gaming">Ready Room</DialogTitle>
+              <Badge variant="joined">Match Found</Badge>
             </div>
           </div>
         </DialogHeader>
 
         <div className="space-y-4 sm:space-y-6 mt-4">
-          {/* Countdown Timer */}
+
+          {/* ── Countdown Timer ─────────────────────────────────────────── */}
           <AnimatePresence>
-            {bothReady && countdown !== null && (
+            {bothReady && countdown !== null && txState === 'idle' && (
               <motion.div
+                key="countdown"
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
@@ -126,116 +230,149 @@ export function ReadyRoomModal({
               >
                 <div className="relative w-20 h-20 sm:w-24 sm:h-24 mx-auto mb-3">
                   <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
-                  <svg className="w-20 h-20 sm:w-24 sm:h-24 transform -rotate-90">
+                  <svg className="w-20 h-20 sm:w-24 sm:h-24 transform -rotate-90" viewBox="0 0 96 96">
                     <circle
-                      cx="40"
-                      cy="40"
-                      r="36"
-                      fill="none"
-                      stroke="hsl(var(--primary))"
-                      strokeWidth="4"
-                      strokeDasharray={`${(countdown / COUNTDOWN_SECONDS) * 226.19} 226.19`}
-                      className="transition-all duration-100 sm:hidden"
-                    />
-                    <circle
-                      cx="48"
-                      cy="48"
-                      r="44"
+                      cx="48" cy="48" r="44"
                       fill="none"
                       stroke="hsl(var(--primary))"
                       strokeWidth="4"
                       strokeDasharray={`${(countdown / COUNTDOWN_SECONDS) * 276.46} 276.46`}
-                      className="transition-all duration-100 hidden sm:block"
+                      className="transition-all duration-250"
                     />
                   </svg>
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-2xl sm:text-3xl font-gaming font-bold text-primary">{countdown}</span>
+                    <span className="text-2xl sm:text-3xl font-gaming font-bold text-primary">
+                      {countdown}
+                    </span>
                   </div>
                 </div>
-                <p className="text-xs sm:text-sm text-muted-foreground">Game starting in...</p>
-                <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">Click "Not Ready" to cancel</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">
+                  {countdown === 0 ? 'Confirm transaction in your wallet…' : 'Game starting in…'}
+                </p>
+                {countdown > 0 && (
+                  <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+                    Click "Not Ready" to cancel
+                  </p>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* Stake Info */}
+          {/* ── Signing / confirmed state ────────────────────────────────── */}
+          <AnimatePresence>
+            {txState === 'signing' && (
+              <motion.div
+                key="signing"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="flex flex-col items-center gap-2 py-4"
+              >
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Waiting for wallet signature…</p>
+                <p className="text-xs text-muted-foreground">
+                  Your SOL is being deposited into the escrow contract.
+                </p>
+              </motion.div>
+            )}
+
+            {txState === 'confirmed' && (
+              <motion.div
+                key="confirmed"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex flex-col items-center gap-2 py-4"
+              >
+                <ShieldCheck className="h-8 w-8 text-success" />
+                <p className="text-sm font-medium text-success">Stake locked in escrow!</p>
+                <p className="text-xs text-muted-foreground">
+                  Funds will be released to the winner automatically after the game.
+                </p>
+              </motion.div>
+            )}
+
+            {txState === 'error' && (
+              <motion.div
+                key="error"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2"
+              >
+                <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-destructive">Transaction failed</p>
+                  <p className="text-xs text-muted-foreground">
+                    Make sure you have enough SOL and try again.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 text-xs"
+                    onClick={triggerOnChainDeposit}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Stake Info ───────────────────────────────────────────────── */}
           <div className="p-3 sm:p-4 rounded-lg bg-primary/10 border border-primary/20 text-center">
             <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Pool</p>
             <p className="text-xl sm:text-2xl font-gaming font-bold text-primary">
               {formatSol(wager.stake_lamports * 2)} SOL
             </p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Each player stakes {formatSol(wager.stake_lamports)} SOL — winner gets 90%
+            </p>
           </div>
 
-          {/* Players Ready Status */}
+          {/* ── Player Ready Status ──────────────────────────────────────── */}
           <div className="space-y-2 sm:space-y-3">
-            {/* Player A */}
-            <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border-2 transition-colors ${
-              wager.ready_player_a 
-                ? 'bg-success/10 border-success/30' 
-                : 'bg-muted/30 border-border'
-            }`}>
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className={`p-1.5 sm:p-2 rounded-full ${wager.ready_player_a ? 'bg-success/20' : 'bg-muted'}`}>
-                  {wager.ready_player_a ? (
-                    <Check className="h-4 w-4 sm:h-5 sm:w-5 text-success" />
-                  ) : (
-                    <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-muted-foreground" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-xs text-muted-foreground">Challenger {isPlayerA && '(You)'}</p>
-                  <PlayerLink 
-                    walletAddress={wager.player_a_wallet}
-                    username={playerA?.username}
-                    className="font-medium text-xs sm:text-sm"
-                  />
-                </div>
-              </div>
-              <Badge variant={wager.ready_player_a ? 'success' : 'secondary'} className="text-[10px] sm:text-xs">
-                {wager.ready_player_a ? 'Ready' : 'Waiting'}
-              </Badge>
-            </div>
-
-            {/* VS Divider */}
-            <div className="flex items-center justify-center">
-              <Swords className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
-            </div>
-
-            {/* Player B */}
-            <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border-2 transition-colors ${
-              wager.ready_player_b 
-                ? 'bg-success/10 border-success/30' 
-                : 'bg-muted/30 border-border'
-            }`}>
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className={`p-1.5 sm:p-2 rounded-full ${wager.ready_player_b ? 'bg-success/20' : 'bg-muted'}`}>
-                  {wager.ready_player_b ? (
-                    <Check className="h-4 w-4 sm:h-5 sm:w-5 text-success" />
-                  ) : (
-                    <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-muted-foreground" />
-                  )}
-                </div>
-                <div>
-                  <p className="text-[10px] sm:text-xs text-muted-foreground">Opponent {isPlayerB && '(You)'}</p>
-                  <PlayerLink 
-                    walletAddress={wager.player_b_wallet || ''}
-                    username={playerB?.username}
-                    className="font-medium text-xs sm:text-sm"
-                  />
+            {[
+              { wallet: wager.player_a_wallet, ready: wager.ready_player_a, player: playerA, label: 'Challenger', isMe: isPlayerA },
+              { wallet: wager.player_b_wallet ?? '', ready: wager.ready_player_b, player: playerB, label: 'Opponent', isMe: isPlayerB },
+            ].map((p, i) => (
+              <div key={i}>
+                {i === 1 && (
+                  <div className="flex items-center justify-center my-2">
+                    <Swords className="h-5 w-5 text-primary" />
+                  </div>
+                )}
+                <div className={`flex items-center justify-between p-3 sm:p-4 rounded-lg border-2 transition-colors ${p.ready ? 'bg-success/10 border-success/30' : 'bg-muted/30 border-border'
+                  }`}>
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <div className={`p-1.5 sm:p-2 rounded-full ${p.ready ? 'bg-success/20' : 'bg-muted'}`}>
+                      {p.ready
+                        ? <Check className="h-4 w-4 sm:h-5 sm:w-5 text-success" />
+                        : <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-muted-foreground" />
+                      }
+                    </div>
+                    <div>
+                      <p className="text-[10px] sm:text-xs text-muted-foreground">
+                        {p.label} {p.isMe && '(You)'}
+                      </p>
+                      <PlayerLink
+                        walletAddress={p.wallet}
+                        username={p.player?.username}
+                        className="font-medium text-xs sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                  <Badge variant={p.ready ? 'success' : 'secondary'} className="text-[10px] sm:text-xs">
+                    {p.ready ? 'Ready' : 'Waiting'}
+                  </Badge>
                 </div>
               </div>
-              <Badge variant={wager.ready_player_b ? 'success' : 'secondary'} className="text-[10px] sm:text-xs">
-                {wager.ready_player_b ? 'Ready' : 'Waiting'}
-              </Badge>
-            </div>
+            ))}
           </div>
 
-          {/* Game Link */}
-          {gameLink && (
+          {/* ── Game Link ────────────────────────────────────────────────── */}
+          {gameLink && txState === 'confirmed' && (
             <div className="p-2 sm:p-3 rounded-lg bg-muted/30 border border-border">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs sm:text-sm text-muted-foreground">Game Link</span>
-                <a 
+                <a
                   href={gameLink}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -247,40 +384,44 @@ export function ReadyRoomModal({
             </div>
           )}
 
-          {/* Warning if no game link */}
-          {!gameLink && wager.game === 'chess' && (
+          {/* ── No game link warning ─────────────────────────────────────── */}
+          {!gameLink && wager.game === 'chess' && txState !== 'confirmed' && (
             <div className="p-2 sm:p-3 rounded-lg bg-warning/10 border border-warning/30 flex items-start gap-2">
               <AlertCircle className="h-4 w-4 text-warning mt-0.5 flex-shrink-0" />
               <div className="text-xs sm:text-sm">
                 <p className="font-medium text-warning">No Lichess game linked</p>
-                <p className="text-muted-foreground">The challenger should add a game link before starting.</p>
+                <p className="text-muted-foreground">
+                  The challenger must add a Lichess game ID before the ready room countdown starts.
+                </p>
               </div>
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-2 pt-2">
-            {isPlayerA && !bothReady && (
-              <Button variant="outline" className="flex-1 text-xs sm:text-sm" onClick={onEditWager}>
-                Edit Wager
-              </Button>
-            )}
-            <Button 
-              variant={localReady ? 'destructive' : 'neon'}
-              className="flex-1 text-xs sm:text-sm"
-              onClick={handleReadyClick}
-              disabled={isSettingReady}
-            >
-              {isSettingReady ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : localReady ? (
-                <X className="h-4 w-4 mr-2" />
-              ) : (
-                <Check className="h-4 w-4 mr-2" />
+          {/* ── Actions ──────────────────────────────────────────────────── */}
+          {txState !== 'confirmed' && (
+            <div className="flex gap-2 pt-2">
+              {isPlayerA && !bothReady && (
+                <Button variant="outline" className="flex-1 text-xs sm:text-sm" onClick={onEditWager}>
+                  Edit Wager
+                </Button>
               )}
-              {localReady ? 'Not Ready' : 'Ready'}
-            </Button>
-          </div>
+              <Button
+                variant={localReady ? 'destructive' : 'neon'}
+                className="flex-1 text-xs sm:text-sm"
+                onClick={handleReadyClick}
+                disabled={isSettingReady || txState === 'signing' || countdown === 0}
+              >
+                {isSettingReady || txState === 'signing' ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : localReady ? (
+                  <X className="h-4 w-4 mr-2" />
+                ) : (
+                  <Check className="h-4 w-4 mr-2" />
+                )}
+                {txState === 'signing' ? 'Confirm in wallet…' : localReady ? 'Not Ready' : 'Ready'}
+              </Button>
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
