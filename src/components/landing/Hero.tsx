@@ -1,19 +1,25 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import { useWallet } from '@solana/wallet-adapter-react'
 import dynamic from 'next/dynamic'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { motion } from 'framer-motion'
+import { ArrowRight, Zap, Shield, Users, Sparkles } from 'lucide-react'
+import Link from 'next/link'
+import { Button } from '@/components/ui/button'
+import { useEffect, useState } from 'react'
 
 const WalletMultiButton = dynamic(
   () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
   { ssr: false }
 )
-import { ArrowRight, Zap, Shield, Users, Sparkles } from 'lucide-react'
-import Link from 'next/link'
-import { Button } from '@/components/ui/button'
 
 export function Hero() {
   const { connected } = useWallet()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
@@ -99,7 +105,7 @@ export function Hero() {
             transition={{ delay: 0.4 }}
             className="flex flex-col sm:flex-row gap-4 justify-center mb-16"
           >
-            {connected ? (
+            {mounted && connected ? (
               <Link href="/arena">
                 <motion.div
                   whileHover={{ scale: 1.05 }}
