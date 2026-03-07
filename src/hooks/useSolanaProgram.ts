@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { 
-  Connection, 
-  PublicKey, 
-  Transaction, 
+import {
+  Connection,
+  PublicKey,
+  Transaction,
   TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL
@@ -19,7 +19,7 @@ const connection = new Connection(DEFAULT_RPC_URL, 'confirmed');
 function deriveWagerPda(playerA: PublicKey, matchId: bigint): [PublicKey, number] {
   const matchIdBuffer = Buffer.alloc(8);
   matchIdBuffer.writeBigUInt64LE(matchId);
-  
+
   return PublicKey.findProgramAddressSync(
     [Buffer.from('wager'), playerA.toBuffer(), matchIdBuffer],
     new PublicKey(PROGRAM_ID)
@@ -37,7 +37,7 @@ function derivePlayerProfilePda(player: PublicKey): [PublicKey, number] {
 function buildInstructionData(discriminator: readonly number[] | number[], ...args: (bigint | boolean | string)[]): Buffer {
   const discArray = Array.isArray(discriminator) ? [...discriminator] : discriminator;
   const buffers: Buffer[] = [Buffer.from(discArray as number[])];
-  
+
   for (const arg of args) {
     if (typeof arg === 'bigint') {
       const buf = Buffer.alloc(8);
@@ -53,7 +53,7 @@ function buildInstructionData(discriminator: readonly number[] | number[], ...ar
       buffers.push(lenBuf, strBuf);
     }
   }
-  
+
   return Buffer.concat(buffers);
 }
 
@@ -69,7 +69,7 @@ export function useInitializePlayer() {
       }
 
       const [playerProfilePda] = derivePlayerProfilePda(publicKey);
-      
+
       const instruction = new TransactionInstruction({
         programId: new PublicKey(PROGRAM_ID),
         keys: [
@@ -130,7 +130,7 @@ export function useCreateWagerOnChain() {
       const supabase = getSupabaseClient();
       const matchIdBigInt = BigInt(matchId);
       const stakeAmount = BigInt(stakeLamports);
-      
+
       const [wagerPda] = deriveWagerPda(publicKey, matchIdBigInt);
       const [playerProfilePda] = derivePlayerProfilePda(publicKey);
 
@@ -173,12 +173,12 @@ export function useCreateWagerOnChain() {
             txSignature: signature,
             txType: 'escrow_deposit',
           },
-          headers: { 'x-wallet-session': sessionToken },
+          headers: { Authorization: `Bearer ${sessionToken}` },
         });
       }
 
-      return { 
-        signature, 
+      return {
+        signature,
         wagerPda: wagerPda.toBase58(),
         matchId,
         stakeLamports,
@@ -223,7 +223,7 @@ export function useJoinWagerOnChain() {
       const playerA = new PublicKey(playerAWallet);
       const matchIdBigInt = BigInt(matchId);
       const stakeAmount = BigInt(stakeLamports);
-      
+
       const [wagerPda] = deriveWagerPda(playerA, matchIdBigInt);
       const [playerBProfilePda] = derivePlayerProfilePda(publicKey);
 
@@ -260,7 +260,7 @@ export function useJoinWagerOnChain() {
             txSignature: signature,
             txType: 'escrow_deposit',
           },
-          headers: { 'x-wallet-session': sessionToken },
+          headers: { Authorization: `Bearer ${sessionToken}` },
         });
       }
 
@@ -290,7 +290,7 @@ export function useCheckPlayerProfile() {
       }
 
       const [playerProfilePda] = derivePlayerProfilePda(publicKey);
-      
+
       try {
         const accountInfo = await connection.getAccountInfo(playerProfilePda);
         return { exists: accountInfo !== null, pda: playerProfilePda.toBase58() };
