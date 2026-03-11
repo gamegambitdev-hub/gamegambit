@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAdminAuth } from '@/hooks/admin';
+import Image from 'next/image';
+import { motion } from 'framer-motion';
 
 export const SignupForm = () => {
   const [formData, setFormData] = useState({
@@ -61,20 +63,44 @@ export const SignupForm = () => {
   };
 
   return (
-    <div className="w-full max-w-md mx-auto">
-      <div className="bg-white rounded-lg shadow-lg p-8">
-        <h1 className="text-3xl font-bold mb-2 text-gray-900">Create Admin Account</h1>
-        <p className="text-gray-600 mb-8">Set up your admin credentials</p>
+    <div className="w-full max-w-md mx-auto px-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="glass rounded-2xl p-8 border border-primary/20"
+      >
+        {/* Logo */}
+        <div className="flex items-center justify-center mb-8">
+          <div className="relative">
+            <Image
+              src="/logo.png"
+              alt="Game Gambit Logo"
+              width={48}
+              height={48}
+              className="h-12 w-12"
+              priority
+            />
+            <div className="absolute inset-0 blur-xl bg-primary/30 -z-10 opacity-50" />
+          </div>
+        </div>
+
+        <h1 className="text-3xl font-gaming font-bold mb-2 text-center text-glow">Create Admin Account</h1>
+        <p className="text-muted-foreground text-center mb-8 text-sm">Set up your admin credentials</p>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-destructive/10 border border-destructive/30 text-destructive px-4 py-3 rounded-lg mb-6 text-sm"
+          >
             {error}
-          </div>
+          </motion.div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="name" className="block text-sm font-medium text-foreground mb-2">
               Full Name
             </label>
             <input
@@ -83,14 +109,14 @@ export const SignupForm = () => {
               type="text"
               value={formData.name}
               onChange={handleChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2 bg-card border border-border/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-foreground placeholder:text-muted-foreground transition-all"
               placeholder="John Doe"
               disabled={isLoading}
             />
           </div>
 
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="email" className="block text-sm font-medium text-foreground mb-2">
               Email Address
             </label>
             <input
@@ -100,14 +126,14 @@ export const SignupForm = () => {
               value={formData.email}
               onChange={handleChange}
               required
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2 bg-card border border-border/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-foreground placeholder:text-muted-foreground transition-all"
               placeholder="admin@example.com"
               disabled={isLoading}
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="password" className="block text-sm font-medium text-foreground mb-2">
               Password (min. 12 characters)
             </label>
             <input
@@ -117,14 +143,14 @@ export const SignupForm = () => {
               value={formData.password}
               onChange={handleChange}
               required
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2 bg-card border border-border/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-foreground placeholder:text-muted-foreground transition-all"
               placeholder="••••••••••••"
               disabled={isLoading}
             />
           </div>
 
           <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="confirmPassword" className="block text-sm font-medium text-foreground mb-2">
               Confirm Password
             </label>
             <input
@@ -134,7 +160,7 @@ export const SignupForm = () => {
               value={formData.confirmPassword}
               onChange={handleChange}
               required
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2 bg-card border border-border/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-foreground placeholder:text-muted-foreground transition-all"
               placeholder="••••••••••••"
               disabled={isLoading}
             />
@@ -143,21 +169,21 @@ export const SignupForm = () => {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold py-2 px-4 rounded-lg transition-colors"
+            className="w-full bg-primary hover:bg-primary/90 disabled:bg-muted text-primary-foreground font-gaming font-semibold py-3 px-4 rounded-xl transition-all shadow-lg shadow-primary/20 hover:shadow-neon disabled:shadow-none"
           >
             {isLoading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
 
         <div className="mt-6 text-center">
-          <p className="text-gray-600">
+          <p className="text-muted-foreground text-sm">
             Already have an account?{' '}
-            <Link href="/itszaadminlogin/login" className="text-blue-600 hover:text-blue-700 font-medium">
+            <Link href="/itszaadminlogin/login" className="text-primary hover:text-primary/80 font-semibold transition-colors">
               Sign in
             </Link>
           </p>
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 };
