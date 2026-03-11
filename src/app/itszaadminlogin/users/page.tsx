@@ -1,45 +1,150 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { ProtectedRoute } from '@/components/admin';
 import { motion } from 'framer-motion';
-import { Users as UsersIcon, Search, Filter } from 'lucide-react';
-import { useState } from 'react';
+import { Users as UsersIcon, Search, Filter, Loader } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useWallet } from '@solana/wallet-adapter-react';
+
+interface Player {
+    wallet_address: string;
+    username: string | null;
+    is_banned: boolean;
+    ban_reason: string | null;
+    total_wins: number;
+    total_losses: number;
+    total_earnings: number;
+    created_at: string;
+    flagged_for_review: boolean;
+}
 
 function UsersContent() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'banned'>('all');
+    const [users, setUsers] = useState<Player[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [actionLoading, setActionLoading] = useState<string | null>(null);
+    const [banReason, setBanReason] = useState('');
+    const [showBanDialog, setShowBanDialog] = useState<string | null>(null);
+    const { publicKey } = useWallet();
 
-    // Placeholder data - will be replaced with actual data fetching
-    const users = [
-        {
-            id: '1',
-            wallet: '3h7fWbXXe1Z3eaJ6xB5N9pV2m8K4j9dY6rQ5xN7k',
-            username: 'Player1',
-            joinedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-            wagers: 15,
-            wins: 10,
-            losses: 5,
-            status: 'active',
-        },
-        {
-            id: '2',
-            wallet: '2mX9vR3fL6bD2pQ4jK8eJ1xW5sN7tZ9mY3cA8vF',
-            username: 'Player2',
-            joinedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
-            wagers: 8,
-            wins: 4,
-            losses: 4,
-            status: 'active',
-        },
-    ];
+    useEffect(() => {
+        fetchUsers();
+    }, []);
+
+    const fetchUsers = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const { data, error: fetchError } = await supabase
+                .from('players')
+                .select('wallet_address, username, is_banned, ban_reason, total_wins, total_losses, total_earnings, created_at, flagged_for_review')
+                .order('created_at', { ascending: false });
+
+            if (fetchError) throw fetchError;
+            setUsers(data || []);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to fetch users');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const truncateWallet = (wallet: string, start = 8, end = 4) => {
+        if (wallet.length <= start + end) return wallet;
+        return `${wallet.slice(0, start)}...${wallet.slice(-end)}`;
+    };
+
+    const handleBanPlayer = async (walletAddress: string, reason: string) => {
+        if (!publicKey) {
+            setError('Please connect your wallet');
+            return;
+        }
+
+        try {
+            setActionLoading(walletAddress);
+            const response = await fetch('/api/admin/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'banPlayer',
+                    adminWallet: publicKey.toBase58(),
+                    walletAddress,
+                    reason,
+                }),
+            });
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Failed to ban player');
+
+            // Optimistically update UI
+            setUsers(users.map(u =>
+                u.wallet_address === walletAddress
+                    ? { ...u, is_banned: true, ban_reason: reason }
+                    : u
+            ));
+            setShowBanDialog(null);
+            setBanReason('');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to ban player');
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    const handleUnbanPlayer = async (walletAddress: string) => {
+        if (!publicKey) {
+            setError('Please connect your wallet');
+            return;
+        }
+
+        try {
+            setActionLoading(walletAddress);
+            const response = await fetch('/api/admin/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'unbanPlayer',
+                    adminWallet: publicKey.toBase58(),
+                    walletAddress,
+                }),
+            });
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Failed to unban player');
+
+            // Optimistically update UI
+            setUsers(users.map(u =>
+                u.wallet_address === walletAddress
+                    ? { ...u, is_banned: false, ban_reason: null }
+                    : u
+            ));
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to unban player');
+        } finally {
+            setActionLoading(null);
+        }
+    };
 
     const filteredUsers = users.filter(user => {
-        const matchesSearch = user.wallet.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            user.username.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesFilter = filterStatus === 'all' || user.status === filterStatus;
+        const matchesSearch = user.wallet_address.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (user.username?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false);
+        const matchesFilter = filterStatus === 'all' ||
+            (filterStatus === 'banned' ? user.is_banned : !user.is_banned);
         return matchesSearch && matchesFilter;
     });
+
+    if (loading) {
+        return (
+            <ProtectedRoute>
+                <div className="flex items-center justify-center py-12">
+                    <Loader className="h-8 w-8 animate-spin text-primary" />
+                </div>
+            </ProtectedRoute>
+        );
+    }
 
     return (
         <ProtectedRoute>
@@ -59,6 +164,17 @@ function UsersContent() {
                         </div>
                     </div>
                 </motion.div>
+
+                {/* Error Message */}
+                {error && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-destructive/10 border border-destructive/30 text-destructive px-4 py-3 rounded-lg"
+                    >
+                        {error}
+                    </motion.div>
+                )}
 
                 {/* Search & Filter */}
                 <motion.div
@@ -107,28 +223,45 @@ function UsersContent() {
                                     <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Wallet</th>
                                     <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Username</th>
                                     <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Joined</th>
-                                    <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Wagers</th>
                                     <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">W/L</th>
+                                    <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Earnings</th>
                                     <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Status</th>
                                     <th className="px-6 py-4 text-left text-sm font-gaming font-bold text-foreground">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredUsers.map((user) => (
-                                    <tr key={user.id} className="border-b border-border/50 hover:bg-card/50 transition-colors">
-                                        <td className="px-6 py-4 text-xs font-mono text-muted-foreground">{user.wallet.slice(0, 12)}...</td>
-                                        <td className="px-6 py-4 text-sm text-foreground font-medium">{user.username}</td>
-                                        <td className="px-6 py-4 text-sm text-muted-foreground">{user.joinedAt.toLocaleDateString()}</td>
-                                        <td className="px-6 py-4 text-sm text-foreground">{user.wagers}</td>
-                                        <td className="px-6 py-4 text-sm text-foreground">{user.wins}W / {user.losses}L</td>
+                                    <tr key={user.wallet_address} className="border-b border-border/50 hover:bg-card/50 transition-colors">
+                                        <td className="px-6 py-4 text-xs font-mono text-muted-foreground">{truncateWallet(user.wallet_address)}</td>
+                                        <td className="px-6 py-4 text-sm text-foreground font-medium">{user.username || truncateWallet(user.wallet_address)}</td>
+                                        <td className="px-6 py-4 text-sm text-muted-foreground">{new Date(user.created_at).toLocaleDateString()}</td>
+                                        <td className="px-6 py-4 text-sm text-foreground">{user.total_wins}W / {user.total_losses}L</td>
+                                        <td className="px-6 py-4 text-sm text-primary font-semibold">{(user.total_earnings / 1_000_000_000).toFixed(4)} SOL</td>
                                         <td className="px-6 py-4">
-                                            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${user.status === 'active' ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'
+                                            <span className={`text-xs font-semibold px-2 py-1 rounded-full ${user.is_banned ? 'bg-destructive/20 text-destructive' : 'bg-success/20 text-success'
                                                 }`}>
-                                                {user.status}
+                                                {user.is_banned ? 'Banned' : 'Active'}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-sm">
-                                            <button className="text-primary hover:text-primary/80 transition-colors">View</button>
+                                            <div className="flex gap-2">
+                                                {user.is_banned ? (
+                                                    <button
+                                                        onClick={() => handleUnbanPlayer(user.wallet_address)}
+                                                        disabled={actionLoading === user.wallet_address}
+                                                        className="text-success hover:text-success/80 disabled:opacity-50 transition-colors text-xs font-semibold"
+                                                    >
+                                                        {actionLoading === user.wallet_address ? 'Unbanning...' : 'Unban'}
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setShowBanDialog(user.wallet_address)}
+                                                        className="text-destructive hover:text-destructive/80 transition-colors text-xs font-semibold"
+                                                    >
+                                                        Ban
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -141,6 +274,55 @@ function UsersContent() {
                     <div className="text-center py-12 text-muted-foreground">
                         No users found matching your search criteria.
                     </div>
+                )}
+
+                {/* Ban Dialog */}
+                {showBanDialog && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+                        onClick={() => setShowBanDialog(null)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="glass rounded-2xl p-6 border border-primary/20 w-full max-w-md"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <h2 className="text-xl font-gaming font-bold text-foreground mb-4">Ban Player</h2>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-sm text-muted-foreground mb-2 block">Reason for ban</label>
+                                    <input
+                                        type="text"
+                                        value={banReason}
+                                        onChange={(e) => setBanReason(e.target.value)}
+                                        placeholder="Enter ban reason..."
+                                        className="w-full px-4 py-2 bg-card border border-border/50 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-foreground"
+                                    />
+                                </div>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => {
+                                            setShowBanDialog(null);
+                                            setBanReason('');
+                                        }}
+                                        className="flex-1 bg-card border border-border/50 hover:border-primary/50 text-foreground font-semibold py-2 px-4 rounded-lg transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => handleBanPlayer(showBanDialog, banReason)}
+                                        disabled={!banReason || actionLoading === showBanDialog}
+                                        className="flex-1 bg-destructive hover:bg-destructive/90 disabled:bg-muted text-destructive-foreground font-semibold py-2 px-4 rounded-lg transition-colors"
+                                    >
+                                        {actionLoading === showBanDialog ? 'Banning...' : 'Confirm Ban'}
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </motion.div>
                 )}
             </div>
         </ProtectedRoute>
