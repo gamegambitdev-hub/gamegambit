@@ -91,12 +91,28 @@ async function forceResolve(
         throw new Error(`Cannot resolve wager with status: ${wager.status}`);
     }
 
+    // ── ATOMIC GUARD — prevent double-resolve if admin clicks twice ──────────
+    const { data: updatedWager, error: updateError } = await supabase
+        .from("wagers")
+        .update({
+            status: "resolved",
+            winner_wallet: winnerWallet,
+            resolved_at: new Date().toISOString(),
+        })
+        .eq("id", wagerId)
+        .in("status", ["voting", "joined", "disputed", "retractable"]) // only succeeds once
+        .select()
+        .single();
+
+    if (updateError || !updatedWager) {
+        throw new Error("Wager already resolved or status changed — aborting to prevent double-pay");
+    }
+
     const authority = getAuthority();
     const connection = new Connection(RPC_URL, "confirmed");
     const wagerPDA = deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
     const winnerPubkey = new PublicKey(winnerWallet);
 
-    // Instruction data = 8-byte discriminator + 32-byte winner pubkey
     const disc = DISCRIMINATORS.resolve_wager;
     const winnerBytes = winnerPubkey.toBytes();
     const instructionData = new Uint8Array(disc.length + winnerBytes.length);
@@ -118,20 +134,19 @@ async function forceResolve(
     const tx = new Transaction().add(ix);
     const sig = await sendAndConfirmTransaction(connection, tx, [authority], { commitment: "confirmed" });
 
-    await supabase.from("wagers").update({
-        status: "resolved",
-        winner_wallet: winnerWallet,
-        resolved_at: new Date().toISOString(),
-    }).eq("id", wagerId);
-
     const totalPot = wager.stake_lamports * 2;
     const platformFee = Math.floor(totalPot * 0.1);
     const winnerPayout = totalPot - platformFee;
 
-    await supabase.from("wager_transactions").insert([
+    // upsert with ignoreDuplicates — safe if admin retries after a partial failure
+    const { error: txInsertError } = await supabase.from("wager_transactions").upsert([
         { wager_id: wagerId, wallet_address: winnerWallet, tx_type: "winner_payout", amount_lamports: winnerPayout, tx_signature: sig, status: "confirmed" },
         { wager_id: wagerId, wallet_address: PLATFORM_WALLET.toBase58(), tx_type: "platform_fee", amount_lamports: platformFee, tx_signature: sig, status: "confirmed" },
-    ]);
+    ], { onConflict: "tx_signature", ignoreDuplicates: true });
+
+    if (txInsertError) {
+        console.error("[admin-action] forceResolve wager_transactions upsert failed:", JSON.stringify(txInsertError));
+    }
 
     await logAdminAction(supabase, "force_resolve", wagerId, winnerWallet, adminWallet, notes, {
         tx_signature: sig,
@@ -168,6 +183,23 @@ async function forceRefund(
 
     if (!wager.player_b_wallet) throw new Error("Cannot refund single-player wager");
 
+    // ── ATOMIC GUARD — prevent double-refund if admin clicks twice ───────────
+    const { data: updatedWager, error: updateError } = await supabase
+        .from("wagers")
+        .update({
+            status: "cancelled",
+            cancelled_at: new Date().toISOString(),
+            cancel_reason: "admin_force_refund",
+        })
+        .eq("id", wagerId)
+        .in("status", ["voting", "joined", "disputed", "retractable"]) // only succeeds once
+        .select()
+        .single();
+
+    if (updateError || !updatedWager) {
+        throw new Error("Wager already cancelled or status changed — aborting to prevent double-refund");
+    }
+
     const authority = getAuthority();
     const connection = new Connection(RPC_URL, "confirmed");
     const wagerPDA = deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
@@ -193,16 +225,15 @@ async function forceRefund(
     const tx = new Transaction().add(ix);
     const sig = await sendAndConfirmTransaction(connection, tx, [authority], { commitment: "confirmed" });
 
-    await supabase.from("wagers").update({
-        status: "cancelled",
-        cancelled_at: new Date().toISOString(),
-        cancel_reason: "admin_force_refund",
-    }).eq("id", wagerId);
-
-    await supabase.from("wager_transactions").insert([
+    // upsert with ignoreDuplicates — safe if admin retries after a partial failure
+    const { error: txInsertError } = await supabase.from("wager_transactions").upsert([
         { wager_id: wagerId, wallet_address: wager.player_a_wallet, tx_type: "cancel_refund", amount_lamports: wager.stake_lamports, tx_signature: sig, status: "confirmed" },
         { wager_id: wagerId, wallet_address: wager.player_b_wallet, tx_type: "cancel_refund", amount_lamports: wager.stake_lamports, tx_signature: sig, status: "confirmed" },
-    ]);
+    ], { onConflict: "tx_signature", ignoreDuplicates: true });
+
+    if (txInsertError) {
+        console.error("[admin-action] forceRefund wager_transactions upsert failed:", JSON.stringify(txInsertError));
+    }
 
     await logAdminAction(supabase, "force_refund", wagerId, null, adminWallet, notes, {
         tx_signature: sig,
@@ -339,7 +370,7 @@ async function addNote(
     return { success: true };
 }
 
-// ─── Main Handler ────────────────────────────────────────────────────────────
+// ─── Main Handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
     if (req.method === "OPTIONS") {
