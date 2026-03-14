@@ -87,10 +87,19 @@ export function Providers({ children }: ProvidersProps) {
       list.push(
         new WalletConnectWalletAdapter({
           network: WalletAdapterNetwork.Devnet,
-          options: { projectId },
+          options: {
+            projectId,
+            metadata: {
+              name: 'GameGambit',
+              description: 'Skill-based wagering on Solana',
+              url: 'https://thegamegambit.vercel.app',
+              icons: ['https://thegamegambit.vercel.app/logo.png'],
+            },
+          },
         })
       )
     }
+
     return list
   }, [])
 
