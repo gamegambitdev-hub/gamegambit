@@ -189,7 +189,7 @@ serve(async (req) => {
         const { action, ...data } = await req.json();
         console.log(`[secure-wager] Action: ${action}, token: ${!!sessionToken}`);
 
-        const requiresAuth = !['checkGameComplete', 'recordOnChainCreate', 'recordOnChainJoin'].includes(action);
+        const requiresAuth = !['checkGameComplete'].includes(action);
 
         let walletAddress = '';
         if (requiresAuth) {
