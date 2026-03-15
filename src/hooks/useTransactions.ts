@@ -101,3 +101,24 @@ export function getTransactionStatusInfo(status: string) {
       return { label: status, color: 'text-foreground' };
   }
 }
+
+// Add this new hook to useTransactions.ts
+export function useWagerTransactionsBulk(wagerIds: string[]) {
+  return useQuery({
+    queryKey: ['wager-transactions-bulk', wagerIds],
+    queryFn: async () => {
+      const supabase = getSupabaseClient();
+      if (!wagerIds.length) return [];
+
+      const { data, error } = await supabase
+        .from('wager_transactions')
+        .select('*')
+        .in('wager_id', wagerIds)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data as WagerTransaction[];
+    },
+    enabled: wagerIds.length > 0,
+  });
+}
