@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants'
 import { useMyWagers, useSetReady, useStartGame, useWagerById, Wager } from '@/hooks/useWagers'
 import { usePlayer } from '@/hooks/usePlayer'
-import { useMyTransactions } from '@/hooks/useTransactions'
+import { useWagerTransactionsBulk } from '@/hooks/useTransactions'
 import { getExplorerUrl } from '@/lib/solana-config'
 import { ReadyRoomModal } from '@/components/ReadyRoomModal'
 import { EditWagerModal, EditWagerData } from '@/components/EditWagerModal'
@@ -177,7 +177,8 @@ export default function MyWagersPage() {
   const startGameMutation = useStartGame()
   const editWagerMutation = useEditWager()
 
-  const { data: myTransactions } = useMyTransactions(200)
+  const myWagerIds = useMemo(() => wagers?.map(w => w.id) ?? [], [wagers])
+  const { data: myTransactions } = useWagerTransactionsBulk(myWagerIds)
 
   const txSigByWagerId = useMemo(() => {
     const map: Record<string, string> = {}
