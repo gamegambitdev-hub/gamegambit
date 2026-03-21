@@ -931,3 +931,24 @@ This schema is version controlled in GitHub. Update this document whenever datab
 
 Last updated: March 21, 2026  
 Schema version: 1.2.0 (Supabase PostgreSQL)
+---
+
+### v1.3.0 — March 21, 2026
+```sql
+-- Push subscriptions for Web Push notifications
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  player_wallet TEXT NOT NULL,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_push_subscriptions_wallet ON push_subscriptions(player_wallet);
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Players can manage own subscriptions"
+  ON push_subscriptions FOR ALL
+  USING (true) WITH CHECK (true);
+```
