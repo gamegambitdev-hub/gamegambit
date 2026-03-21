@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Trophy, Swords, Clock, Wallet, CheckCheck, ExternalLink } from 'lucide-react';
+import { Bell, Trophy, Swords, Clock, Wallet, CheckCheck, ExternalLink, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -13,7 +13,7 @@ import type { AppNotification } from '@/hooks/useNotifications';
 import Link from 'next/link';
 
 export function NotificationsDropdown() {
-  const { notifications, unreadCount, markAllRead, markRead } = useNotifications();
+  const { notifications, unreadCount, hasMore, loadMore, loadingMore, loading, markAllRead, markRead } = useNotifications();
 
   const getNotificationIcon = (type: AppNotification['type']) => {
     switch (type) {
@@ -52,6 +52,7 @@ export function NotificationsDropdown() {
         align="end"
         className="w-80 p-0 bg-card border-border"
       >
+        {/* Header */}
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between">
             <h3 className="font-gaming text-sm">Notifications</h3>
@@ -67,50 +68,74 @@ export function NotificationsDropdown() {
           </div>
         </div>
 
-        <div className="max-h-80 overflow-y-auto">
-          {notifications.length > 0 ? (
-            <div className="divide-y divide-border">
-              {notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  onClick={() => !notification.read && markRead(notification.id)}
-                  className={cn(
-                    "p-4 hover:bg-muted/50 cursor-pointer transition-colors",
-                    !notification.read && "bg-primary/5 border-l-2 border-l-primary"
-                  )}
-                >
-                  <div className="flex gap-3">
-                    <div className="flex-shrink-0 mt-0.5">
-                      {getNotificationIcon(notification.type)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{notification.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {notification.message}
-                      </p>
-                      <div className="flex items-center justify-between mt-1">
-                        <p className="text-xs text-muted-foreground">
-                          {formatTimeAgo(notification.created_at)}
-                        </p>
-                        {notification.wager_id && (
-                          <Link
-                            href="/my-wagers"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
-                          >
-                            View wager
-                            <ExternalLink className="h-2.5 w-2.5" />
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                    {!notification.read && (
-                      <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1" />
-                    )}
-                  </div>
-                </div>
-              ))}
+        {/* List */}
+        <div className="max-h-96 overflow-y-auto">
+          {loading ? (
+            <div className="py-12 flex items-center justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
+          ) : notifications.length > 0 ? (
+            <>
+              <div className="divide-y divide-border">
+                {notifications.map((notification) => (
+                  <div
+                    key={notification.id}
+                    onClick={() => !notification.read && markRead(notification.id)}
+                    className={cn(
+                      "p-4 hover:bg-muted/50 cursor-pointer transition-colors",
+                      !notification.read && "bg-primary/5 border-l-2 border-l-primary"
+                    )}
+                  >
+                    <div className="flex gap-3">
+                      <div className="flex-shrink-0 mt-0.5">
+                        {getNotificationIcon(notification.type)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium">{notification.title}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                          {notification.message}
+                        </p>
+                        <div className="flex items-center justify-between mt-1">
+                          <p className="text-xs text-muted-foreground">
+                            {formatTimeAgo(notification.created_at)}
+                          </p>
+                          {notification.wager_id && (
+                            <Link
+                              href="/my-wagers"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                            >
+                              View wager
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                      {!notification.read && (
+                        <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1" />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Show more */}
+              {hasMore && (
+                <div className="p-3 border-t border-border">
+                  <button
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="w-full flex items-center justify-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+                  >
+                    {loadingMore ? (
+                      <><Loader2 className="h-3 w-3 animate-spin" /> Loading...</>
+                    ) : (
+                      'Show 10 more'
+                    )}
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             <div className="py-12 px-4 text-center">
               <div className="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-3">
