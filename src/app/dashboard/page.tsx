@@ -24,7 +24,7 @@ import Link from 'next/link'
 import { usePlayer } from '@/hooks/usePlayer'
 import { useMyWagers } from '@/hooks/useWagers'
 import { useWalletBalance } from '@/hooks/useWalletBalance'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useBalanceAnimation } from '@/contexts/BalanceAnimationContext'
 
 const getGameData = (game: string) => {
@@ -226,11 +226,28 @@ export default function DashboardPage() {
   const { consumeAnimation, hasAnimation } = useBalanceAnimation()
   const [balanceDelta, setBalanceDelta] = useState<{ value: number; type: 'win' | 'lose' | 'draw' } | null>(null)
   const [showDeltaBadge, setShowDeltaBadge] = useState(false)
+  const [animatedDelta, setAnimatedDelta] = useState(0)
   const deltaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const startTimeRef = useRef<number | null>(null)
 
-  // Poll for a pending animation every 500ms for up to 10 seconds after mount.
-  // This handles the case where the user navigates to dashboard immediately
-  // after a game ends — the animation may not be queued yet on first render.
+  const runCounterAnimation = useCallback((targetDelta: number, type: 'win' | 'lose' | 'draw') => {
+    const duration = 2000
+    startTimeRef.current = null
+    const from = 0
+    const to = Math.abs(targetDelta) / 1e9
+
+    const animate = (timestamp: number) => {
+      if (startTimeRef.current === null) startTimeRef.current = timestamp
+      const elapsed = timestamp - startTimeRef.current
+      const progress = Math.min(elapsed / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setAnimatedDelta(from + (to - from) * eased)
+      if (progress < 1) rafRef.current = requestAnimationFrame(animate)
+    }
+    rafRef.current = requestAnimationFrame(animate)
+  }, [])
+
   useEffect(() => {
     const tryConsume = () => {
       if (!hasAnimation()) return false
@@ -238,15 +255,18 @@ export default function DashboardPage() {
       if (!anim || anim.delta === 0) return false
       setBalanceDelta({ value: anim.delta, type: anim.type })
       setShowDeltaBadge(true)
+      runCounterAnimation(anim.delta, anim.type)
       if (deltaTimerRef.current) clearTimeout(deltaTimerRef.current)
-      deltaTimerRef.current = setTimeout(() => setShowDeltaBadge(false), 4000)
+      deltaTimerRef.current = setTimeout(() => {
+        setShowDeltaBadge(false)
+        setAnimatedDelta(0)
+      }, 5000)
       return true
     }
 
-    // Check immediately on mount
     if (tryConsume()) return
 
-    // Then poll every 500ms for up to 10s
+    // Poll for up to 10s in case we arrived before animation was queued
     let attempts = 0
     const interval = setInterval(() => {
       attempts++
@@ -256,6 +276,7 @@ export default function DashboardPage() {
     return () => {
       clearInterval(interval)
       if (deltaTimerRef.current) clearTimeout(deltaTimerRef.current)
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -366,9 +387,9 @@ export default function DashboardPage() {
               bg: 'bg-primary/15',
               sub: showDeltaBadge && balanceDelta
                 ? balanceDelta.type === 'win'
-                  ? `+${(balanceDelta.value / 1e9).toFixed(3)} SOL won! 🏆`
+                  ? `+${animatedDelta.toFixed(4)} SOL won! 🏆`
                   : balanceDelta.type === 'lose'
-                    ? `-${(Math.abs(balanceDelta.value) / 1e9).toFixed(3)} SOL lost`
+                    ? `-${animatedDelta.toFixed(4)} SOL lost`
                     : 'Draw — refunded'
                 : 'Available',
               highlight: showDeltaBadge && balanceDelta
