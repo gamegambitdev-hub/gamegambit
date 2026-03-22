@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { truncateAddress, formatSol } from '@/lib/constants'
 import { useLeaderboard, Player } from '@/hooks/usePlayer'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
+import Link from 'next/link'
 
 const getRankIcon = (rank: number) => {
   switch (rank) {
@@ -53,47 +54,49 @@ function LeaderboardRow({ player, rank, sortBy }: { player: Player; rank: number
     : 0
 
   return (
-    <Card variant="wager" className={`${getRankStyle(rank)} hover:border-primary/40 transition-all`}>
-      <CardContent className="p-3 sm:p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            <div className="w-8 sm:w-10 flex justify-center flex-shrink-0">
-              {getRankIcon(rank)}
-            </div>
-            <div className="min-w-0">
-              <div className="font-gaming text-xs sm:text-sm truncate">{player.username || truncateAddress(player.wallet_address)}</div>
-              <div className="text-[10px] sm:text-xs text-muted-foreground">
-                {player.total_wins}W - {player.total_losses}L
+    <Link href={`/profile/${player.wallet_address}`} className="block">
+      <Card variant="wager" className={`${getRankStyle(rank)} hover:border-primary/40 transition-all cursor-pointer`}>
+        <CardContent className="p-3 sm:p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              <div className="w-8 sm:w-10 flex justify-center flex-shrink-0">
+                {getRankIcon(rank)}
               </div>
+              <div className="min-w-0">
+                <div className="font-gaming text-xs sm:text-sm truncate">{player.username || truncateAddress(player.wallet_address)}</div>
+                <div className="text-[10px] sm:text-xs text-muted-foreground">
+                  {player.total_wins}W - {player.total_losses}L
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 sm:gap-6 flex-shrink-0">
+              <div className="text-right hidden sm:block">
+                <div className="text-xs text-muted-foreground">Win Rate</div>
+                <div className="font-gaming text-success">{winRate}%</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] sm:text-xs text-muted-foreground">
+                  {sortBy === 'earnings' ? 'Earned' : sortBy === 'wins' ? 'Wins' : 'Streak'}
+                </div>
+                <div className="font-gaming text-sm sm:text-lg text-accent">
+                  {sortBy === 'earnings'
+                    ? `${formatSol(player.total_earnings)}`
+                    : sortBy === 'wins'
+                      ? player.total_wins
+                      : player.current_streak}
+                </div>
+              </div>
+              {player.current_streak > 0 && (
+                <Badge variant="gold" className="flex items-center gap-1 text-[10px] sm:text-xs px-1.5 sm:px-2">
+                  <Flame className="h-3 w-3" />
+                  {player.current_streak}
+                </Badge>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2 sm:gap-6 flex-shrink-0">
-            <div className="text-right hidden sm:block">
-              <div className="text-xs text-muted-foreground">Win Rate</div>
-              <div className="font-gaming text-success">{winRate}%</div>
-            </div>
-            <div className="text-right">
-              <div className="text-[10px] sm:text-xs text-muted-foreground">
-                {sortBy === 'earnings' ? 'Earned' : sortBy === 'wins' ? 'Wins' : 'Streak'}
-              </div>
-              <div className="font-gaming text-sm sm:text-lg text-accent">
-                {sortBy === 'earnings'
-                  ? `${formatSol(player.total_earnings)}`
-                  : sortBy === 'wins'
-                    ? player.total_wins
-                    : player.current_streak}
-              </div>
-            </div>
-            {player.current_streak > 0 && (
-              <Badge variant="gold" className="flex items-center gap-1 text-[10px] sm:text-xs px-1.5 sm:px-2">
-                <Flame className="h-3 w-3" />
-                {player.current_streak}
-              </Badge>
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </Link>
   )
 }
 
@@ -113,27 +116,29 @@ function Podium({ players }: { players: Player[] }) {
           : 0
 
         return (
-          <motion.div
-            key={player.wallet_address}
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 + index * 0.1 }}
-            className="text-center flex-1 max-w-[120px]"
-          >
-            <div className="mb-2">
-              {getRankIcon(positions[index])}
-            </div>
-            <div className="font-gaming text-[10px] sm:text-sm mb-2 truncate">
-              {player.username || truncateAddress(player.wallet_address, 4)}
-            </div>
-            <div className={`${heights[index]} w-full rounded-t-lg bg-gradient-to-t from-card to-muted/50 border border-border/50 flex items-center justify-center`}>
-              <div className="text-center px-1">
-                <div className="font-gaming text-sm sm:text-lg text-accent">{formatSol(player.total_earnings)}</div>
-                <div className="text-[10px] sm:text-xs text-muted-foreground">SOL</div>
-                <div className="text-[10px] sm:text-xs text-muted-foreground">{winRate}% WR</div>
+          <Link href={`/profile/${player.wallet_address}`} className="flex-1 max-w-[120px]">
+            <motion.div
+              key={player.wallet_address}
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 + index * 0.1 }}
+              className="text-center cursor-pointer hover:opacity-80 transition-opacity"
+            >
+              <div className="mb-2">
+                {getRankIcon(positions[index])}
               </div>
-            </div>
-          </motion.div>
+              <div className="font-gaming text-[10px] sm:text-sm mb-2 truncate">
+                {player.username || truncateAddress(player.wallet_address, 4)}
+              </div>
+              <div className={`${heights[index]} w-full rounded-t-lg bg-gradient-to-t from-card to-muted/50 border border-border/50 flex items-center justify-center`}>
+                <div className="text-center px-1">
+                  <div className="font-gaming text-sm sm:text-lg text-accent">{formatSol(player.total_earnings)}</div>
+                  <div className="text-[10px] sm:text-xs text-muted-foreground">SOL</div>
+                  <div className="text-[10px] sm:text-xs text-muted-foreground">{winRate}% WR</div>
+                </div>
+              </div>
+            </motion.div>
+          </Link>
         )
       })}
     </div>
