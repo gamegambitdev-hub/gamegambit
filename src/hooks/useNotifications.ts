@@ -57,7 +57,7 @@ export function useNotifications() {
     useEffect(() => {
         offsetRef.current = 0
         fetchPage(0, false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [wallet])
 
     const loadMore = useCallback(() => {
@@ -162,9 +162,16 @@ async function subscribeToPush(wallet: string): Promise<void> {
             if (permission !== 'granted') return
         }
 
-        const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+        // Trim whitespace/newlines that can sneak in from Vercel env vars
+        const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim()
         if (!vapidPublicKey) {
             console.warn('[push] NEXT_PUBLIC_VAPID_PUBLIC_KEY not set')
+            return
+        }
+
+        // Validate before passing to atob — invalid chars cause cryptic errors
+        if (!/^[A-Za-z0-9\-_+=]+$/.test(vapidPublicKey)) {
+            console.warn('[push] VAPID key contains invalid characters — check Vercel env var for spaces or quotes around the value')
             return
         }
 

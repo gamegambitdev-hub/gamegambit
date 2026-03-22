@@ -223,18 +223,40 @@ export default function DashboardPage() {
   const rank = getRank(player?.total_wins ?? 0)
 
   // ── Balance animation from BalanceAnimationContext ───────────────────────
-  const { consumeAnimation } = useBalanceAnimation()
+  const { consumeAnimation, hasAnimation } = useBalanceAnimation()
   const [balanceDelta, setBalanceDelta] = useState<{ value: number; type: 'win' | 'lose' | 'draw' } | null>(null)
   const [showDeltaBadge, setShowDeltaBadge] = useState(false)
   const deltaTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Poll for a pending animation every 500ms for up to 10 seconds after mount.
+  // This handles the case where the user navigates to dashboard immediately
+  // after a game ends — the animation may not be queued yet on first render.
   useEffect(() => {
-    const anim = consumeAnimation()
-    if (!anim || anim.delta === 0) return
-    setBalanceDelta({ value: anim.delta, type: anim.type })
-    setShowDeltaBadge(true)
-    deltaTimerRef.current = setTimeout(() => setShowDeltaBadge(false), 4000)
-    return () => { if (deltaTimerRef.current) clearTimeout(deltaTimerRef.current) }
+    const tryConsume = () => {
+      if (!hasAnimation()) return false
+      const anim = consumeAnimation()
+      if (!anim || anim.delta === 0) return false
+      setBalanceDelta({ value: anim.delta, type: anim.type })
+      setShowDeltaBadge(true)
+      if (deltaTimerRef.current) clearTimeout(deltaTimerRef.current)
+      deltaTimerRef.current = setTimeout(() => setShowDeltaBadge(false), 4000)
+      return true
+    }
+
+    // Check immediately on mount
+    if (tryConsume()) return
+
+    // Then poll every 500ms for up to 10s
+    let attempts = 0
+    const interval = setInterval(() => {
+      attempts++
+      if (tryConsume() || attempts >= 20) clearInterval(interval)
+    }, 500)
+
+    return () => {
+      clearInterval(interval)
+      if (deltaTimerRef.current) clearTimeout(deltaTimerRef.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
