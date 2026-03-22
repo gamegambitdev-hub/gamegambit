@@ -1,24 +1,17 @@
 'use client';
 
-/**
- * GameResultModal.tsx
- * 
- * Animated modal that displays when a game ends:
- * - Victory: Trophy animation, confetti, payout info
- * - Defeat: Consolation message, stats
- * - Draw: Refund info
- */
-
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Frown, Scale, Sparkles, ArrowRight, ExternalLink } from 'lucide-react';
+import {
+  Trophy, Frown, Scale, Sparkles, ArrowRight, ExternalLink,
+  LayoutDashboard, Swords, BarChart3, RefreshCw, Home
+} from 'lucide-react';
 import { formatSol } from '@/lib/constants';
 import { PlayerLink } from '@/components/PlayerLink';
+import { useRouter } from 'next/navigation';
 import confetti from 'canvas-confetti';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface GameResultModalProps {
   open: boolean;
@@ -26,19 +19,59 @@ interface GameResultModalProps {
   result: 'win' | 'lose' | 'draw';
   winnerWallet?: string | null;
   winnerUsername?: string | null;
-  totalPot: number; // in lamports
-  platformFee: number; // in lamports
-  winnerPayout?: number; // in lamports
-  refundAmount?: number; // in lamports (for draw)
+  totalPot: number;
+  platformFee: number;
+  winnerPayout?: number;
+  refundAmount?: number;
   explorerUrl?: string | null;
   onViewDetails?: () => void;
 }
 
-// ─── Victory Animation ────────────────────────────────────────────────────────
+// ─── Animated counter ─────────────────────────────────────────────────────────
 
-function VictoryContent({ 
-  totalPot, 
-  platformFee, 
+function AnimatedCounter({
+  from,
+  to,
+  duration = 2000,
+  prefix = '',
+  suffix = '',
+  className = '',
+}: {
+  from: number;
+  to: number;
+  duration?: number;
+  prefix?: string;
+  suffix?: string;
+  className?: string;
+}) {
+  const [current, setCurrent] = useState(from);
+  const startTime = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    startTime.current = null;
+    const animate = (timestamp: number) => {
+      if (startTime.current === null) startTime.current = timestamp;
+      const elapsed = timestamp - startTime.current;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setCurrent(from + (to - from) * eased);
+      if (progress < 1) rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [from, to, duration]);
+
+  const display = (current / 1e9).toFixed(4);
+  return <span className={className}>{prefix}{display}{suffix}</span>;
+}
+
+// ─── Victory Content ──────────────────────────────────────────────────────────
+
+function VictoryContent({
+  totalPot,
+  platformFee,
   winnerPayout,
   explorerUrl,
   onClose,
@@ -51,97 +84,95 @@ function VictoryContent({
   onClose: () => void;
   onViewDetails?: () => void;
 }) {
+  const router = useRouter();
   const payout = winnerPayout || Math.floor(totalPot * 0.9);
+  const [claimed, setClaimed] = useState(false);
 
+  // 5 seconds of confetti
   useEffect(() => {
-    // Fire confetti multiple times for dramatic effect
-    const duration = 3000;
+    const duration = 5000;
     const animationEnd = Date.now() + duration;
-    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 9999 };
-
+    const colors = ['#FFD700', '#FFA500', '#FF6B6B', '#4ECDC4', '#9945FF', '#14F195'];
+    const defaults = { startVelocity: 35, spread: 360, ticks: 80, zIndex: 9999 };
     const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
     const interval = setInterval(() => {
       const timeLeft = animationEnd - Date.now();
-      if (timeLeft <= 0) {
-        clearInterval(interval);
-        return;
-      }
-
-      const particleCount = 50 * (timeLeft / duration);
-      
-      // Confetti from both sides
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
-        colors: ['#FFD700', '#FFA500', '#FF6B6B', '#4ECDC4', '#9945FF'],
-      });
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
-        colors: ['#FFD700', '#FFA500', '#FF6B6B', '#4ECDC4', '#9945FF'],
-      });
-    }, 250);
+      if (timeLeft <= 0) { clearInterval(interval); return; }
+      const particleCount = 80 * (timeLeft / duration);
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }, colors });
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }, colors });
+    }, 200);
 
     return () => clearInterval(interval);
   }, []);
+
+  const handleClaim = () => {
+    setClaimed(true);
+  };
+
+  const handleDashboard = () => {
+    onClose();
+    router.push('/dashboard');
+  };
+
+  const handlePlayAgain = () => {
+    onClose();
+    router.push('/arena');
+  };
 
   return (
     <motion.div
       initial={{ scale: 0.5, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-      className="text-center py-6"
+      className="text-center py-4"
     >
-      {/* Trophy Animation */}
+      {/* Trophy */}
       <motion.div
         initial={{ y: -50, rotate: -15 }}
         animate={{ y: 0, rotate: 0 }}
         transition={{ type: 'spring', stiffness: 300, damping: 20, delay: 0.2 }}
-        className="relative w-32 h-32 mx-auto mb-6"
+        className="relative w-28 h-28 mx-auto mb-4"
       >
-        {/* Glow effect */}
         <motion.div
-          animate={{ 
-            scale: [1, 1.2, 1],
-            opacity: [0.5, 0.8, 0.5],
-          }}
+          animate={{ scale: [1, 1.2, 1], opacity: [0.5, 0.8, 0.5] }}
           transition={{ duration: 2, repeat: Infinity }}
           className="absolute inset-0 bg-accent/30 rounded-full blur-xl"
         />
-        
-        {/* Trophy icon */}
         <motion.div
-          animate={{ 
-            y: [0, -5, 0],
-          }}
+          animate={{ y: [0, -6, 0] }}
           transition={{ duration: 1.5, repeat: Infinity }}
           className="relative flex items-center justify-center w-full h-full"
         >
-          <Trophy className="h-24 w-24 text-accent drop-shadow-lg" />
-          
-          {/* Sparkles around trophy */}
+          <Trophy className="h-20 w-20 text-accent drop-shadow-lg" />
           <motion.div
             animate={{ rotate: 360 }}
             transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}
             className="absolute inset-0"
           >
-            <Sparkles className="absolute top-0 left-1/2 -translate-x-1/2 h-4 w-4 text-accent" />
-            <Sparkles className="absolute bottom-0 left-1/2 -translate-x-1/2 h-4 w-4 text-accent" />
-            <Sparkles className="absolute left-0 top-1/2 -translate-y-1/2 h-4 w-4 text-accent" />
-            <Sparkles className="absolute right-0 top-1/2 -translate-y-1/2 h-4 w-4 text-accent" />
+            {[0, 90, 180, 270].map((deg) => (
+              <Sparkles
+                key={deg}
+                className="absolute h-3 w-3 text-accent"
+                style={{
+                  top: deg === 0 ? 0 : deg === 180 ? 'auto' : '50%',
+                  bottom: deg === 180 ? 0 : 'auto',
+                  left: deg === 270 ? 0 : deg === 90 ? 'auto' : '50%',
+                  right: deg === 90 ? 0 : 'auto',
+                  transform: 'translate(-50%, -50%)',
+                }}
+              />
+            ))}
           </motion.div>
         </motion.div>
       </motion.div>
 
-      {/* Victory Text */}
       <motion.h2
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.3 }}
-        className="text-3xl sm:text-4xl font-gaming font-bold mb-2"
+        className="text-3xl sm:text-4xl font-gaming font-bold mb-1"
       >
         <span className="bg-gradient-to-r from-accent via-primary to-accent bg-clip-text text-transparent">
           VICTORY!
@@ -152,24 +183,49 @@ function VictoryContent({
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.4 }}
-        className="text-muted-foreground mb-6"
+        className="text-muted-foreground text-sm mb-4"
       >
-        Congratulations! You've won the match!
+        You crushed it! The SOL is yours.
       </motion.p>
 
-      {/* Payout Info */}
+      {/* Payout box — shows counter after claim */}
       <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.5 }}
-        className="p-4 rounded-lg bg-success/10 border border-success/30 mb-6"
+        className="p-4 rounded-xl bg-success/10 border border-success/30 mb-4"
       >
-        <p className="text-sm text-muted-foreground mb-1">Your Winnings</p>
-        <p className="text-3xl font-gaming font-bold text-success">
-          +{formatSol(payout)} SOL
-        </p>
+        <p className="text-xs text-muted-foreground mb-1">Your Winnings</p>
+        {claimed ? (
+          <motion.div
+            initial={{ scale: 0.8 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring', stiffness: 300 }}
+          >
+            <AnimatedCounter
+              from={0}
+              to={payout}
+              duration={2000}
+              prefix="+"
+              suffix=" SOL"
+              className="text-3xl font-gaming font-bold text-success"
+            />
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1.5 }}
+              className="text-xs text-success/70 mt-1"
+            >
+              ✓ Added to your wallet
+            </motion.p>
+          </motion.div>
+        ) : (
+          <p className="text-3xl font-gaming font-bold text-success">
+            +{formatSol(payout)} SOL
+          </p>
+        )}
         <p className="text-xs text-muted-foreground mt-2">
-          Total pot: {formatSol(totalPot)} SOL | Platform fee: {formatSol(platformFee)} SOL (10%)
+          Total pot: {formatSol(totalPot)} SOL · Platform fee: {formatSol(platformFee)} SOL (10%)
         </p>
       </motion.div>
 
@@ -178,75 +234,102 @@ function VictoryContent({
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.6 }}
-        className="flex flex-col sm:flex-row gap-3"
+        className="space-y-3"
       >
-        {explorerUrl && (
-          <a
-            href={explorerUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1"
+        {!claimed ? (
+          <Button variant="neon" className="w-full" onClick={handleClaim}>
+            <ArrowRight className="h-4 w-4 mr-2" />
+            Claim Victory
+          </Button>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="grid grid-cols-2 gap-2"
           >
-            <Button variant="outline" className="w-full">
-              View Transaction <ExternalLink className="h-4 w-4 ml-2" />
+            <Button variant="default" className="w-full" onClick={handleDashboard}>
+              <LayoutDashboard className="h-4 w-4 mr-1.5" />
+              Dashboard
             </Button>
-          </a>
+            <Button variant="neon" className="w-full" onClick={handlePlayAgain}>
+              <Swords className="h-4 w-4 mr-1.5" />
+              Play Again
+            </Button>
+            {onViewDetails && (
+              <Button variant="outline" className="w-full col-span-2" onClick={onViewDetails}>
+                <BarChart3 className="h-4 w-4 mr-1.5" />
+                View Match Details
+              </Button>
+            )}
+            {explorerUrl && (
+              <a href={explorerUrl} target="_blank" rel="noopener noreferrer" className="col-span-2">
+                <Button variant="outline" className="w-full">
+                  <ExternalLink className="h-4 w-4 mr-1.5" />
+                  View Transaction
+                </Button>
+              </a>
+            )}
+          </motion.div>
         )}
-        <Button variant="neon" className="flex-1" onClick={onClose}>
-          Claim Victory <ArrowRight className="h-4 w-4 ml-2" />
-        </Button>
       </motion.div>
     </motion.div>
   );
 }
 
-// ─── Defeat Animation ─────────────────────────────────────────────────────────
+// ─── Defeat Content ───────────────────────────────────────────────────────────
 
 function DefeatContent({
   winnerWallet,
   winnerUsername,
   totalPot,
+  refundAmount,
   onClose,
   onViewDetails,
 }: {
   winnerWallet?: string | null;
   winnerUsername?: string | null;
   totalPot: number;
+  refundAmount?: number;
   onClose: () => void;
   onViewDetails?: () => void;
 }) {
+  const router = useRouter();
+  const lost = refundAmount ?? Math.floor(totalPot / 2);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  const handlePlayAgain = () => { onClose(); router.push('/arena'); };
+  const handleDashboard = () => { onClose(); router.push('/dashboard'); };
+  const handleLeaderboard = () => { onClose(); router.push('/leaderboard'); };
+
   return (
     <motion.div
       initial={{ scale: 0.8, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 200, damping: 20 }}
-      className="text-center py-6"
+      className="text-center py-4"
     >
-      {/* Defeat Icon */}
+      {/* Defeat icon */}
       <motion.div
         initial={{ y: -20 }}
         animate={{ y: 0 }}
         transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-        className="relative w-28 h-28 mx-auto mb-6"
+        className="relative w-24 h-24 mx-auto mb-4"
       >
-        <div className="absolute inset-0 bg-muted/30 rounded-full blur-lg" />
+        <div className="absolute inset-0 bg-destructive/10 rounded-full blur-lg" />
         <motion.div
-          animate={{ 
-            scale: [1, 0.95, 1],
-          }}
+          animate={{ scale: [1, 0.95, 1] }}
           transition={{ duration: 2, repeat: Infinity }}
           className="relative flex items-center justify-center w-full h-full"
         >
-          <Frown className="h-20 w-20 text-muted-foreground" />
+          <Frown className="h-16 w-16 text-muted-foreground" />
         </motion.div>
       </motion.div>
 
-      {/* Defeat Text */}
       <motion.h2
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.2 }}
-        className="text-2xl sm:text-3xl font-gaming font-bold text-muted-foreground mb-2"
+        className="text-2xl sm:text-3xl font-gaming font-bold text-muted-foreground mb-1"
       >
         DEFEAT
       </motion.h2>
@@ -255,40 +338,64 @@ function DefeatContent({
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.3 }}
-        className="text-muted-foreground mb-6"
+        className="text-muted-foreground text-sm mb-4"
       >
-        Better luck next time. Keep practicing!
+        Tough match. Every loss makes you sharper.
       </motion.p>
 
-      {/* Winner Info */}
+      {/* Loss amount */}
+      <motion.div
+        initial={{ y: 20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 0.4 }}
+        className="p-4 rounded-xl bg-destructive/10 border border-destructive/30 mb-3"
+      >
+        <p className="text-xs text-muted-foreground mb-1">Amount Lost</p>
+        {acknowledged ? (
+          <AnimatedCounter
+            from={lost}
+            to={0}
+            duration={1500}
+            prefix="-"
+            suffix=" SOL"
+            className="text-2xl font-gaming font-bold text-destructive"
+          />
+        ) : (
+          <p className="text-2xl font-gaming font-bold text-destructive">
+            -{formatSol(lost)} SOL
+          </p>
+        )}
+      </motion.div>
+
+      {/* Winner info */}
       {winnerWallet && (
         <motion.div
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.4 }}
-          className="p-4 rounded-lg bg-muted/30 border border-border mb-6"
+          transition={{ delay: 0.45 }}
+          className="p-3 rounded-xl bg-muted/20 border border-border mb-3"
         >
-          <p className="text-sm text-muted-foreground mb-2">Winner</p>
+          <p className="text-xs text-muted-foreground mb-1">Winner</p>
           <PlayerLink
             walletAddress={winnerWallet}
             username={winnerUsername}
-            className="font-gaming font-bold text-primary"
+            className="font-gaming font-bold text-primary text-sm"
           />
-          <p className="text-sm text-muted-foreground mt-2">
-            Won {formatSol(Math.floor(totalPot * 0.9))} SOL
+          <p className="text-xs text-muted-foreground mt-1">
+            Took home {formatSol(Math.floor(totalPot * 0.9))} SOL
           </p>
         </motion.div>
       )}
 
-      {/* Encouragement */}
+      {/* Motivation */}
       <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.5 }}
-        className="p-3 rounded-lg bg-primary/5 border border-primary/20 mb-6"
+        className="p-3 rounded-xl bg-primary/5 border border-primary/20 mb-4"
       >
-        <p className="text-sm text-muted-foreground">
-          Don't give up! Every loss is a learning opportunity.
+        <p className="text-xs text-muted-foreground">
+          💪 Study the game, level up, and come back stronger. The leaderboard is waiting.
         </p>
       </motion.div>
 
@@ -297,62 +404,87 @@ function DefeatContent({
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.6 }}
-        className="flex gap-3"
+        className="space-y-2"
       >
-        {onViewDetails && (
-          <Button variant="outline" className="flex-1" onClick={onViewDetails}>
-            View Match Details
+        {!acknowledged ? (
+          <Button
+            variant="default"
+            className="w-full"
+            onClick={() => setAcknowledged(true)}
+          >
+            Accept Defeat
           </Button>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="grid grid-cols-2 gap-2"
+          >
+            <Button variant="neon" className="w-full" onClick={handlePlayAgain}>
+              <RefreshCw className="h-4 w-4 mr-1.5" />
+              Rematch
+            </Button>
+            <Button variant="default" className="w-full" onClick={handleDashboard}>
+              <LayoutDashboard className="h-4 w-4 mr-1.5" />
+              Dashboard
+            </Button>
+            {onViewDetails && (
+              <Button variant="outline" className="w-full" onClick={onViewDetails}>
+                <BarChart3 className="h-4 w-4 mr-1.5" />
+                Match Details
+              </Button>
+            )}
+            <Button variant="outline" className="w-full" onClick={handleLeaderboard}>
+              <Trophy className="h-4 w-4 mr-1.5" />
+              Leaderboard
+            </Button>
+          </motion.div>
         )}
-        <Button variant="default" className="flex-1" onClick={onClose}>
-          Play Again
-        </Button>
       </motion.div>
     </motion.div>
   );
 }
 
-// ─── Draw Animation ───────────────────────────────────────────────────────────
+// ─── Draw Content ─────────────────────────────────────────────────────────────
 
 function DrawContent({
   refundAmount,
   onClose,
+  onViewDetails,
 }: {
   refundAmount?: number;
   onClose: () => void;
+  onViewDetails?: () => void;
 }) {
+  const router = useRouter();
   return (
     <motion.div
       initial={{ scale: 0.8, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ type: 'spring', stiffness: 200, damping: 20 }}
-      className="text-center py-6"
+      className="text-center py-4"
     >
-      {/* Draw Icon */}
       <motion.div
         initial={{ rotate: -10 }}
         animate={{ rotate: 0 }}
         transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-        className="relative w-28 h-28 mx-auto mb-6"
+        className="relative w-24 h-24 mx-auto mb-4"
       >
         <div className="absolute inset-0 bg-muted/20 rounded-full blur-lg" />
         <motion.div
-          animate={{ 
-            scale: [1, 1.05, 1],
-          }}
+          animate={{ scale: [1, 1.05, 1] }}
           transition={{ duration: 2, repeat: Infinity }}
           className="relative flex items-center justify-center w-full h-full"
         >
-          <Scale className="h-20 w-20 text-muted-foreground" />
+          <Scale className="h-16 w-16 text-muted-foreground" />
         </motion.div>
       </motion.div>
 
-      {/* Draw Text */}
       <motion.h2
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.2 }}
-        className="text-2xl sm:text-3xl font-gaming font-bold text-muted-foreground mb-2"
+        className="text-2xl sm:text-3xl font-gaming font-bold text-muted-foreground mb-1"
       >
         DRAW
       </motion.h2>
@@ -361,36 +493,44 @@ function DrawContent({
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.3 }}
-        className="text-muted-foreground mb-6"
+        className="text-muted-foreground text-sm mb-4"
       >
-        The match ended in a draw.
+        An equal match — honours even.
       </motion.p>
 
-      {/* Refund Info */}
       <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.4 }}
-        className="p-4 rounded-lg bg-muted/30 border border-border mb-6"
+        className="p-4 rounded-xl bg-muted/30 border border-border mb-4"
       >
-        <p className="text-sm text-muted-foreground mb-1">Refund Amount</p>
+        <p className="text-xs text-muted-foreground mb-1">Refunded to Your Wallet</p>
         <p className="text-2xl font-gaming font-bold text-foreground">
           {formatSol(refundAmount || 0)} SOL
         </p>
-        <p className="text-xs text-muted-foreground mt-2">
-          Your stake has been returned to your wallet.
-        </p>
+        <p className="text-xs text-muted-foreground mt-1">Your stake has been returned in full.</p>
       </motion.div>
 
-      {/* Action */}
       <motion.div
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.5 }}
+        className="grid grid-cols-2 gap-2"
       >
-        <Button variant="default" className="w-full" onClick={onClose}>
-          Continue
+        <Button variant="neon" className="w-full" onClick={() => { onClose(); router.push('/arena'); }}>
+          <Swords className="h-4 w-4 mr-1.5" />
+          Play Again
         </Button>
+        <Button variant="default" className="w-full" onClick={() => { onClose(); router.push('/dashboard'); }}>
+          <Home className="h-4 w-4 mr-1.5" />
+          Dashboard
+        </Button>
+        {onViewDetails && (
+          <Button variant="outline" className="w-full col-span-2" onClick={onViewDetails}>
+            <BarChart3 className="h-4 w-4 mr-1.5" />
+            View Match Details
+          </Button>
+        )}
       </motion.div>
     </motion.div>
   );
@@ -411,20 +551,17 @@ export function GameResultModal({
   explorerUrl,
   onViewDetails,
 }: GameResultModalProps) {
-  const handleClose = useCallback(() => {
-    onOpenChange(false);
-  }, [onOpenChange]);
+  const handleClose = useCallback(() => onOpenChange(false), [onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className={`sm:max-w-md border bg-card ${
-          result === 'win' 
-            ? 'border-success/40' 
-            : result === 'lose'
-              ? 'border-muted'
-              : 'border-muted'
-        }`}
+        className={`sm:max-w-md border bg-card overflow-y-auto max-h-[90vh] ${result === 'win'
+          ? 'border-success/40'
+          : result === 'lose'
+            ? 'border-destructive/30'
+            : 'border-muted'
+          }`}
         aria-describedby={undefined}
       >
         <AnimatePresence mode="wait">
@@ -445,6 +582,7 @@ export function GameResultModal({
               winnerWallet={winnerWallet}
               winnerUsername={winnerUsername}
               totalPot={totalPot}
+              refundAmount={refundAmount}
               onClose={handleClose}
               onViewDetails={onViewDetails}
             />
@@ -454,6 +592,7 @@ export function GameResultModal({
               key="draw"
               refundAmount={refundAmount}
               onClose={handleClose}
+              onViewDetails={onViewDetails}
             />
           )}
         </AnimatePresence>
