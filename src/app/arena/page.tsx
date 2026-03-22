@@ -203,21 +203,23 @@ function ArenaInner() {
 
   const [gameResultOpen, setGameResultOpen] = useState(false)
   const [gameResultWager, setGameResultWager] = useState<Wager | null>(null)
+  const [deepLinkResultId, setDeepLinkResultId] = useState<string | null>(null)
   const shownResultForRef = useRef<Set<string>>(new Set())
 
   const queryClient = useQueryClient()
   const checkGameComplete = useCheckGameComplete()
 
 
-  // ── Deep-link from notification: ?wager=<id>&modal=ready-room ─────────────
+  // ── Deep-link from notification: ?wager=<id>&modal=ready-room|result ───────
   useEffect(() => {
     const wagerId = searchParams.get('wager')
     const modal = searchParams.get('modal')
     if (!wagerId || !modal) return
     if (modal === 'ready-room') {
       setReadyRoomWagerId(wagerId)
+    } else if (modal === 'result') {
+      setDeepLinkResultId(wagerId)
     } else if (modal === 'details') {
-      // wager data loads via useWagerById when id is set
       setReadyRoomWagerId(null)
     }
     // Clear the params from URL without reload
@@ -226,7 +228,7 @@ function ArenaInner() {
     url.searchParams.delete('modal')
     window.history.replaceState({}, '', url.pathname)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams])
 
   const { data: openWagers, isLoading: openLoading } = useOpenWagers()
   const { data: liveWagers, isLoading: liveLoading } = useLiveWagers()
@@ -314,6 +316,7 @@ function ArenaInner() {
   const { data: player } = usePlayer()
   const { data: walletBalance, isLoading: balanceLoading } = useWalletBalance()
   const { data: readyRoomWager } = useWagerById(readyRoomWagerId)
+  const { data: deepLinkResultWager } = useWagerById(deepLinkResultId)
   const quickMatch = useQuickMatch()
   const joinWager = useJoinWager()
   const editWagerMutation = useEditWager()
@@ -706,6 +709,22 @@ function ArenaInner() {
           setGameResultOpen(false)
           if (gameResultWager) handleViewDetails(gameResultWager)
         }}
+      />
+      {/* Deep-link result: notification clicked while on arena page */}
+      <GameResultModal
+        open={!!deepLinkResultId && !!deepLinkResultWager}
+        onOpenChange={(open) => !open && setDeepLinkResultId(null)}
+        result={
+          !deepLinkResultWager ? 'draw'
+            : !(deepLinkResultWager as any)?.winner_wallet ? 'draw'
+              : (deepLinkResultWager as any).winner_wallet === walletAddress ? 'win' : 'lose'
+        }
+        winnerWallet={(deepLinkResultWager as any)?.winner_wallet ?? null}
+        winnerUsername={null}
+        totalPot={(deepLinkResultWager?.stake_lamports ?? 0) * 2}
+        platformFee={Math.floor((deepLinkResultWager?.stake_lamports ?? 0) * 2 * 0.1)}
+        winnerPayout={Math.floor((deepLinkResultWager?.stake_lamports ?? 0) * 2 * 0.9)}
+        refundAmount={deepLinkResultWager?.stake_lamports}
       />
     </div>
   )
