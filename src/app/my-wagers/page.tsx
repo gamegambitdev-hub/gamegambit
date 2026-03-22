@@ -18,10 +18,11 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants'
 import { useMyWagers, useSetReady, useStartGame, useWagerById, Wager } from '@/hooks/useWagers'
-import { usePlayer } from '@/hooks/usePlayer'
+import { usePlayer, usePlayerByWallet } from '@/hooks/usePlayer'
 import { useWagerTransactionsBulk } from '@/hooks/useTransactions'
 import { getExplorerUrl } from '@/lib/solana-config'
 import { ReadyRoomModal } from '@/components/ReadyRoomModal'
+import { GameResultModal } from '@/components/GameResultModal'
 import { EditWagerModal, EditWagerData } from '@/components/EditWagerModal'
 import { useEditWager } from '@/hooks/useWagers'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
@@ -53,11 +54,13 @@ function WagerRow({
   myWallet,
   txSig,
   onEnterReadyRoom,
+  onViewResult,
 }: {
   wager: Wager
   myWallet: string
   txSig?: string | null
   onEnterReadyRoom?: (wagerId: string) => void
+  onViewResult?: (wagerId: string) => void
 }) {
   const game = getGameData(wager.game)
   const isChallenger = wager.player_a_wallet === myWallet
@@ -69,8 +72,13 @@ function WagerRow({
       ? `https://lichess.org/${wager.lichess_game_id}`
       : null
 
+  const isResolved = wager.status === 'resolved' || wager.status === 'cancelled'
   return (
-    <Card variant="wager" className="group hover:border-primary/40 transition-all">
+    <Card
+      variant="wager"
+      className={`group hover:border-primary/40 transition-all ${isResolved && onViewResult ? 'cursor-pointer' : ''}`}
+      onClick={isResolved && onViewResult ? () => onViewResult(wager.id) : undefined}
+    >
       <CardContent className="p-4">
         <div className="flex items-center justify-between gap-3">
           {/* Left */}
@@ -167,6 +175,7 @@ function MyWagersInner() {
   const walletAddress = publicKey?.toBase58() || ''
   const searchParams = useSearchParams()
   const [readyRoomWagerId, setReadyRoomWagerId] = useState<string | null>(null)
+  const [resultWagerId, setResultWagerId] = useState<string | null>(null)
   const [editWager, setEditWager] = useState<Wager | null>(null)
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [visibleAll, setVisibleAll] = useState(10)
@@ -180,8 +189,10 @@ function MyWagersInner() {
     const modal = searchParams.get('modal')
     if (!wagerId || !modal) return
     // Both ready-room and result open the ReadyRoomModal on this page
-    if (modal === 'ready-room' || modal === 'result') {
+    if (modal === 'ready-room') {
       setReadyRoomWagerId(wagerId)
+    } else if (modal === 'result') {
+      setResultWagerId(wagerId)
     }
     // Clear params from URL without reload
     const url = new URL(window.location.href)
@@ -189,11 +200,18 @@ function MyWagersInner() {
     url.searchParams.delete('modal')
     window.history.replaceState({}, '', url.pathname)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams])
 
   const { data: wagers, isLoading } = useMyWagers()
   const { data: player } = usePlayer()
   const { data: readyRoomWager } = useWagerById(readyRoomWagerId)
+  const { data: resultWager } = useWagerById(resultWagerId)
+  const resultWinnerWallet = (resultWager as any)?.winner_wallet as string | null ?? null
+  const { data: resultWinnerPlayerA } = usePlayerByWallet(resultWager?.player_a_wallet ?? null)
+  const { data: resultWinnerPlayerB } = usePlayerByWallet(resultWager?.player_b_wallet ?? null)
+  const resultWinnerUsername = resultWinnerWallet === resultWager?.player_a_wallet
+    ? resultWinnerPlayerA?.username
+    : resultWinnerPlayerB?.username
   const setReadyMutation = useSetReady()
   const startGameMutation = useStartGame()
   const editWagerMutation = useEditWager()
@@ -379,6 +397,7 @@ function MyWagersInner() {
                             myWallet={walletAddress}
                             txSig={txSigByWagerId[wager.id]}
                             onEnterReadyRoom={setReadyRoomWagerId}
+                            onViewResult={setResultWagerId}
                           />
                         </motion.div>
                       ))}
@@ -406,6 +425,7 @@ function MyWagersInner() {
                           myWallet={walletAddress}
                           txSig={txSigByWagerId[wager.id]}
                           onEnterReadyRoom={setReadyRoomWagerId}
+                          onViewResult={setResultWagerId}
                         />
                       </motion.div>
                     ))}
@@ -458,6 +478,22 @@ function MyWagersInner() {
         currentWallet={walletAddress}
       />
 
+
+      <GameResultModal
+        open={!!resultWagerId}
+        onOpenChange={(open) => !open && setResultWagerId(null)}
+        result={
+          !resultWager ? 'draw'
+            : !(resultWager as any)?.winner_wallet ? 'draw'
+              : (resultWager as any).winner_wallet === walletAddress ? 'win' : 'lose'
+        }
+        winnerWallet={resultWinnerWallet}
+        winnerUsername={resultWinnerUsername ?? null}
+        totalPot={(resultWager?.stake_lamports ?? 0) * 2}
+        platformFee={Math.floor((resultWager?.stake_lamports ?? 0) * 2 * 0.1)}
+        winnerPayout={Math.floor((resultWager?.stake_lamports ?? 0) * 2 * 0.9)}
+        refundAmount={resultWager?.stake_lamports}
+      />
       <EditWagerModal
         wager={editWager}
         open={editModalOpen}

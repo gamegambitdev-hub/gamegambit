@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Check, X, Clock, ExternalLink, Swords,
   Loader2, AlertCircle, ShieldCheck, Ban, Hourglass,
-  Monitor, LayoutGrid,
+  Monitor, LayoutGrid, Trophy, Scale,
 } from 'lucide-react';
 import { Wager, useCancelWager } from '@/hooks/useWagers';
 import { GAMES, formatSol } from '@/lib/constants';
@@ -242,9 +242,99 @@ export function ReadyRoomModal({
     onReady(next);
   }, [localReady, onReady]);
 
+
+  // ── Resolved / Cancelled state ────────────────────────────────────────────
+  const isResolved = wager?.status === 'resolved';
+  const isCancelled = wager?.status === 'cancelled';
+  const isEnded = isResolved || isCancelled;
+  const winnerWallet = isResolved ? (wager as any)?.winner_wallet as string | null : null;
+  const isDraw = isResolved && !winnerWallet;
+  const currentUserWon = !!winnerWallet && winnerWallet === currentWallet;
+  const winnerPlayer = winnerWallet === wager?.player_a_wallet ? playerA : playerB;
+  const winnerUsername = winnerPlayer?.username ?? null;
+  const totalPot = (wager?.stake_lamports ?? 0) * 2;
+  const winnerPayout = Math.floor(totalPot * 0.9);
+
   if (!wager) return null;
 
+  // Declare game early — needed in both ended overlay and main render
   const game = getGameData(wager.game);
+
+  // ── Render resolved/cancelled overlay ─────────────────────────────────────
+  if (isEnded) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-md border-border bg-card" aria-describedby={undefined}>
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="text-3xl">{game.icon}</div>
+              <div>
+                <DialogTitle className="font-gaming">
+                  {isCancelled ? 'Wager Cancelled' : isDraw ? 'Game Ended — Draw' : 'Game Ended'}
+                </DialogTitle>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            {isCancelled && (
+              <div className="p-4 rounded-lg bg-muted/30 border border-border text-center space-y-2">
+                <Ban className="h-10 w-10 text-muted-foreground mx-auto" />
+                <p className="text-sm font-medium">This wager was cancelled.</p>
+                <p className="text-xs text-muted-foreground">All deposited funds were refunded to each player.</p>
+              </div>
+            )}
+            {isDraw && (
+              <div className="p-4 rounded-lg bg-muted/30 border border-border text-center space-y-2">
+                <Scale className="h-10 w-10 text-muted-foreground mx-auto" />
+                <p className="text-sm font-medium">The match ended in a draw.</p>
+                <p className="text-xs text-muted-foreground">Each player's stake was refunded.</p>
+                <p className="text-lg font-gaming text-foreground">{formatSol(wager.stake_lamports)} SOL returned</p>
+              </div>
+            )}
+            {isResolved && !isDraw && (
+              <div className={`p-4 rounded-lg border text-center space-y-2 ${currentUserWon ? 'bg-success/10 border-success/30' : 'bg-muted/30 border-border'}`}>
+                {currentUserWon ? (
+                  <Trophy className="h-10 w-10 text-accent mx-auto" />
+                ) : (
+                  <Swords className="h-10 w-10 text-muted-foreground mx-auto" />
+                )}
+                <p className={`text-lg font-gaming font-bold ${currentUserWon ? 'text-success' : 'text-muted-foreground'}`}>
+                  {currentUserWon ? 'You Won!' : 'You Lost'}
+                </p>
+                {winnerWallet && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Winner</p>
+                    <PlayerLink walletAddress={winnerWallet} username={winnerUsername} className="font-medium text-sm" />
+                  </div>
+                )}
+                <p className={`text-xl font-gaming ${currentUserWon ? 'text-success' : 'text-muted-foreground'}`}>
+                  {currentUserWon ? `+${formatSol(winnerPayout)} SOL` : `-${formatSol(wager.stake_lamports)} SOL`}
+                </p>
+              </div>
+            )}
+            {/* Lichess game link if available */}
+            {wager.lichess_game_id && (
+              <a
+                href={`https://lichess.org/${wager.lichess_game_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between p-3 rounded-lg bg-muted/20 border border-border hover:border-primary/40 transition-colors"
+              >
+                <span className="text-sm text-muted-foreground">View game on Lichess</span>
+                <div className="flex items-center gap-1 text-primary text-sm">
+                  {wager.lichess_game_id} <ExternalLink className="h-3 w-3" />
+                </div>
+              </a>
+            )}
+            <Button variant="default" className="w-full" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   const showCountdown = bothReady && countdown !== null && (txState === 'idle' || txState === 'signing');
   const countdownFraction = Math.max(0, Math.min(1, (countdown ?? 0) / COUNTDOWN_SECONDS));
   const ringCircumference = 276.46;
