@@ -1,6 +1,5 @@
 // src/hooks/useWagers.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletAuth } from './useWalletAuth';
@@ -62,9 +61,6 @@ async function invokeSecureWager<T>(
     const json = await res.json().catch(() => ({ error: res.statusText }));
 
     if (!res.ok) {
-      // ── SESSION EXPIRED ───────────────────────────────────────────────────
-      // Dispatch a global event so WalletButton can disconnect + clear token.
-      // This centralises logout logic — no component needs to handle it itself.
       if (res.status === 401) {
         window.dispatchEvent(new CustomEvent('gg:session-expired'));
       }
@@ -111,58 +107,11 @@ export function useOpenWagers() {
   });
 }
 
+// NOTE: The old useLiveWagers had its own Supabase Realtime subscription for
+// UPDATE events. That has been REMOVED because GameEventContext now handles all
+// realtime wager events (INSERT + UPDATE) and keeps the query cache up to date.
+// Keeping a second subscription would cause double cache writes on every event.
 export function useLiveWagers() {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const supabase = getSupabaseClient();
-    const channel = supabase
-      .channel('live-wagers-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'wagers',
-        },
-        (payload) => {
-          const updated = payload.new as Wager;
-
-          // Always keep the per-wager cache fresh
-          queryClient.setQueryData(['wagers', updated.id], updated);
-
-          if (updated.status === 'resolved') {
-            // ── CRITICAL ORDER ──────────────────────────────────────────────
-            // 1. Write last-resolved FIRST so arena/page.tsx cache subscriber
-            //    can read the full wager before it disappears from the live list.
-            queryClient.setQueryData(['wagers', 'last-resolved'], updated);
-
-            // 2. Remove from live list only after last-resolved is written.
-            queryClient.setQueryData<Wager[]>(['wagers', 'live'], (old) =>
-              old ? old.filter((w) => w.id !== updated.id) : old
-            );
-
-            // 3. Refresh winners sidebar
-            queryClient.invalidateQueries({ queryKey: ['wagers', 'winners'] });
-          } else {
-            // For all other status transitions, update in-place so the live
-            // list reflects the latest state without a full refetch round-trip.
-            queryClient.setQueryData<Wager[]>(['wagers', 'live'], (old) => {
-              if (!old) return old;
-              const idx = old.findIndex((w) => w.id === updated.id);
-              if (idx === -1) return old;
-              const next = [...old];
-              next[idx] = updated;
-              return next;
-            });
-          }
-        }
-      )
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [queryClient]);
-
   return useQuery({
     queryKey: ['wagers', 'live'],
     queryFn: async () => {
@@ -388,6 +337,9 @@ export function useStartGame() {
   });
 }
 
+// NOTE: useCheckGameComplete is kept for backwards compatibility but is no longer
+// called anywhere — GameEventContext + Supabase Realtime handles game completion
+// detection for both players simultaneously without polling.
 export function useCheckGameComplete() {
   const queryClient = useQueryClient();
   const { getSessionToken } = useWalletAuth();
