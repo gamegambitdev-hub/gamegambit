@@ -34,7 +34,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
   const queryClient = useQueryClient();
   const { data: playerA } = usePlayerByWallet(wager?.player_a_wallet || null);
   const { data: playerB } = usePlayerByWallet(wager?.player_b_wallet || null);
-  const { data: lichessGame, refetch: refetchGame } = useLichessGameStream(wager?.lichess_game_id);
+  const { data: lichessGame } = useLichessGameStream(wager?.lichess_game_id);
   const checkGameComplete = useCheckGameComplete();
 
   const [showEmbed, setShowEmbed] = useState(false);
@@ -63,7 +63,6 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
     resolvedWinnerWallet === wager?.player_a_wallet ? playerA?.username :
       resolvedWinnerWallet === wager?.player_b_wallet ? playerB?.username : undefined;
 
-  // Reset when wager changes
   useEffect(() => {
     if (wager?.id) {
       setHasShownResult(false);
@@ -71,11 +70,9 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
     }
   }, [wager?.id]);
 
-  // Confetti + toast when result first detected
   useEffect(() => {
     if (!gameFinished || hasShownResult) return;
     setHasShownResult(true);
-
     if (isCurrentPlayerWinner) {
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
       toast.success('🎉 You won! Funds are being sent to your wallet.');
@@ -86,7 +83,6 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
     }
   }, [gameFinished, hasShownResult, isCurrentPlayerWinner, isDraw, isCurrentPlayerLoser]);
 
-  // Poll every 8s while game is active — fire-and-forget, result arrives via realtime
   const runCheck = useCallback(() => {
     if (!wager || isCheckingRef.current || gameFinished) return;
     isCheckingRef.current = true;
@@ -101,7 +97,6 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
 
   useEffect(() => {
     if (!open || !wager || wager.status !== 'voting') return;
-    // Initial check after a short delay
     const initial = setTimeout(runCheck, 2000);
     const interval = setInterval(runCheck, 8000);
     return () => {
@@ -112,10 +107,9 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
 
   const handleManualCheck = useCallback(() => {
     if (!wager) return;
-    refetchGame();
     runCheck();
     toast.info('Checking game status...');
-  }, [wager, refetchGame, runCheck]);
+  }, [wager, runCheck]);
 
   if (!wager) return null;
 
@@ -154,14 +148,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className={`p-4 sm:p-6 rounded-lg border text-center ${isDraw
-                ? 'bg-muted/30 border-border'
-                : isCurrentPlayerWinner
-                  ? 'bg-success/10 border-success/40'
-                  : isCurrentPlayerLoser
-                    ? 'bg-destructive/10 border-destructive/30'
-                    : 'bg-accent/10 border-accent/30'
-                }`}
+              className={`p-4 sm:p-6 rounded-lg border text-center ${isDraw ? 'bg-muted/30 border-border' : isCurrentPlayerWinner ? 'bg-success/10 border-success/40' : isCurrentPlayerLoser ? 'bg-destructive/10 border-destructive/30' : 'bg-accent/10 border-accent/30'}`}
             >
               {isDraw ? (
                 <>
@@ -179,18 +166,11 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
                   </p>
                   {resolvedWinnerWallet && (
                     <p className="text-sm text-muted-foreground mt-1">
-                      Winner: <PlayerLink
-                        walletAddress={resolvedWinnerWallet}
-                        username={winnerUsername}
-                        className="text-primary font-medium"
-                      />
+                      Winner: <PlayerLink walletAddress={resolvedWinnerWallet} username={winnerUsername} className="text-primary font-medium" />
                     </p>
                   )}
                   <p className={`text-lg font-gaming font-bold mt-2 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`}>
-                    {isCurrentPlayerWinner
-                      ? `+${formatSol(winnerPayout)} SOL`
-                      : `Winner received ${formatSol(winnerPayout)} SOL`
-                    }
+                    {isCurrentPlayerWinner ? `+${formatSol(winnerPayout)} SOL` : `Winner received ${formatSol(winnerPayout)} SOL`}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Platform fee: {formatSol(platformFee)} SOL (10%)
@@ -200,17 +180,12 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
             </motion.div>
           )}
 
-          {/* ── LIVE EMBED (only while in progress) ── */}
+          {/* ── LIVE EMBED ── */}
           {embedUrl && wager.game === 'chess' && !gameFinished && (
             <div className="space-y-2">
               {showEmbed ? (
                 <div className="rounded-lg overflow-hidden border border-border">
-                  <iframe
-                    src={embedUrl}
-                    className="w-full aspect-square sm:aspect-video"
-                    allowFullScreen
-                    title="Lichess Game"
-                  />
+                  <iframe src={embedUrl} className="w-full aspect-square sm:aspect-video" allowFullScreen title="Lichess Game" />
                 </div>
               ) : (
                 <Button variant="outline" className="w-full" onClick={() => setShowEmbed(true)}>
@@ -223,9 +198,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
           {/* ── STAKE INFO ── */}
           <div className="p-3 sm:p-4 rounded-lg bg-primary/10 border border-primary/20 text-center">
             <p className="text-xs sm:text-sm text-muted-foreground mb-1">Total Pool</p>
-            <p className="text-xl sm:text-2xl font-gaming font-bold text-primary">
-              {formatSol(totalPot)} SOL
-            </p>
+            <p className="text-xl sm:text-2xl font-gaming font-bold text-primary">{formatSol(totalPot)} SOL</p>
           </div>
 
           {/* ── PLAYERS ── */}
@@ -235,18 +208,12 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
               { wallet: wager.player_b_wallet || '', player: playerB, label: 'Opponent' },
             ].map(({ wallet, player, label }) => {
               const isWinner = resolvedWinnerWallet === wallet;
+              const cardClass = isWinner ? 'bg-accent/10 border-accent/40' : 'bg-muted/30 border-border';
               return (
-                <div key={wallet} className={`p-3 sm:p-4 rounded-lg border relative ${isWinner ? 'bg-accent/10 border-accent/40' : 'bg-muted/30 border-border'
-                  }`}>
-                  {isWinner && (
-                    <Crown className="h-3 w-3 text-accent absolute top-2 right-2" />
-                  )}
+                <div key={wallet} className={`p-3 sm:p-4 rounded-lg border relative ${cardClass}`}>
+                  {isWinner && <Crown className="h-3 w-3 text-accent absolute top-2 right-2" />}
                   <p className="text-[10px] sm:text-xs text-muted-foreground mb-1">{label}</p>
-                  <PlayerLink
-                    walletAddress={wallet}
-                    username={player?.username}
-                    className="font-medium text-xs sm:text-sm"
-                  />
+                  <PlayerLink walletAddress={wallet} username={player?.username} className="font-medium text-xs sm:text-sm" />
                   {lichessGame?.players?.white?.user?.name?.toLowerCase() === player?.lichess_username?.toLowerCase() && (
                     <Badge variant="outline" className="mt-2 text-[10px] sm:text-xs">White ♔</Badge>
                   )}
@@ -262,12 +229,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
           {gameLink && (
             <div className="p-2 sm:p-3 rounded-lg bg-muted/30 border border-border flex items-center justify-between">
               <span className="text-xs sm:text-sm text-muted-foreground">Lichess Game</span>
-              <a
-                href={gameLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline flex items-center gap-1 text-xs sm:text-sm font-medium"
-              >
+              <a href={gameLink} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1 text-xs sm:text-sm font-medium">
                 Open <ExternalLink className="h-3 w-3" />
               </a>
             </div>
@@ -295,23 +257,12 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
           {/* ── ACTIONS ── */}
           <div className="flex gap-2">
             {gameFinished && isCurrentPlayerWinner && (
-              <Button
-                variant="neon"
-                className="flex-1"
-                onClick={() => {
-                  toast.success('Funds have been automatically sent to your wallet!');
-                  onOpenChange(false);
-                }}
-              >
+              <Button variant="neon" className="flex-1" onClick={() => { toast.success('Funds have been automatically sent to your wallet!'); onOpenChange(false); }}>
                 <Trophy className="h-4 w-4 mr-2" />
                 Claim Victory
               </Button>
             )}
-            <Button
-              variant="outline"
-              className={gameFinished && isCurrentPlayerWinner ? 'flex-1' : 'w-full'}
-              onClick={() => onOpenChange(false)}
-            >
+            <Button variant="outline" className={gameFinished && isCurrentPlayerWinner ? 'flex-1' : 'w-full'} onClick={() => onOpenChange(false)}>
               {gameFinished ? 'Close' : 'Minimize'}
             </Button>
           </div>
