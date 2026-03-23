@@ -1,10 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getSessionByTokenHash } from '@/integrations/supabase/admin/sessions';
+import { hashToken, extractTokenFromHeader } from '@/lib/admin/auth';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 export async function POST(request: NextRequest) {
     try {
+        // ── Session auth — same pattern as every other admin route ───────────────
+        let token = request.cookies.get('admin_token')?.value;
+
+        if (!token) {
+            const authHeader = request.headers.get('authorization');
+            token = extractTokenFromHeader(authHeader);
+        }
+
+        if (!token) {
+            return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const tokenHash = hashToken(token);
+        const sessionResult = await getSessionByTokenHash(tokenHash);
+
+        if (!sessionResult.success || !sessionResult.session) {
+            return NextResponse.json({ success: false, error: 'Invalid or expired session' }, { status: 401 });
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
         const body = await request.json() as {
             action: string;
             adminWallet: string;
@@ -30,6 +52,7 @@ export async function POST(request: NextRequest) {
             ban_player: 'banPlayer',
             flag_player: 'flagPlayer',
             unban_player: 'unbanPlayer',
+            unflag_player: 'unflagPlayer',
             // pass-through if already camelCase
             forceResolve: 'forceResolve',
             forceRefund: 'forceRefund',
@@ -37,6 +60,7 @@ export async function POST(request: NextRequest) {
             banPlayer: 'banPlayer',
             flagPlayer: 'flagPlayer',
             unbanPlayer: 'unbanPlayer',
+            unflagPlayer: 'unflagPlayer',
             checkPdaBalance: 'checkPdaBalance',
             addNote: 'addNote',
         };
@@ -47,13 +71,13 @@ export async function POST(request: NextRequest) {
         }
 
         // Validate required fields per action
-        if ((edgeAction === 'forceResolve') && (!wagerId || !winnerWallet)) {
+        if (edgeAction === 'forceResolve' && (!wagerId || !winnerWallet)) {
             return NextResponse.json({ success: false, error: 'Missing required fields: wagerId, winnerWallet' }, { status: 400 });
         }
         if (['forceRefund', 'markDisputed', 'checkPdaBalance'].includes(edgeAction) && !wagerId) {
             return NextResponse.json({ success: false, error: 'Missing required field: wagerId' }, { status: 400 });
         }
-        if (['banPlayer', 'flagPlayer', 'unbanPlayer'].includes(edgeAction) && !playerWallet) {
+        if (['banPlayer', 'flagPlayer', 'unbanPlayer', 'unflagPlayer'].includes(edgeAction) && !playerWallet) {
             return NextResponse.json({ success: false, error: 'Missing required field: playerWallet' }, { status: 400 });
         }
 
