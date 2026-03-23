@@ -55,7 +55,6 @@ const STATUS_LABEL: Record<string, string> = {
   closed: 'Closed',
 };
 
-// Derives time control category from clock limit (seconds)
 function getTimeCategory(limitSeconds: number): TimeControlCategory {
   if (limitSeconds < 180) return 'Bullet';
   if (limitSeconds < 600) return 'Blitz';
@@ -89,7 +88,6 @@ export function WagerDetailsModal({
   const { publicKey } = useWallet();
   const currentWallet = publicKey?.toBase58();
 
-  // ── Inline edit state ──────────────────────────────────────────────────────
   const [editOpen, setEditOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const editWager = useEditWager();
@@ -118,7 +116,6 @@ export function WagerDetailsModal({
   const platformFee = Math.floor(wager.stake_lamports * 2 * 0.10);
   const winnerPayout = wager.stake_lamports * 2 - platformFee;
 
-  // Chess metadata
   const isChess = wager.game === 'chess';
   const clockLimit = (wager as any).chess_clock_limit as number | undefined;
   const clockIncrement = (wager as any).chess_clock_increment as number | undefined;
@@ -130,64 +127,59 @@ export function WagerDetailsModal({
   const categoryStyle = timeCategory ? CATEGORY_STYLES[timeCategory] : null;
   const timeLabel = hasTimeControl ? formatTimeControl(clockLimit!, clockIncrement!) : null;
 
-  // Is the current user the creator (Player A)?
   const isCreator = currentWallet === wager.player_a_wallet;
 
-  // Which side does the current user play?
   const mySide = (() => {
     if (!sidePreference || sidePreference === 'random') return null;
     if (isCreator) return sidePreference;
     return sidePreference === 'white' ? 'black' : 'white';
   })();
 
-  // ── Edit / proposal handler ────────────────────────────────────────────────
   const handleEditSave = async (updates: EditWagerData) => {
-    if (!wager) return
-    setIsSaving(true)
+    if (!wager) return;
+    setIsSaving(true);
     try {
       if (wager.status === 'joined') {
-        // Route through chat proposal system — opponent must approve
         await sendProposal(wager, {
           stake_lamports: updates.stake_lamports,
           is_public: updates.is_public,
           stream_url: updates.stream_url,
-        })
-        setEditOpen(false)
+        });
+        setEditOpen(false);
       } else {
-        // Direct edit for 'created' wagers
         await editWager.mutateAsync({
           wagerId: wager.id,
           stake_lamports: updates.stake_lamports,
           lichess_game_id: updates.lichess_game_id,
           stream_url: updates.stream_url,
           is_public: updates.is_public,
-        })
-        toast.success('Wager updated')
-        setEditOpen(false)
-        // If parent also wants to know, call the optional callback
-        onEdit?.(wager)
+        });
+        toast.success('Wager updated');
+        setEditOpen(false);
+        onEdit?.(wager);
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to save changes')
+      toast.error(err?.message || 'Failed to save changes');
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
-  }
+  };
 
-  // Open the inline edit modal (intercept the parent's onEdit for joined wagers)
-  const handleEditClick = () => {
-    setEditOpen(true)
-  }
+  const handleEditClick = () => setEditOpen(true);
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent aria-describedby={undefined} className="sm:max-w-md border-primary/30 bg-card">
+        {/* max-h + overflow-y-auto ensures the modal scrolls on small screens */}
+        <DialogContent
+          aria-describedby={undefined}
+          className="sm:max-w-md border-primary/30 bg-card max-h-[92vh] overflow-y-auto"
+        >
           <DialogHeader>
             <div className="flex items-center gap-3">
-              <div className="text-4xl">{game.icon}</div>
+              <div className="text-3xl sm:text-4xl">{game.icon}</div>
               <div>
-                <DialogTitle className="text-xl font-gaming">{game.name} Wager</DialogTitle>
+                <DialogTitle className="text-lg sm:text-xl font-gaming">{game.name} Wager</DialogTitle>
                 <Badge variant={(STATUS_BADGE[wager.status] || 'default') as any}>
                   {STATUS_LABEL[wager.status] || wager.status}
                 </Badge>
@@ -197,16 +189,9 @@ export function WagerDetailsModal({
 
           <div className="space-y-4 mt-4">
 
-            {/* ── RESULT BANNER (resolved/closed only) ── */}
+            {/* ── RESULT BANNER ── */}
             {isResolved && (
-              <div className={`p-4 rounded-lg border text-center ${isDraw
-                ? 'bg-muted/30 border-border'
-                : isCurrentPlayerWinner
-                  ? 'bg-success/10 border-success/40'
-                  : isCurrentPlayerLoser
-                    ? 'bg-destructive/10 border-destructive/30'
-                    : 'bg-accent/10 border-accent/30'
-                }`}>
+              <div className={`p-3 sm:p-4 rounded-lg border text-center ${isDraw ? 'bg-muted/30 border-border' : isCurrentPlayerWinner ? 'bg-success/10 border-success/40' : isCurrentPlayerLoser ? 'bg-destructive/10 border-destructive/30' : 'bg-accent/10 border-accent/30'}`}>
                 {isDraw ? (
                   <>
                     <Minus className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
@@ -215,15 +200,9 @@ export function WagerDetailsModal({
                   </>
                 ) : (
                   <>
-                    <Crown className={`h-8 w-8 mx-auto mb-2 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'
-                      }`} />
+                    <Crown className={`h-8 w-8 mx-auto mb-2 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`} />
                     <p className="font-gaming text-lg">
-                      {isCurrentPlayerWinner
-                        ? '🎉 You Won!'
-                        : isCurrentPlayerLoser
-                          ? 'You Lost'
-                          : `${winnerUsername || truncateAddress(winnerWallet!)} Wins`
-                      }
+                      {isCurrentPlayerWinner ? '🎉 You Won!' : isCurrentPlayerLoser ? 'You Lost' : `${winnerUsername || truncateAddress(winnerWallet!)} Wins`}
                     </p>
                     {winnerWallet && (
                       <p className="text-xs text-muted-foreground mt-1">
@@ -231,23 +210,16 @@ export function WagerDetailsModal({
                       </p>
                     )}
                     <p className={`text-sm font-gaming mt-2 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`}>
-                      {isCurrentPlayerWinner
-                        ? `+${formatSol(winnerPayout)} SOL`
-                        : `Winner received ${formatSol(winnerPayout)} SOL`
-                      }
+                      {isCurrentPlayerWinner ? `+${formatSol(winnerPayout)} SOL` : `Winner received ${formatSol(winnerPayout)} SOL`}
                     </p>
                   </>
                 )}
               </div>
             )}
 
-            {/* ── CHESS TIME CONTROL BADGE (open/active wagers) ── */}
+            {/* ── CHESS TIME CONTROL ── */}
             {isChess && hasTimeControl && !isResolved && categoryStyle && (
-              <div className={cn(
-                "flex items-center justify-between px-3 py-2 rounded-lg border",
-                categoryStyle.bg,
-                categoryStyle.border,
-              )}>
+              <div className={cn("flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg border", categoryStyle.bg, categoryStyle.border)}>
                 <div className="flex items-center gap-2">
                   <span className={cn("w-2 h-2 rounded-full flex-shrink-0", categoryStyle.dot)} />
                   <span className={cn("text-sm font-semibold", categoryStyle.text)}>
@@ -260,19 +232,9 @@ export function WagerDetailsModal({
                 {sidePreference && sidePreference !== 'random' && (
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     {mySide ? (
-                      <>
-                        <span>You play</span>
-                        <span className="font-medium text-foreground capitalize">
-                          {mySide === 'white' ? '⬜ White' : '⬛ Black'}
-                        </span>
-                      </>
+                      <><span>You play</span><span className="font-medium text-foreground capitalize">{mySide === 'white' ? '⬜ White' : '⬛ Black'}</span></>
                     ) : (
-                      <>
-                        <span>Creator plays</span>
-                        <span className="font-medium text-foreground capitalize">
-                          {sidePreference === 'white' ? '⬜ White' : '⬛ Black'}
-                        </span>
-                      </>
+                      <><span>Creator plays</span><span className="font-medium text-foreground capitalize">{sidePreference === 'white' ? '⬜ White' : '⬛ Black'}</span></>
                     )}
                   </div>
                 )}
@@ -280,15 +242,12 @@ export function WagerDetailsModal({
             )}
 
             {/* ── STAKE INFO ── */}
-            <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 text-center">
+            <div className="p-3 sm:p-4 rounded-lg bg-primary/10 border border-primary/20 text-center">
               <p className="text-sm text-muted-foreground mb-1">
                 {isResolved ? 'Total Pool' : 'Stake Amount'}
               </p>
-              <p className="text-3xl font-gaming font-bold text-primary">
-                {isResolved
-                  ? `${formatSol(wager.stake_lamports * 2)} SOL`
-                  : `${formatSol(wager.stake_lamports)} SOL`
-                }
+              <p className="text-2xl sm:text-3xl font-gaming font-bold text-primary">
+                {isResolved ? `${formatSol(wager.stake_lamports * 2)} SOL` : `${formatSol(wager.stake_lamports)} SOL`}
               </p>
               {!isResolved && wager.player_b_wallet && (
                 <p className="text-sm text-muted-foreground mt-1">
@@ -297,7 +256,7 @@ export function WagerDetailsModal({
               )}
               {isResolved && !isDraw && (
                 <p className="text-xs text-muted-foreground mt-1">
-                  Winner: {formatSol(winnerPayout)} SOL · Platform fee: {formatSol(platformFee)} SOL
+                  Winner: {formatSol(winnerPayout)} SOL · Fee: {formatSol(platformFee)} SOL
                 </p>
               )}
             </div>
@@ -305,24 +264,17 @@ export function WagerDetailsModal({
             {/* ── PLAYERS ── */}
             <div className="space-y-3">
               {/* Player A */}
-              <div className={`flex items-center justify-between p-3 rounded-lg ${winnerWallet === wager.player_a_wallet
-                ? 'bg-accent/10 border border-accent/30'
-                : 'bg-muted/30'
-                }`}>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-full bg-primary/20 relative">
+              <div className={`flex items-center justify-between p-3 rounded-lg ${winnerWallet === wager.player_a_wallet ? 'bg-accent/10 border border-accent/30' : 'bg-muted/30'}`}>
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                  <div className="p-2 rounded-full bg-primary/20 relative flex-shrink-0">
                     <User className="h-4 w-4 text-primary" />
                     {winnerWallet === wager.player_a_wallet && (
                       <Crown className="h-3 w-3 text-accent absolute -top-1 -right-1" />
                     )}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Challenger</p>
-                    <PlayerLink
-                      walletAddress={wager.player_a_wallet}
-                      username={playerA?.username}
-                      className="font-medium"
-                    />
+                    <PlayerLink walletAddress={wager.player_a_wallet} username={playerA?.username} className="font-medium text-sm" />
                     {isChess && sidePreference && sidePreference !== 'random' && (
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         Plays {sidePreference === 'white' ? '⬜ White' : '⬛ Black'}
@@ -331,13 +283,13 @@ export function WagerDetailsModal({
                   </div>
                 </div>
                 {playerA && (
-                  <div className="text-right text-xs text-muted-foreground">
+                  <div className="text-right text-xs text-muted-foreground flex-shrink-0">
                     <p>{playerA.total_wins}W / {playerA.total_losses}L</p>
                   </div>
                 )}
               </div>
 
-              {/* VS divider */}
+              {/* VS */}
               <div className="flex items-center gap-2 px-2">
                 <div className="h-px flex-1 bg-border" />
                 <Swords className="h-4 w-4 text-muted-foreground" />
@@ -346,28 +298,21 @@ export function WagerDetailsModal({
 
               {/* Player B */}
               {wager.player_b_wallet ? (
-                <div className={`flex items-center justify-between p-3 rounded-lg ${winnerWallet === wager.player_b_wallet
-                  ? 'bg-accent/10 border border-accent/30'
-                  : 'bg-muted/30'
-                  }`}>
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-full bg-accent/20 relative">
+                <div className={`flex items-center justify-between p-3 rounded-lg ${winnerWallet === wager.player_b_wallet ? 'bg-accent/10 border border-accent/30' : 'bg-muted/30'}`}>
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                    <div className="p-2 rounded-full bg-accent/20 relative flex-shrink-0">
                       <User className="h-4 w-4 text-accent" />
                       {winnerWallet === wager.player_b_wallet && (
                         <Crown className="h-3 w-3 text-accent absolute -top-1 -right-1" />
                       )}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-xs text-muted-foreground">Opponent</p>
-                      <PlayerLink
-                        walletAddress={wager.player_b_wallet}
-                        username={playerB?.username}
-                        className="font-medium"
-                      />
+                      <PlayerLink walletAddress={wager.player_b_wallet} username={playerB?.username} className="font-medium text-sm" />
                     </div>
                   </div>
                   {playerB && (
-                    <div className="text-right text-xs text-muted-foreground">
+                    <div className="text-right text-xs text-muted-foreground flex-shrink-0">
                       <p>{playerB.total_wins}W / {playerB.total_losses}L</p>
                     </div>
                   )}
@@ -399,12 +344,7 @@ export function WagerDetailsModal({
               {wager.lichess_game_id && (
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Lichess Game</span>
-                  <a
-                    href={`https://lichess.org/${wager.lichess_game_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline flex items-center gap-1"
-                  >
+                  <a href={`https://lichess.org/${wager.lichess_game_id}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1">
                     View <ExternalLink className="h-3 w-3" />
                   </a>
                 </div>
@@ -412,12 +352,7 @@ export function WagerDetailsModal({
               {wager.stream_url && (
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Stream</span>
-                  <a
-                    href={wager.stream_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline flex items-center gap-1"
-                  >
+                  <a href={wager.stream_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1">
                     Watch <ExternalLink className="h-3 w-3" />
                   </a>
                 </div>
@@ -433,48 +368,29 @@ export function WagerDetailsModal({
             </div>
 
             {/* ── ACTIONS ── */}
-            <div className="flex gap-2 pt-2">
+            <div className="flex gap-2 pt-2 pb-1">
               {isResolved ? (
                 <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>
                   Close
                 </Button>
               ) : isOwner && wager.status === 'created' ? (
                 <>
-                  <Button variant="outline" className="flex-1" onClick={handleEditClick}>
-                    Edit
-                  </Button>
-                  <Button variant="destructive" className="flex-1" onClick={() => wager && onDelete?.(wager)}>
-                    Delete
-                  </Button>
+                  <Button variant="outline" className="flex-1" onClick={handleEditClick}>Edit</Button>
+                  <Button variant="destructive" className="flex-1" onClick={() => wager && onDelete?.(wager)}>Delete</Button>
                 </>
               ) : isOwner && wager.status === 'joined' ? (
-                // Owner can propose changes to a joined wager via chat
                 <>
-                  <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>
-                    Close
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex-1 border-amber-500/50 text-amber-400 hover:bg-amber-500/10"
-                    onClick={handleEditClick}
-                  >
-                    <Edit className="h-4 w-4 mr-2" />
-                    Propose Edit
+                  <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)}>Close</Button>
+                  <Button variant="outline" className="flex-1 border-amber-500/50 text-amber-400 hover:bg-amber-500/10" onClick={handleEditClick}>
+                    <Edit className="h-4 w-4 mr-2" />Propose Edit
                   </Button>
                 </>
               ) : canJoin && wager.status === 'created' ? (
-                <Button
-                  variant="neon"
-                  className="w-full"
-                  onClick={() => wager && onJoin?.(wager.id)}
-                  disabled={isJoining}
-                >
-                  {isJoining ? 'Joining...' : 'Accept Challenge'}
+                <Button variant="neon" className="w-full h-12 text-base" onClick={() => wager && onJoin?.(wager.id)} disabled={isJoining}>
+                  {isJoining ? 'Joining...' : '⚔️ Accept Challenge'}
                 </Button>
               ) : (
-                <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>
-                  Close
-                </Button>
+                <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>Close</Button>
               )}
             </div>
 
@@ -482,14 +398,12 @@ export function WagerDetailsModal({
         </DialogContent>
       </Dialog>
 
-      {/* ── Inline EditWagerModal — handles both direct edits and proposals ── */}
       <EditWagerModal
         wager={wager}
         open={editOpen}
         onOpenChange={setEditOpen}
         onSave={handleEditSave}
         isSaving={isSaving || sendingProposal}
-        // For joined wagers, stake/visibility/game fields are locked in the form
         canEditGameId={wager.status === 'created'}
       />
     </>

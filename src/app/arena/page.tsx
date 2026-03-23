@@ -63,43 +63,50 @@ function OpenWagerCard({
 
   return (
     <Card variant="wager" className="group cursor-pointer hover:border-primary/40 transition-all duration-300" onClick={() => onViewDetails(wager)}>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="text-3xl">{game.icon}</div>
-            <div>
-              <div className="font-gaming text-sm mb-1">
+      <CardContent className="p-3 sm:p-4">
+        {/* Top row: game icon + player info + stake */}
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <div className="text-2xl sm:text-3xl flex-shrink-0">{game.icon}</div>
+            <div className="min-w-0">
+              <div className="font-gaming text-sm truncate">
                 <PlayerLink walletAddress={wager.player_a_wallet} username={creatorUsername} className="font-gaming" />
-                {isOwner && <span className="ml-2 text-xs text-primary">(You)</span>}
+                {isOwner && <span className="ml-1 text-xs text-primary">(You)</span>}
               </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1 sm:gap-2 text-xs text-muted-foreground">
                 <span>{game.name}</span>
                 <span>•</span>
-                <Clock className="h-3 w-3" />
+                <Clock className="h-3 w-3 flex-shrink-0" />
                 <span>{timeDiff}m ago</span>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="font-gaming text-sm sm:text-lg font-bold text-accent whitespace-nowrap">{formatSol(wager.stake_lamports)} SOL</div>
-            </div>
-            <div className="flex gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
-              {isOwner ? (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => onEdit?.(wager)}><Pencil className="h-4 w-4" /></Button>
-                  <Button variant="destructive" size="sm" onClick={() => onDelete?.(wager)}><Trash2 className="h-4 w-4" /></Button>
-                </>
-              ) : (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => onViewDetails(wager)}><Eye className="h-4 w-4" /></Button>
-                  <Button variant="neon" size="sm" onClick={() => onJoin(wager.id)} disabled={isJoining}>
-                    {isJoining ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept'}
-                  </Button>
-                </>
-              )}
-            </div>
+          <div className="font-gaming text-sm sm:text-lg font-bold text-accent whitespace-nowrap flex-shrink-0">
+            {formatSol(wager.stake_lamports)} SOL
           </div>
+        </div>
+
+        {/* Action buttons — always visible on mobile, hover on desktop */}
+        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+          {isOwner ? (
+            <>
+              <Button variant="outline" size="sm" className="flex-1" onClick={() => onEdit?.(wager)}>
+                <Pencil className="h-4 w-4 sm:mr-1" /><span className="hidden sm:inline">Edit</span>
+              </Button>
+              <Button variant="destructive" size="sm" className="flex-1" onClick={() => onDelete?.(wager)}>
+                <Trash2 className="h-4 w-4 sm:mr-1" /><span className="hidden sm:inline">Delete</span>
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" size="sm" className="flex-1" onClick={() => onViewDetails(wager)}>
+                <Eye className="h-4 w-4 sm:mr-1" /><span className="hidden sm:inline">Details</span>
+              </Button>
+              <Button variant="neon" size="sm" className="flex-1" onClick={() => onJoin(wager.id)} disabled={isJoining}>
+                {isJoining ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept Challenge'}
+              </Button>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -130,9 +137,9 @@ function LiveMatchCard({
 
   return (
     <Card variant="wager" className="cursor-pointer border-primary/20 hover:border-primary/40 transition-all duration-300" onClick={handleClick}>
-      <CardContent className="p-4">
+      <CardContent className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <div className="relative flex-shrink-0">
               <div className="text-2xl sm:text-3xl">{game.icon}</div>
               {!isResolved && (
@@ -144,9 +151,9 @@ function LiveMatchCard({
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1 sm:gap-2 mb-1 flex-wrap">
-                <span className="font-gaming text-xs sm:text-sm truncate max-w-[80px] sm:max-w-none">{truncateAddress(wager.player_a_wallet)}</span>
+                <span className="font-gaming text-xs sm:text-sm truncate max-w-[70px] sm:max-w-none">{truncateAddress(wager.player_a_wallet)}</span>
                 <Swords className="h-3 w-3 sm:h-4 sm:w-4 text-primary flex-shrink-0" />
-                <span className="font-gaming text-xs sm:text-sm truncate max-w-[80px] sm:max-w-none">{wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}</span>
+                <span className="font-gaming text-xs sm:text-sm truncate max-w-[70px] sm:max-w-none">{wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}</span>
               </div>
               <div className="flex items-center gap-1 sm:gap-2 text-xs text-muted-foreground">
                 <span>{game.name}</span>
@@ -158,7 +165,7 @@ function LiveMatchCard({
           <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1 sm:gap-3 flex-shrink-0">
             <div className="font-gaming text-sm sm:text-base text-accent whitespace-nowrap">{formatSol(wager.stake_lamports * 2)} SOL</div>
             {isResolved ? (
-              <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap">{wager.winner_wallet ? '🏆 View Result' : '🤝 Draw'}</Badge>
+              <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap">{wager.winner_wallet ? '🏆 View' : '🤝 Draw'}</Badge>
             ) : canEnterReadyRoom ? (
               <Badge variant="joined" className="cursor-pointer text-xs whitespace-nowrap">Ready Room</Badge>
             ) : isInProgress && isParticipant ? (
@@ -194,12 +201,10 @@ function ArenaInner() {
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
 
-  // ── Contexts ────────────────────────────────────────────────────────────────
   const { onWagerResolved, clearPendingResult } = useGameEvents()
   const { queueAnimation } = useBalanceAnimation()
   const { data: player } = usePlayer()
 
-  // ── Modal state ─────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
   const [createModalOpen, setCreateModalOpen] = useState(false)
   const [quickMatchModalOpen, setQuickMatchModalOpen] = useState(false)
@@ -214,10 +219,8 @@ function ArenaInner() {
   const [gameResultOpen, setGameResultOpen] = useState(false)
   const [deepLinkResultId, setDeepLinkResultId] = useState<string | null>(null)
 
-  // ── useWagerChat — must come AFTER editWager useState ───────────────────
   const { sendProposal } = useWagerChat(editWager?.id ?? null)
 
-  // ── Deep-link from notification ──────────────────────────────────────────
   useEffect(() => {
     const wagerId = searchParams.get('wager')
     const modal = searchParams.get('modal')
@@ -231,14 +234,11 @@ function ArenaInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  // Track readyRoomWagerId and liveGameWagerId in refs so the onWagerResolved
-  // callback always reads the latest values without needing to re-subscribe.
   const readyRoomWagerIdRef = useRef(readyRoomWagerId)
   const liveGameWagerIdRef = useRef(liveGameWagerId)
   useEffect(() => { readyRoomWagerIdRef.current = readyRoomWagerId }, [readyRoomWagerId])
   useEffect(() => { liveGameWagerIdRef.current = liveGameWagerId }, [liveGameWagerId])
 
-  // ── GameEventContext: real-time result detection ─────────────────────────
   useEffect(() => {
     if (!walletAddress) return
     const unsub = onWagerResolved((wager) => {
@@ -460,43 +460,39 @@ function ArenaInner() {
   }
 
   return (
-    <div className="py-8 pb-16">
-      <div className="container px-4">
+    <div className="py-6 pb-16">
+      <div className="container px-3 sm:px-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8"
+          className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-6"
         >
           <div>
-            <h1 className="text-3xl font-bold mb-2 font-gaming"><span className="text-primary">Arena</span></h1>
-            <p className="text-muted-foreground">Find opponents and stake your claim</p>
+            <h1 className="text-2xl sm:text-3xl font-bold mb-1 font-gaming"><span className="text-primary">Arena</span></h1>
+            <p className="text-muted-foreground text-sm">Find opponents and stake your claim</p>
           </div>
-          <div className="flex gap-3 w-full md:w-auto">
-            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="w-full md:w-auto">
-              <Button variant="neon" className="group w-full md:w-auto" onClick={handleCreateWager}>
-                <Plus className="h-4 w-4 mr-2" />Create Wager
-              </Button>
-            </motion.div>
-          </div>
+          <Button variant="neon" className="w-full sm:w-auto" onClick={handleCreateWager}>
+            <Plus className="h-4 w-4 mr-2" />Create Wager
+          </Button>
         </motion.div>
 
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="flex flex-col sm:flex-row gap-4 mb-8"
+          className="flex flex-col sm:flex-row gap-3 mb-6"
         >
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by wallet address or username..."
+              placeholder="Search by wallet or username..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10 bg-card border-border"
             />
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleQuickMatch} disabled={quickMatch.isPending} className="hover:border-primary/50 hover:shadow-neon transition-all">
+            <Button variant="outline" onClick={handleQuickMatch} disabled={quickMatch.isPending} className="flex-1 sm:flex-none hover:border-primary/50 hover:shadow-neon transition-all">
               {quickMatch.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Zap className="h-4 w-4 mr-2" />}
               Quick Match
             </Button>
@@ -504,7 +500,7 @@ function ArenaInner() {
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
           <div className="lg:col-span-2 space-y-6">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
               <div className="flex items-center gap-2 mb-4">
@@ -602,13 +598,13 @@ function ArenaInner() {
                           <div key={wager.id} className="flex items-center justify-between text-sm">
                             <div className="flex items-center gap-2">
                               <span>{game.icon}</span>
-                              <span className="font-gaming text-xs">
+                              <span className="font-gaming text-xs truncate max-w-[120px]">
                                 {wager.winner_wallet
                                   ? (playerUsernameMap[wager.winner_wallet.toLowerCase()] || truncateAddress(wager.winner_wallet))
                                   : 'Unknown'}
                               </span>
                             </div>
-                            <span className="text-accent font-gaming">+{formatSol(wager.stake_lamports)}</span>
+                            <span className="text-accent font-gaming flex-shrink-0">+{formatSol(wager.stake_lamports)}</span>
                           </div>
                         )
                       })}
@@ -663,7 +659,6 @@ function ArenaInner() {
         currentWallet={walletAddress}
       />
 
-      {/* Primary game result — fired by GameEventContext realtime */}
       <GameResultModal
         open={gameResultOpen}
         onOpenChange={(open) => {
@@ -683,7 +678,6 @@ function ArenaInner() {
         }}
       />
 
-      {/* Deep-link result — notification clicked */}
       <GameResultModal
         open={!!deepLinkResultId && !!deepLinkResultWager}
         onOpenChange={(open) => !open && setDeepLinkResultId(null)}
