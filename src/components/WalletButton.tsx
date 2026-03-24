@@ -21,7 +21,6 @@ function useIsMobile() {
   return isMobile
 }
 
-// Detect if we're in a wallet's built-in browser (Phantom, Solflare, etc.)
 function useIsWalletBrowser() {
   const [isWalletBrowser, setIsWalletBrowser] = useState(false)
   useEffect(() => {
@@ -34,6 +33,18 @@ function useIsWalletBrowser() {
     setIsWalletBrowser(isWallet)
   }, [])
   return isWalletBrowser
+}
+
+// Safely extract a string name from a wallet adapter — adapter.name can be
+// an object on some Wallet Standard implementations, which crashes React.
+function getAdapterName(wallet: ReturnType<typeof useWallet>['wallet']): string {
+  if (!wallet?.adapter?.name) return 'Wallet'
+  const raw = wallet.adapter.name
+  if (typeof raw === 'string') return raw
+  if (typeof raw === 'object' && raw !== null) {
+    return (raw as any).name ?? (raw as any).id ?? 'Wallet'
+  }
+  return String(raw)
 }
 
 export function WalletButton() {
@@ -51,7 +62,6 @@ export function WalletButton() {
 
   useEffect(() => { setMounted(true) }, [])
 
-  // Auto-disconnect on session expiry
   useEffect(() => {
     const handler = () => {
       clearSession()
@@ -63,7 +73,6 @@ export function WalletButton() {
     return () => window.removeEventListener('gg:session-expired', handler)
   }, [clearSession, disconnect])
 
-  // Close desktop dropdown on outside click or scroll
   useEffect(() => {
     if (!open || isMobile) return
     const handleOutside = (e: MouseEvent) => {
@@ -114,6 +123,8 @@ export function WalletButton() {
     }
   }
 
+  const walletName = getAdapterName(wallet)
+
   // ── Connected ──────────────────────────────────────────────────────────────
   if (connected && publicKey) {
     return (
@@ -135,8 +146,7 @@ export function WalletButton() {
 
         {mounted && open && createPortal(
           isMobile
-            ? /* ── Mobile: bottom sheet ─────────────────────────────────── */
-            <div
+            ? <div
               className="fixed inset-0 flex items-end justify-center bg-black/60 backdrop-blur-sm"
               style={{ zIndex: 2147483647 }}
               onClick={() => setOpen(false)}
@@ -145,23 +155,18 @@ export function WalletButton() {
                 className="w-full bg-card border-t border-border rounded-t-2xl overflow-hidden"
                 onClick={e => e.stopPropagation()}
               >
-                {/* Handle bar */}
                 <div className="flex justify-center pt-3 pb-1">
                   <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
                 </div>
-
-                {/* Wallet info */}
                 <div className="px-5 py-4 border-b border-border flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
                     <Wallet className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Connected with {wallet?.adapter.name}</p>
+                    <p className="text-xs text-muted-foreground">Connected with {walletName}</p>
                     <p className="text-sm font-mono font-medium">{truncateAddress(publicKey.toBase58(), 8)}</p>
                   </div>
                 </div>
-
-                {/* Actions */}
                 <button
                   onClick={handleCopy}
                   className="w-full flex items-center gap-3 px-5 py-4 text-sm hover:bg-muted transition-colors text-left border-b border-border/40"
@@ -186,20 +191,18 @@ export function WalletButton() {
                   <LogOut className="h-4 w-4" />
                   Disconnect
                 </button>
-                {/* iOS safe area */}
                 <div className="h-6" />
               </div>
             </div>
 
-            : /* ── Desktop: floating dropdown ───────────────────────────── */
-            <div
+            : <div
               ref={dropdownRef}
               className="fixed w-52 bg-card border border-border rounded-xl shadow-2xl overflow-hidden"
               style={{ top: dropdownPos?.top, right: dropdownPos?.right, zIndex: 2147483647 }}
             >
               <div className="px-4 py-3 border-b border-border">
                 <p className="text-xs text-muted-foreground">Connected with</p>
-                <p className="text-sm font-medium truncate">{wallet?.adapter.name}</p>
+                <p className="text-sm font-medium truncate">{walletName}</p>
               </div>
               <button
                 onClick={handleCopy}
@@ -279,6 +282,8 @@ function MobileWalletModal({
     if (found) { select(found.adapter.name); onClose() }
   }
 
+  const directWallets = [phantomAdapter, solflareAdapter].filter((w): w is NonNullable<typeof w> => !!w)
+
   return (
     <div
       className="fixed inset-0 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm"
@@ -294,7 +299,6 @@ function MobileWalletModal({
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
         </div>
 
-        {/* WalletConnect — always shown on mobile */}
         {walletConnectAdapter && (
           <button
             onClick={() => handleSelect(walletConnectAdapter.adapter.name)}
@@ -313,8 +317,7 @@ function MobileWalletModal({
           </button>
         )}
 
-        {/* Phantom + Solflare — only shown inside wallet browsers where extensions work */}
-        {isWalletBrowser && (
+        {isWalletBrowser && directWallets.length > 0 && (
           <>
             <div className="flex items-center gap-2">
               <div className="flex-1 h-px bg-border" />
@@ -322,7 +325,7 @@ function MobileWalletModal({
               <div className="flex-1 h-px bg-border" />
             </div>
             <div className="space-y-2">
-              {[phantomAdapter, solflareAdapter].filter(Boolean).map(w => w && (
+              {directWallets.map(w => (
                 <button
                   key={w.adapter.name}
                   onClick={() => handleSelect(w.adapter.name)}
@@ -341,7 +344,6 @@ function MobileWalletModal({
           </>
         )}
 
-        {/* Warning for regular mobile Chrome/Safari */}
         {!isWalletBrowser && (
           <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
             <p className="text-xs text-muted-foreground">
