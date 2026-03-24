@@ -33,8 +33,11 @@ export interface LichessGame {
   status: string;
   winner?: 'white' | 'black';
   players: {
-    white: { user?: { id: string; name: string }; rating?: number };
-    black: { user?: { id: string; name: string }; rating?: number };
+    // The stream endpoint (/api/stream/game/{id}) returns `user` as a plain
+    // string (username), while the REST endpoint returns { id, name }.
+    // We use a union type here to handle both safely.
+    white: { user?: { id: string; name: string } | string; rating?: number };
+    black: { user?: { id: string; name: string } | string; rating?: number };
   };
   createdAt: number;
   lastMoveAt: number;
@@ -294,8 +297,8 @@ export function useVerifyLichessGame() {
 
       const game: LichessGame = await response.json();
 
-      const whiteUser = game.players.white.user?.name?.toLowerCase();
-      const blackUser = game.players.black.user?.name?.toLowerCase();
+      const whiteUser = getLichessUsername(game.players.white.user);
+      const blackUser = getLichessUsername(game.players.black.user);
       const playerALower = playerAUsername.toLowerCase();
       const playerBLower = playerBUsername.toLowerCase();
 
@@ -374,6 +377,19 @@ export function getGameStatusText(status: string, winner?: 'white' | 'black'): s
     case 'stalemate': return 'Stalemate - Draw';
     case 'aborted': return 'Game was aborted';
     case 'cheat': return 'Game ended due to violation';
-    default: return status;
+    default: return typeof status === 'string' ? status : '';
   }
+}
+
+/**
+ * Safely extracts a lowercase username from a Lichess player user field.
+ * The stream API returns `user` as a plain string while the REST API returns
+ * an object `{ id, name }`. This helper handles both shapes.
+ */
+export function getLichessUsername(
+  user: { id?: string; name?: string } | string | undefined | null
+): string {
+  if (!user) return '';
+  if (typeof user === 'string') return user.toLowerCase();
+  return (user.name ?? user.id ?? '').toLowerCase();
 }

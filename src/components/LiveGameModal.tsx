@@ -7,7 +7,14 @@ import { Wager, useCheckGameComplete } from '@/hooks/useWagers';
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
-import { useLichessGameStream, getLichessGameUrl, getLichessEmbedUrl, isGameFinished as checkIsGameFinished, getGameStatusText } from '@/hooks/useLichess';
+import {
+  useLichessGameStream,
+  getLichessGameUrl,
+  getLichessEmbedUrl,
+  isGameFinished as checkIsGameFinished,
+  getGameStatusText,
+  getLichessUsername,
+} from '@/hooks/useLichess';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import confetti from 'canvas-confetti';
@@ -209,15 +216,22 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
             ].map(({ wallet, player, label }) => {
               const isWinner = resolvedWinnerWallet === wallet;
               const cardClass = isWinner ? 'bg-accent/10 border-accent/40' : 'bg-muted/30 border-border';
+
+              // Safely compare regardless of whether the stream returned
+              // user as a string or as { id, name } object
+              const playerLichessLower = player?.lichess_username?.toLowerCase() ?? '';
+              const isWhite = !!lichessGame && getLichessUsername(lichessGame.players.white.user) === playerLichessLower && !!playerLichessLower;
+              const isBlack = !!lichessGame && getLichessUsername(lichessGame.players.black.user) === playerLichessLower && !!playerLichessLower;
+
               return (
                 <div key={wallet} className={`p-3 sm:p-4 rounded-lg border relative ${cardClass}`}>
                   {isWinner && <Crown className="h-3 w-3 text-accent absolute top-2 right-2" />}
                   <p className="text-[10px] sm:text-xs text-muted-foreground mb-1">{label}</p>
                   <PlayerLink walletAddress={wallet} username={player?.username} className="font-medium text-xs sm:text-sm" />
-                  {lichessGame?.players?.white?.user?.name?.toLowerCase() === player?.lichess_username?.toLowerCase() && (
+                  {isWhite && (
                     <Badge variant="outline" className="mt-2 text-[10px] sm:text-xs">White ♔</Badge>
                   )}
-                  {lichessGame?.players?.black?.user?.name?.toLowerCase() === player?.lichess_username?.toLowerCase() && (
+                  {isBlack && (
                     <Badge variant="outline" className="mt-2 text-[10px] sm:text-xs">Black ♚</Badge>
                   )}
                 </div>
@@ -236,7 +250,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
           )}
 
           {/* ── LICHESS STATUS TEXT ── */}
-          {lichessGame?.status && (
+          {lichessGame?.status && typeof lichessGame.status === 'string' && (
             <p className="text-center text-xs sm:text-sm text-muted-foreground">
               {getGameStatusText(lichessGame.status, lichessGame.winner)}
             </p>
