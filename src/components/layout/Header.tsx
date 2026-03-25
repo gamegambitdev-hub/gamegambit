@@ -2,7 +2,7 @@
 
 import { useWallet } from '@solana/wallet-adapter-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, User, Copy, Check, Smartphone, Swords, LayoutDashboard, Dice5, Trophy, BarChart2 } from 'lucide-react'
+import { Menu, X, User, Copy, Check, Smartphone, Swords, LayoutDashboard, Dice5, Trophy, BarChart2, Settings } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -100,18 +100,41 @@ export function Header() {
             </nav>
 
             {/* ── Right Side ────────────────────────────────────────────────── */}
-            {/* 
-              On mobile we show: ThemeToggle | Notifications | WalletButton | Hamburger
-              WalletButton must be inside a min-w-0 flex child so it cannot push
-              the hamburger off-screen. The wallet adapter injects its own button
-              styles; we cap it with max-w and overflow-hidden on the wrapper.
-            */}
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
               <ThemeToggle />
 
               {connected && (
                 <>
                   <NotificationsDropdown />
+
+                  {/* Settings icon — desktop only */}
+                  <div
+                    className="relative hidden sm:block"
+                    onMouseEnter={() => setHoveredIcon('/settings')}
+                    onMouseLeave={() => setHoveredIcon(null)}
+                  >
+                    <Link href="/settings">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-8 w-8 sm:h-9 sm:w-9",
+                          pathname === '/settings'
+                            ? "bg-primary/10 text-primary"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                        aria-label="Settings"
+                      >
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                    {hoveredIcon === '/settings' && (
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 px-2 py-1 bg-card border border-border rounded text-xs whitespace-nowrap text-foreground pointer-events-none z-50">
+                        Settings
+                      </div>
+                    )}
+                  </div>
+
                   <Link href="/profile" className="hidden sm:block flex-shrink-0">
                     <Button variant="glass" size="sm" className="text-xs sm:text-sm whitespace-nowrap">
                       <User className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
@@ -172,7 +195,6 @@ export function Header() {
       </header>
 
       {/* ── Mobile Menu ─────────────────────────────────────────────────────── */}
-      {/* Rendered outside the header so it can be full-height without clipping */}
       <AnimatePresence>
         {mobileMenuOpen && (
           <>
@@ -238,7 +260,6 @@ export function Header() {
                             : "text-muted-foreground hover:text-foreground hover:bg-muted/70 border border-transparent"
                         )}
                       >
-                        {/* Active left bar */}
                         {isActive && (
                           <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-primary" />
                         )}
@@ -287,6 +308,22 @@ export function Header() {
                     >
                       <User className="h-4 w-4 flex-shrink-0" />
                       <span className="font-gaming tracking-wide">Profile</span>
+                    </Link>
+
+                    {/* Settings — mobile menu */}
+                    <Link
+                      href="/settings"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium",
+                        "transition-all duration-200 border border-transparent",
+                        pathname === '/settings'
+                          ? "bg-primary/15 text-primary border-primary/30"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/70"
+                      )}
+                    >
+                      <Settings className="h-4 w-4 flex-shrink-0" />
+                      <span className="font-gaming tracking-wide">Settings</span>
                     </Link>
 
                     <button
