@@ -83,7 +83,7 @@ export interface ChangeRequestPayload {
 
 // PUBG API search result shape (only what we use)
 interface PubgVerifyResult {
-  valid: boolean;
+  valid: boolean | null;
   accountId?: string;
   displayName?: string;
   error?: string;
@@ -122,7 +122,7 @@ export function GameAccountCard({
   const [mode, setMode] = useState<Mode>('idle');
   const [username, setUsername] = useState('');
   const [foundName, setFoundName] = useState('');   // display name from API
-  const [foundId, setFoundId] = useState('');   // accountId from PUBG API
+  const [foundId, setFoundId] = useState('');       // accountId from PUBG API
   const [error, setError] = useState('');
 
   // Consent checkboxes
@@ -185,13 +185,22 @@ export function GameAccountCard({
         });
         const json: PubgVerifyResult = await res.json();
 
-        if (json.valid && json.accountId) {
+        if (json.valid === true && json.accountId) {
+          // API confirmed the account exists
           setFoundName(json.displayName || trimmed);
           setFoundId(json.accountId);
           resetConsent();
           setMode('found');
-        } else {
+        } else if (json.valid === false) {
+          // API definitively says the username doesn't exist
           setMode('not_found');
+        } else {
+          // valid === null: API unavailable / rate-limited / timed out
+          // Fall back to manual confirm flow (same as CODM / Free Fire)
+          setFoundName(trimmed);
+          setFoundId('');
+          resetConsent();
+          setMode('found');
         }
       } catch {
         setError('Could not reach the verification service. Please try again.');
@@ -425,7 +434,7 @@ export function GameAccountCard({
                     <div className="flex items-center gap-2">
                       <CheckCircle className="h-4 w-4 text-success" />
                       <span className="text-sm font-medium text-success">
-                        {game.apiVerify ? 'Account found' : 'Username entered'}
+                        {game.apiVerify && foundId ? 'Account found' : 'Username entered'}
                       </span>
                     </div>
                     <p className="text-sm font-medium pl-6">{foundName}</p>
