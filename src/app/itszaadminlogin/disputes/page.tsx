@@ -12,7 +12,7 @@ interface Dispute {
     match_id: number;
     player_a_wallet: string;
     player_b_wallet: string;
-    game: 'chess' | 'codm' | 'pubg';
+    game: 'chess' | 'codm' | 'pubg' | 'free_fire';
     stake_lamports: number;
     status: string;
     vote_player_a: string;
