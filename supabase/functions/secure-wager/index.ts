@@ -18,7 +18,6 @@ const DISCRIMINATORS = {
     close_wager: [167, 240, 85, 147, 127, 50, 69, 203],
 };
 
-// ── Lazy Solana loader ────────────────────────────────────────────────────────
 let _solana: typeof import("https://esm.sh/@solana/web3.js@1.98.0") | null = null;
 async function getSolana() {
     if (!_solana) {
@@ -301,7 +300,7 @@ async function sendWebPush(
             icon: '/logo.png',
             badge: '/favicon.png',
             tag: 'gg-' + Date.now(),
-            url: notification.wager_id ? '/arena' : '/',
+            url: notification.wager_id ? '/my-wagers' : '/',
         });
 
         await Promise.allSettled(subs.map(async (sub) => {
@@ -572,28 +571,37 @@ Deno.serve(async (req) => {
             const otherVote = isPlayerA ? wager.vote_player_b : wager.vote_player_a;
             const voteField = isPlayerA ? 'vote_player_a' : 'vote_player_b';
             const updateData: Record<string, unknown> = { [voteField]: votedWinner, vote_timestamp: new Date().toISOString(), status: 'voting' };
-            if (otherVote && otherVote === votedWinner) { updateData.status = 'retractable'; updateData.retract_deadline = new Date(Date.now() + 15_000).toISOString(); }
-            else if (otherVote && otherVote !== votedWinner) { updateData.status = 'disputed'; }
+            let voteResultStatus = 'pending';
+            if (otherVote && otherVote === votedWinner) {
+                updateData.status = 'retractable';
+                updateData.retract_deadline = new Date(Date.now() + 15_000).toISOString();
+                voteResultStatus = 'agreed';
+            } else if (otherVote && otherVote !== votedWinner) {
+                updateData.status = 'disputed';
+                voteResultStatus = 'disputed';
+            }
             const { data: updatedWager, error } = await supabase.from('wagers').update(updateData).eq('id', wagerId).select().single();
             if (error) return respond({ error: 'Failed to submit vote' }, 500);
 
-            // ── Notify opponent that a vote was submitted ──────────────────────
+            // Notify opponent that a vote was submitted
             const opponentWallet = isPlayerA ? wager.player_b_wallet : wager.player_a_wallet;
             if (opponentWallet) {
                 const voterName = await getDisplayName(supabase, walletAddress);
-                const voteStatus = updateData.status;
-                let title = 'Opponent submitted their result';
-                let message = `${voterName} voted on the match result. Submit your vote to confirm.`;
-                if (voteStatus === 'retractable') {
+                const votedForSelf = votedWinner === walletAddress;
+                let title = 'Opponent voted';
+                let message = '';
+                if (voteResultStatus === 'agreed') {
                     title = '✅ Result agreed!';
-                    message = `Both players agreed on the result. Payout will process shortly.`;
-                } else if (voteStatus === 'disputed') {
+                    message = `Both players agree. The result is being confirmed.`;
+                } else if (voteResultStatus === 'disputed') {
                     title = '⚠️ Result disputed';
-                    message = `${voterName} submitted a different result. A moderator will review.`;
+                    message = `${voterName} voted differently. Submit your vote to resolve the dispute.`;
+                } else {
+                    message = `${voterName} voted ${votedForSelf ? 'themselves' : 'you'} as the winner. Submit your vote to confirm.`;
                 }
                 await insertNotifications(supabase, [{
                     player_wallet: opponentWallet,
-                    type: 'vote_submitted',
+                    type: 'wager_vote',
                     title,
                     message,
                     wager_id: wagerId,
@@ -728,8 +736,6 @@ Deno.serve(async (req) => {
         }
 
         // ── notifyRematch ──────────────────────────────────────────────────────
-        // Called from the arena page after creating a new wager as a rematch.
-        // Sends both in-app notification and web push to the opponent.
         if (action === 'notifyRematch') {
             const { wagerId, opponentWallet, fromUsername, game, stake } = data as {
                 wagerId: string;
@@ -738,9 +744,7 @@ Deno.serve(async (req) => {
                 game: string;
                 stake: number;
             };
-            if (!wagerId || !opponentWallet) {
-                return respond({ error: 'wagerId and opponentWallet required' }, 400);
-            }
+            if (!wagerId || !opponentWallet) return respond({ error: 'wagerId and opponentWallet required' }, 400);
 
             const stakeSol = (stake / 1_000_000_000).toFixed(4);
             await insertNotifications(supabase, [{
@@ -843,25 +847,26 @@ Deno.serve(async (req) => {
             const { data: updated, error } = await supabase.from('wagers').update(updatePayload).eq('id', wagerId).select().single();
             if (error) return respond({ error: 'Failed to record deposit' }, 500);
 
-            if (bothDeposited && wager.game === 'chess') {
-                console.log(`[secure-wager] Both deposited on chess wager ${wagerId} — creating Lichess game`);
-                const lichessResult = await tryCreateLichessGame(supabase, wagerId, wager);
-                await insertNotifications(supabase, [
-                    { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
-                    { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
-                ]);
-                return respond({ success: true, wager: { ...updated, ...lichessResult }, gameStarted: true });
-            }
-
-            // Non-chess: notify both players that the game has started
             if (bothDeposited) {
-                await insertNotifications(supabase, [
-                    { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: `Both players have deposited. Your ${wager.game.toUpperCase()} match is live — good luck!`, wager_id: wagerId },
-                    { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: `Both players have deposited. Your ${wager.game.toUpperCase()} match is live — good luck!`, wager_id: wagerId },
-                ]);
+                if (wager.game === 'chess') {
+                    console.log(`[secure-wager] Both deposited on chess wager ${wagerId} — creating Lichess game`);
+                    const lichessResult = await tryCreateLichessGame(supabase, wagerId, wager);
+                    await insertNotifications(supabase, [
+                        { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
+                        { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
+                    ]);
+                    return respond({ success: true, wager: { ...updated, ...lichessResult }, gameStarted: true });
+                } else {
+                    // CODM / PUBG — notify both players game is live
+                    await insertNotifications(supabase, [
+                        { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. The game is live — good luck!', wager_id: wagerId },
+                        { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. The game is live — good luck!', wager_id: wagerId },
+                    ]);
+                    return respond({ success: true, wager: updated, gameStarted: true });
+                }
             }
 
-            return respond({ success: true, wager: updated, gameStarted: bothDeposited });
+            return respond({ success: true, wager: updated, gameStarted: false });
         }
 
         // ── recordOnChainJoin ──────────────────────────────────────────────────
@@ -880,25 +885,25 @@ Deno.serve(async (req) => {
             const { data: updated, error } = await supabase.from('wagers').update(updatePayload).eq('id', wagerId).select().single();
             if (error) return respond({ error: 'Failed to record deposit' }, 500);
 
-            if (bothDeposited && wager.game === 'chess') {
-                console.log(`[secure-wager] Both deposited on chess wager ${wagerId} — creating Lichess game`);
-                const lichessResult = await tryCreateLichessGame(supabase, wagerId, wager);
-                await insertNotifications(supabase, [
-                    { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
-                    { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
-                ]);
-                return respond({ success: true, wager: { ...updated, ...lichessResult }, gameStarted: true });
-            }
-
-            // Non-chess: notify both players that the game has started
             if (bothDeposited) {
-                await insertNotifications(supabase, [
-                    { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: `Both players have deposited. Your ${wager.game.toUpperCase()} match is live — good luck!`, wager_id: wagerId },
-                    { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: `Both players have deposited. Your ${wager.game.toUpperCase()} match is live — good luck!`, wager_id: wagerId },
-                ]);
+                if (wager.game === 'chess') {
+                    console.log(`[secure-wager] Both deposited on chess wager ${wagerId} — creating Lichess game`);
+                    const lichessResult = await tryCreateLichessGame(supabase, wagerId, wager);
+                    await insertNotifications(supabase, [
+                        { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
+                        { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. Your Lichess game is ready — click your play link.', wager_id: wagerId },
+                    ]);
+                    return respond({ success: true, wager: { ...updated, ...lichessResult }, gameStarted: true });
+                } else {
+                    await insertNotifications(supabase, [
+                        { player_wallet: wager.player_a_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. The game is live — good luck!', wager_id: wagerId },
+                        { player_wallet: wager.player_b_wallet, type: 'game_started', title: 'Game started!', message: 'Both players have deposited. The game is live — good luck!', wager_id: wagerId },
+                    ]);
+                    return respond({ success: true, wager: updated, gameStarted: true });
+                }
             }
 
-            return respond({ success: true, wager: updated, gameStarted: bothDeposited });
+            return respond({ success: true, wager: updated, gameStarted: false });
         }
 
         // ── checkGameComplete ──────────────────────────────────────────────────
@@ -971,11 +976,14 @@ Deno.serve(async (req) => {
                     return respond({ gameComplete: true, message: 'Already resolved by concurrent request' });
                 }
 
-                const txSig = await resolveOnChain(supabase, wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw');
-
+                // ── CRITICAL FIX: send notifications BEFORE resolveOnChain ──────
+                // resolveOnChain can hang on Solana RPC timeouts. Notifications must
+                // always fire regardless of on-chain result. We fire them immediately
+                // after the DB update, then kick off on-chain resolution in the background.
                 const stake = wager.stake_lamports as number;
                 const payout = Math.floor(stake * 2 * 0.9);
                 const payoutSol = (payout / 1e9).toFixed(4);
+
                 if (resultType === 'draw') {
                     await insertNotifications(supabase, [
                         { player_wallet: wager.player_a_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId },
@@ -988,6 +996,10 @@ Deno.serve(async (req) => {
                         { player_wallet: loserWallet as string, type: 'wager_lost', title: 'You lost this one', message: 'Better luck next time. Create a new wager and get your SOL back.', wager_id: wagerId },
                     ]);
                 }
+
+                // On-chain resolution runs after notifications — a failure here does NOT
+                // block the response or suppress the notifications above.
+                const txSig = await resolveOnChain(supabase, wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw');
 
                 return respond({
                     gameComplete: true, status: game.status, winner: game.winner,
