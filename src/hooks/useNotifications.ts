@@ -5,7 +5,17 @@ import { getSupabaseClient } from '@/integrations/supabase/client'
 export interface AppNotification {
     id: string
     player_wallet: string
-    type: 'wager_joined' | 'wager_won' | 'wager_lost' | 'wager_draw' | 'wager_cancelled' | 'game_started'
+    type:
+    | 'wager_joined'
+    | 'wager_won'
+    | 'wager_lost'
+    | 'wager_draw'
+    | 'wager_cancelled'
+    | 'game_started'
+    | 'rematch_challenge'
+    | 'wager_vote'
+    | 'chat_message'
+    | 'wager_proposal'
     title: string
     message: string
     wager_id: string | null
@@ -64,7 +74,7 @@ export function useNotifications() {
         fetchPage(offsetRef.current, true)
     }, [fetchPage])
 
-    // Realtime — new notifications slide in instantly + trigger OS push if page hidden
+    // Realtime — new notifications slide in instantly
     useEffect(() => {
         if (!wallet) return
         const supabase = getSupabaseClient()
@@ -82,7 +92,6 @@ export function useNotifications() {
                     const n = payload.new as AppNotification
                     setNotifications(prev => [n, ...prev])
                     offsetRef.current += 1
-                    // Show OS notification if tab is hidden/minimized
                     if (typeof document !== 'undefined' && document.hidden) {
                         if ('Notification' in window && Notification.permission === 'granted') {
                             navigator.serviceWorker?.ready.then(reg => {
@@ -149,29 +158,25 @@ async function subscribeToPush(wallet: string): Promise<void> {
 
         const reg = await navigator.serviceWorker.ready
 
-        // Check if already subscribed — refresh DB record if so
         const existing = await reg.pushManager.getSubscription()
         if (existing) {
             await savePushSubscription(wallet, existing)
             return
         }
 
-        // Ask for permission
         if (Notification.permission !== 'granted') {
             const permission = await Notification.requestPermission()
             if (permission !== 'granted') return
         }
 
-        // Trim whitespace/newlines that can sneak in from Vercel env vars
         const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim()
         if (!vapidPublicKey) {
             console.warn('[push] NEXT_PUBLIC_VAPID_PUBLIC_KEY not set')
             return
         }
 
-        // Validate before passing to atob — invalid chars cause cryptic errors
         if (!/^[A-Za-z0-9\-_+=]+$/.test(vapidPublicKey)) {
-            console.warn('[push] VAPID key contains invalid characters — check Vercel env var for spaces or quotes around the value')
+            console.warn('[push] VAPID key contains invalid characters')
             return
         }
 

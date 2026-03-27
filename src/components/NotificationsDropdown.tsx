@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Trophy, Swords, Clock, Wallet, CheckCheck, ExternalLink, Loader2 } from 'lucide-react';
+import { Bell, Trophy, Swords, Clock, Wallet, CheckCheck, ExternalLink, Loader2, MessageSquare, RefreshCw, FileEdit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -32,24 +32,40 @@ export function NotificationsDropdown() {
         return <Wallet className="h-4 w-4 text-muted-foreground" />;
       case 'wager_cancelled':
         return <Wallet className="h-4 w-4 text-orange-400" />;
+      case 'rematch_challenge':
+        return <RefreshCw className="h-4 w-4 text-primary" />;
+      case 'wager_vote':
+        return <Trophy className="h-4 w-4 text-blue-400" />;
+      case 'chat_message':
+        return <MessageSquare className="h-4 w-4 text-muted-foreground" />;
+      case 'wager_proposal':
+        return <FileEdit className="h-4 w-4 text-amber-400" />;
       default:
         return <Bell className="h-4 w-4" />;
     }
   };
 
-  const getModalTarget = (type: AppNotification['type']): string => {
+  const getModalTarget = (type: AppNotification['type']): { route: 'arena' | 'my-wagers'; modal: string } => {
     switch (type) {
       case 'wager_joined':
       case 'game_started':
-        return 'ready-room';
+        return { route: 'arena', modal: 'ready-room' };
       case 'wager_won':
       case 'wager_lost':
       case 'wager_draw':
-        return 'result';
+        return { route: 'my-wagers', modal: 'result' };
       case 'wager_cancelled':
-        return 'details';
+        return { route: 'my-wagers', modal: 'details' };
+      // rematch opens arena so user can find and accept the new open wager
+      case 'rematch_challenge':
+        return { route: 'arena', modal: 'details' };
+      // vote + chat + proposal go to ready room
+      case 'wager_vote':
+      case 'chat_message':
+      case 'wager_proposal':
+        return { route: 'arena', modal: 'ready-room' };
       default:
-        return 'details';
+        return { route: 'my-wagers', modal: 'details' };
     }
   };
 
@@ -59,14 +75,9 @@ export function NotificationsDropdown() {
 
     if (!notification.wager_id) return;
 
-    const modal = getModalTarget(notification.type);
+    const { route, modal } = getModalTarget(notification.type);
     const params = new URLSearchParams({ wager: notification.wager_id, modal });
-
-    if (modal === 'ready-room') {
-      router.push(`/arena?${params.toString()}`);
-    } else {
-      router.push(`/my-wagers?${params.toString()}`);
-    }
+    router.push(`/${route}?${params.toString()}`);
   }, [markRead, router]);
 
   return (
@@ -195,6 +206,14 @@ function getActionLabel(type: AppNotification['type']): string {
       return 'View Result →';
     case 'wager_cancelled':
       return 'View Details →';
+    case 'rematch_challenge':
+      return 'View Challenge →';
+    case 'wager_vote':
+      return 'View Vote →';
+    case 'chat_message':
+      return 'Open Chat →';
+    case 'wager_proposal':
+      return 'Review Proposal →';
     default:
       return 'View →';
   }
