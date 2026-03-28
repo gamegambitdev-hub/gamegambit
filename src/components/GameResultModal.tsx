@@ -195,7 +195,7 @@ function VictoryContent({
         {!claimed ? (
           <Button variant="neon" className="w-full" onClick={() => setClaimed(true)}>
             <ArrowRight className="h-4 w-4 mr-2" />
-            Claim Victory
+            Collect Your Reward💰
           </Button>
         ) : (
           <motion.div

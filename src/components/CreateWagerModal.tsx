@@ -10,7 +10,7 @@ import {
 import { useCreateWager, GameType } from '@/hooks/useWagers';
 import { useWalletBalance } from '@/hooks/useWalletBalance';
 import { useSearchPlayers, Player, usePlayer } from '@/hooks/usePlayer';
-import { useLichessConnected, startLichessOAuth } from '@/hooks/useLichess';
+import { startLichessOAuth } from '@/hooks/useLichess';
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -90,15 +90,14 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
 
   const createWager = useCreateWager();
   const { data: balance } = useWalletBalance();
-  const { data: player } = usePlayer();
-  const { data: lichessData, isLoading: lichessLoading } = useLichessConnected();
+  const { data: player, isLoading: lichessLoading } = usePlayer();
   const { data: searchResults, isLoading: searchLoading } = useSearchPlayers(opponentSearch);
 
   const stakeLamports = Math.floor(parseFloat(stakeAmount || '0') * 1_000_000_000);
   const balanceLamports = (balance || 0) * 1_000_000_000;
   const isChess = selectedGame === 'chess';
-  const isLichessConnected = !!(lichessData as any)?.lichess_username;
-  const lichessUsername = (lichessData as any)?.lichess_username;
+  const isLichessConnected = !!(player as any)?.lichess_username;
+  const lichessUsername = (player as any)?.lichess_username;
 
   // For chess: check if opponent has Lichess connected when in challenge mode
   const opponentHasLichess = !!(selectedOpponent as any)?.lichess_username;
