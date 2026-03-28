@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletReady } from '@/app/providers'
@@ -11,7 +11,7 @@ const WalletMultiButton = dynamic(
   () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
   { ssr: false }
 )
-import { Swords, Clock, Trophy, XCircle, CheckCircle, Filter, Loader2, Play, ExternalLink, Link2 } from 'lucide-react'
+import { Swords, Clock, Trophy, XCircle, CheckCircle, Filter, Loader2, Play, ExternalLink, Link2, CheckCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +24,8 @@ import { getExplorerUrl } from '@/lib/solana-config'
 import { ReadyRoomModal } from '@/components/ReadyRoomModal'
 import { GameResultModal } from '@/components/GameResultModal'
 import { EditWagerModal, EditWagerData } from '@/components/EditWagerModal'
+import { GameCompleteModal } from '@/components/Gamecompletemodal'
+import { VotingModal } from '@/components/Votingmodal'
 import { useEditWager } from '@/hooks/useWagers'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
 import { useGameEvents } from '@/contexts/GameEventContext'
@@ -58,12 +60,16 @@ function WagerRow({
   txSig,
   onEnterReadyRoom,
   onViewResult,
+  onOpenGameComplete,
+  onOpenVoting,
 }: {
   wager: Wager
   myWallet: string
   txSig?: string | null
   onEnterReadyRoom?: (wagerId: string) => void
   onViewResult?: (wagerId: string) => void
+  onOpenGameComplete?: (wagerId: string) => void
+  onOpenVoting?: (wagerId: string) => void
 }) {
   const game = getGameData(wager.game)
   const isChallenger = wager.player_a_wallet === myWallet
@@ -76,6 +82,15 @@ function WagerRow({
       : null
 
   const isResolved = wager.status === 'resolved' || wager.status === 'cancelled'
+
+  // Voting status — is non-chess wager in voting state?
+  const isNonChessVoting = wager.status === 'voting' && wager.game !== 'chess'
+  const myGameComplete = isChallenger
+    ? !!(wager as any).game_complete_a
+    : !!(wager as any).game_complete_b
+  const bothGameComplete = !!(wager as any).game_complete_a && !!(wager as any).game_complete_b
+  const myVoted = isChallenger ? !!wager.vote_player_a : !!wager.vote_player_b
+
   return (
     <Card
       variant="wager"
@@ -141,14 +156,46 @@ function WagerRow({
               {formatSol(wager.stake_lamports)} SOL
             </div>
             {getStatusBadge(wager.status, won)}
+
+            {/* Ready Room button — joined */}
             {wager.status === 'joined' && onEnterReadyRoom && (
               <Button variant="neon" size="sm" onClick={() => onEnterReadyRoom(wager.id)} className="whitespace-nowrap">
                 <Play className="h-4 w-4 mr-1" />
                 Ready Room
               </Button>
             )}
-            {wager.status === 'voting' && (
-              <Button variant="gold" size="sm">Vote</Button>
+
+            {/* Non-chess voting actions */}
+            {isNonChessVoting && onOpenGameComplete && !bothGameComplete && (
+              <Button
+                variant={myGameComplete ? 'outline' : 'neon'}
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); onOpenGameComplete(wager.id) }}
+                className="whitespace-nowrap"
+                disabled={myGameComplete}
+              >
+                {myGameComplete
+                  ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Waiting…</>
+                  : <><CheckCheck className="h-3.5 w-3.5 mr-1" /> Game Done</>
+                }
+              </Button>
+            )}
+
+            {/* Both confirmed → open vote screen */}
+            {isNonChessVoting && onOpenVoting && bothGameComplete && (
+              <Button
+                variant={myVoted ? 'outline' : 'gold'}
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); onOpenVoting(wager.id) }}
+                className="whitespace-nowrap"
+              >
+                {myVoted ? 'Voted ✓' : 'Vote'}
+              </Button>
+            )}
+
+            {/* Chess voting — server-automated, just a status label */}
+            {wager.status === 'voting' && wager.game === 'chess' && (
+              <Badge variant="voting" className="text-[10px]">Auto Resolving…</Badge>
             )}
           </div>
         </div>
@@ -189,6 +236,10 @@ function MyWagersInner() {
   const [visibleCompleted, setVisibleCompleted] = useState(10)
   const PAGE_SIZE = 10
 
+  // ── Game Complete + Voting modal state ──────────────────────────────────────
+  const [gameCompleteWagerId, setGameCompleteWagerId] = useState<string | null>(null)
+  const [votingWagerId, setVotingWagerId] = useState<string | null>(null)
+
   // ── useWagerChat — must come AFTER editWager useState ───────────────────
   const { sendProposal } = useWagerChat(editWager?.id ?? null)
 
@@ -199,6 +250,8 @@ function MyWagersInner() {
     if (!wagerId || !modal) return
     if (modal === 'ready-room') setReadyRoomWagerId(wagerId)
     else if (modal === 'result') setDeepLinkResultId(wagerId)
+    else if (modal === 'game-complete') setGameCompleteWagerId(wagerId)
+    else if (modal === 'voting') setVotingWagerId(wagerId)
     const url = new URL(window.location.href)
     url.searchParams.delete('wager')
     url.searchParams.delete('modal')
@@ -219,6 +272,10 @@ function MyWagersInner() {
       if (!isParticipant) return
 
       if (readyRoomWagerIdRef.current === wager.id) setReadyRoomWagerId(null)
+
+      // Close game-complete/voting modals if this wager just resolved
+      if (gameCompleteWagerId === wager.id) setGameCompleteWagerId(null)
+      if (votingWagerId === wager.id) setVotingWagerId(null)
 
       const won = wager.winner_wallet === walletAddress
       const isDraw = !wager.winner_wallet
@@ -241,6 +298,8 @@ function MyWagersInner() {
   const { data: player } = usePlayer()
   const { data: readyRoomWager } = useWagerById(readyRoomWagerId)
   const { data: deepLinkResultWager } = useWagerById(deepLinkResultId)
+  const { data: gameCompleteWager } = useWagerById(gameCompleteWagerId)
+  const { data: votingWager } = useWagerById(votingWagerId)
 
   const resultWinnerWallet = resultWager?.winner_wallet ?? null
   const { data: resultWinnerPlayerA } = usePlayerByWallet(resultWager?.player_a_wallet ?? null)
@@ -301,6 +360,31 @@ function MyWagersInner() {
     const w = wagers?.find(x => x.id === wagerId)
     if (w) { setResultWager(w); setResultOpen(true) }
   }
+
+  // When GameCompleteModal's 10s countdown fires, close it and open VotingModal
+  const handleBothConfirmed = useCallback(() => {
+    const wagerId = gameCompleteWagerId
+    setGameCompleteWagerId(null)
+    if (wagerId) setVotingWagerId(wagerId)
+  }, [gameCompleteWagerId])
+
+  // Open GameCompleteModal for a given wager (from WagerRow button)
+  const handleOpenGameComplete = useCallback((wagerId: string) => {
+    const w = wagers?.find(x => x.id === wagerId)
+    if (!w) return
+    // If both already confirmed, go straight to voting
+    const bothDone = !!(w as any).game_complete_a && !!(w as any).game_complete_b
+    if (bothDone) {
+      setVotingWagerId(wagerId)
+    } else {
+      setGameCompleteWagerId(wagerId)
+    }
+  }, [wagers])
+
+  // Open VotingModal for a given wager
+  const handleOpenVoting = useCallback((wagerId: string) => {
+    setVotingWagerId(wagerId)
+  }, [])
 
   useEffect(() => {
     if (
@@ -442,6 +526,8 @@ function MyWagersInner() {
                             txSig={txSigByWagerId[wager.id]}
                             onEnterReadyRoom={setReadyRoomWagerId}
                             onViewResult={handleViewResult}
+                            onOpenGameComplete={handleOpenGameComplete}
+                            onOpenVoting={handleOpenVoting}
                           />
                         </motion.div>
                       ))}
@@ -470,6 +556,8 @@ function MyWagersInner() {
                           txSig={txSigByWagerId[wager.id]}
                           onEnterReadyRoom={setReadyRoomWagerId}
                           onViewResult={handleViewResult}
+                          onOpenGameComplete={handleOpenGameComplete}
+                          onOpenVoting={handleOpenVoting}
                         />
                       </motion.div>
                     ))}
@@ -511,6 +599,8 @@ function MyWagersInner() {
         </Tabs>
       </div>
 
+      {/* ── Modals ──────────────────────────────────────────────────────────── */}
+
       <ReadyRoomModal
         wager={readyRoomWager || null}
         open={!!readyRoomWagerId}
@@ -520,6 +610,23 @@ function MyWagersInner() {
           if (readyRoomWager) { setEditWager(readyRoomWager); setEditModalOpen(true) }
         }}
         isSettingReady={setReadyMutation.isPending}
+        currentWallet={walletAddress}
+      />
+
+      {/* Game Complete Modal — non-chess 'voting' status, pre-vote confirmation */}
+      <GameCompleteModal
+        wager={gameCompleteWager || null}
+        open={!!gameCompleteWagerId}
+        onOpenChange={(open) => !open && setGameCompleteWagerId(null)}
+        currentWallet={walletAddress}
+        onBothConfirmed={handleBothConfirmed}
+      />
+
+      {/* Voting Modal — both players confirmed game is done */}
+      <VotingModal
+        wager={votingWager || null}
+        open={!!votingWagerId}
+        onOpenChange={(open) => !open && setVotingWagerId(null)}
         currentWallet={walletAddress}
       />
 

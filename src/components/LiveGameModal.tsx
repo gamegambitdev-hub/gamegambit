@@ -273,7 +273,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
             {gameFinished && isCurrentPlayerWinner && (
               <Button variant="neon" className="flex-1" onClick={() => { toast.success('Funds have been automatically sent to your wallet!'); onOpenChange(false); }}>
                 <Trophy className="h-4 w-4 mr-2" />
-                Claim Victory
+                Collect Your Reward💰
               </Button>
             )}
             <Button variant="outline" className={gameFinished && isCurrentPlayerWinner ? 'flex-1' : 'w-full'} onClick={() => onOpenChange(false)}>

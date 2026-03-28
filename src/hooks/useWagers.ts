@@ -33,6 +33,14 @@ export interface Wager {
   ready_player_a: boolean | null;
   ready_player_b: boolean | null;
   countdown_started_at: string | null;
+  // ── Step 3: Game Complete + Voting ────────────────────────────────────────
+  game_complete_a: boolean | null;
+  game_complete_b: boolean | null;
+  game_complete_deadline: string | null;
+  vote_a_at: string | null;
+  vote_b_at: string | null;
+  vote_deadline: string | null;
+  dispute_created_at: string | null;
 }
 
 export async function invokeSecureWager<T>(
@@ -143,8 +151,19 @@ export function useMyWagers() {
       if (!walletAddress) return [];
       const { data, error } = await supabase
         .from('wagers')
-        // My Wagers page renders WagerDetailsModal inline — needs full row
-        .select('id, match_id, player_a_wallet, player_b_wallet, game, stake_lamports, lichess_game_id, status, requires_moderator, vote_player_a, vote_player_b, winner_wallet, is_public, stream_url, vote_timestamp, retract_deadline, resolved_at, cancelled_at, cancelled_by, cancel_reason, created_at, updated_at, ready_player_a, ready_player_b, countdown_started_at')
+        // Full row — My Wagers page renders WagerDetailsModal inline
+        // Step 3 fields added: game_complete_a/b, game_complete_deadline,
+        // vote_a/b_at, vote_deadline, dispute_created_at
+        .select(`
+          id, match_id, player_a_wallet, player_b_wallet, game,
+          stake_lamports, lichess_game_id, status, requires_moderator,
+          vote_player_a, vote_player_b, winner_wallet, is_public,
+          stream_url, vote_timestamp, retract_deadline, resolved_at,
+          cancelled_at, cancelled_by, cancel_reason, created_at, updated_at,
+          ready_player_a, ready_player_b, countdown_started_at,
+          game_complete_a, game_complete_b, game_complete_deadline,
+          vote_a_at, vote_b_at, vote_deadline, dispute_created_at
+        `)
         .or(`player_a_wallet.eq.${walletAddress},player_b_wallet.eq.${walletAddress}`)
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -349,8 +368,8 @@ export function useStartGame() {
 
 // NOTE: useCheckGameComplete is kept because LiveGameModal imports it as a
 // manual fallback trigger. Automatic game-completion detection is handled
-// server-side via the Lichess webhook (Batch 4) — this hook is no longer
-// called automatically by GameEventContext.
+// server-side via the Lichess webhook — this hook is no longer called
+// automatically by GameEventContext.
 export function useCheckGameComplete() {
   const queryClient = useQueryClient();
   const { getSessionToken } = useWalletAuth();
@@ -400,5 +419,77 @@ export function useCancelWager() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
+  });
+}
+
+// ─── STEP 3 MUTATIONS ─────────────────────────────────────────────────────────
+
+// Called when a player clicks "Game Done" in GameCompleteModal.
+// Sets their game_complete_a / game_complete_b flag on the server.
+// When both players confirm, the server sets game_complete_deadline (10 s sync
+// window) and vote_deadline (10 s + 5 min).
+export function useMarkGameComplete() {
+  const queryClient = useQueryClient();
+  const { getSessionToken } = useWalletAuth();
+
+  return useMutation({
+    mutationFn: async ({ wagerId }: { wagerId: string }) => {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) throw new Error('Wallet verification required.');
+      const data = await invokeSecureWager<{ wager: Wager }>(
+        { action: 'markGameComplete', wagerId },
+        sessionToken,
+      );
+      return data.wager;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+  });
+}
+
+// Called when a player picks a winner in VotingModal (Step 3 flow).
+// If both votes agree → server resolves the wager (on-chain payout / refund).
+// If votes differ → server moves the wager to 'disputed'.
+export function useSubmitGameVote() {
+  const queryClient = useQueryClient();
+  const { getSessionToken } = useWalletAuth();
+
+  return useMutation({
+    mutationFn: async ({
+      wagerId,
+      votedWinner,
+    }: {
+      wagerId: string;
+      votedWinner: string; // player wallet or 'draw'
+    }) => {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) throw new Error('Wallet verification required.');
+      const data = await invokeSecureWager<{ wager: Wager }>(
+        { action: 'submitVote', wagerId, votedWinner },
+        sessionToken,
+      );
+      return data.wager;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+  });
+}
+
+// Allows a player to clear their vote while the opponent has not yet voted.
+// Once both players have voted the outcome is locked — retraction is rejected
+// server-side with a 400.
+export function useRetractVote() {
+  const queryClient = useQueryClient();
+  const { getSessionToken } = useWalletAuth();
+
+  return useMutation({
+    mutationFn: async ({ wagerId }: { wagerId: string }) => {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) throw new Error('Wallet verification required.');
+      const data = await invokeSecureWager<{ wager: Wager }>(
+        { action: 'retractVote', wagerId },
+        sessionToken,
+      );
+      return data.wager;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
   });
 }

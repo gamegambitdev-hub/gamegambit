@@ -1079,6 +1079,190 @@ Deno.serve(async (req) => {
             return respond({ wager: updatedWager, message: 'Wager cancelled.', refundInitiated: true });
         }
 
+        // ── markGameComplete ──────────────────────────────────────────────────
+        //
+        // Called when a player clicks "Game Done" in GameCompleteModal.
+        // Sets their game_complete_a or game_complete_b flag.
+        // If the opponent already confirmed, sets game_complete_deadline = now + 10s
+        // and vote_deadline = now + 10s + 5 min.
+        if (action === 'markGameComplete') {
+            const { wagerId } = data;
+            if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+
+            const wager = await getWager(wagerId);
+            if (wager.status !== 'voting') return respond({ error: 'Wager is not in voting state' }, 400);
+
+            const isPlayerA = wager.player_a_wallet === walletAddress;
+            const isPlayerB = wager.player_b_wallet === walletAddress;
+            if (!isPlayerA && !isPlayerB) return respond({ error: 'Not a participant' }, 403);
+
+            // Prevent confirming twice
+            if (isPlayerA && wager.game_complete_a) return respond({ error: 'Already confirmed' }, 400);
+            if (isPlayerB && wager.game_complete_b) return respond({ error: 'Already confirmed' }, 400);
+
+            const field = isPlayerA ? 'game_complete_a' : 'game_complete_b';
+            const opponentConfirmed = isPlayerA ? wager.game_complete_b : wager.game_complete_a;
+
+            const updates: Record<string, unknown> = { [field]: true };
+
+            // Both confirmed — set the 10s sync deadline then open the 5-min vote window
+            if (opponentConfirmed) {
+                updates.game_complete_deadline = new Date(Date.now() + 10_000).toISOString();
+                updates.vote_deadline = new Date(Date.now() + 10_000 + 5 * 60 * 1000).toISOString();
+            }
+
+            const { data: updated, error: updateErr } = await supabase
+                .from('wagers')
+                .update(updates)
+                .eq('id', wagerId)
+                .select()
+                .single();
+
+            if (updateErr) return respond({ error: updateErr.message }, 500);
+
+            return respond({ wager: updated });
+        }
+
+        // ── submitVote ────────────────────────────────────────────────────────
+        //
+        // Called when a player selects their winner pick in VotingModal.
+        // Saves vote_player_a or vote_player_b.
+        // If both votes match → resolves wager (on-chain payout / draw refund).
+        // If both votes differ → marks wager 'disputed'.
+        if (action === 'submitVote') {
+            const { wagerId, votedWinner } = data;
+            if (!wagerId || !votedWinner) return respond({ error: 'wagerId and votedWinner required' }, 400);
+
+            const wager = await getWager(wagerId);
+            if (wager.status !== 'voting') return respond({ error: 'Wager is not in voting state' }, 400);
+
+            const isPlayerA = wager.player_a_wallet === walletAddress;
+            const isPlayerB = wager.player_b_wallet === walletAddress;
+            if (!isPlayerA && !isPlayerB) return respond({ error: 'Not a participant' }, 403);
+
+            // Validate votedWinner is a participant wallet or 'draw'
+            const validTargets = [wager.player_a_wallet, wager.player_b_wallet, 'draw'];
+            if (!validTargets.includes(votedWinner)) return respond({ error: 'Invalid vote target' }, 400);
+
+            const voteField = isPlayerA ? 'vote_player_a' : 'vote_player_b';
+            const voteAtField = isPlayerA ? 'vote_a_at' : 'vote_b_at';
+            const opponentVote = isPlayerA ? wager.vote_player_b : wager.vote_player_a;
+
+            const { data: updated, error: updateErr } = await supabase
+                .from('wagers')
+                .update({
+                    [voteField]: votedWinner,
+                    [voteAtField]: new Date().toISOString(),
+                })
+                .eq('id', wagerId)
+                .select()
+                .single();
+
+            if (updateErr) return respond({ error: updateErr.message }, 500);
+
+            // Both players have now voted — evaluate outcome
+            if (opponentVote) {
+                if (opponentVote === votedWinner) {
+                    // Agreement — resolve the wager
+                    const resultType: 'playerA' | 'playerB' | 'draw' =
+                        votedWinner === 'draw'
+                            ? 'draw'
+                            : votedWinner === wager.player_a_wallet
+                                ? 'playerA'
+                                : 'playerB';
+                    const winnerWallet = votedWinner === 'draw' ? null : votedWinner;
+
+                    await supabase
+                        .from('wagers')
+                        .update({
+                            status: 'resolved',
+                            winner_wallet: winnerWallet,
+                            resolved_at: new Date().toISOString(),
+                        })
+                        .eq('id', wagerId);
+
+                    // Notifications
+                    const stake = wager.stake_lamports as number;
+                    const payout = Math.floor(stake * 2 * 0.9);
+                    const payoutSol = (payout / 1e9).toFixed(4);
+
+                    if (resultType === 'draw') {
+                        await insertNotifications(supabase, [
+                            { player_wallet: wager.player_a_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId },
+                            { player_wallet: wager.player_b_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId },
+                        ]);
+                    } else if (winnerWallet) {
+                        const loserWallet = winnerWallet === wager.player_a_wallet ? wager.player_b_wallet : wager.player_a_wallet;
+                        await insertNotifications(supabase, [
+                            { player_wallet: winnerWallet, type: 'wager_won', title: '🏆 You won!', message: `${payoutSol} SOL has been sent to your wallet.`, wager_id: wagerId },
+                            { player_wallet: loserWallet as string, type: 'wager_lost', title: 'You lost this one', message: 'Better luck next time. Create a new wager and get your SOL back.', wager_id: wagerId },
+                        ]);
+                    }
+
+                    // On-chain resolution (non-blocking — failure does not suppress notifications)
+                    await resolveOnChain(supabase, wager, winnerWallet, resultType);
+
+                } else {
+                    // Disagreement — move to disputed
+                    await supabase
+                        .from('wagers')
+                        .update({
+                            status: 'disputed',
+                            dispute_created_at: new Date().toISOString(),
+                        })
+                        .eq('id', wagerId);
+
+                    // Notify both players of the dispute
+                    await insertNotifications(supabase, [
+                        { player_wallet: wager.player_a_wallet, type: 'wager_disputed', title: '⚠️ Result disputed', message: 'You and your opponent voted differently. A moderator will review the match.', wager_id: wagerId },
+                        { player_wallet: wager.player_b_wallet as string, type: 'wager_disputed', title: '⚠️ Result disputed', message: 'You and your opponent voted differently. A moderator will review the match.', wager_id: wagerId },
+                    ]);
+                }
+            }
+
+            const { data: final } = await supabase
+                .from('wagers')
+                .select('*')
+                .eq('id', wagerId)
+                .single();
+
+            return respond({ wager: final ?? updated });
+        }
+
+        // ── retractVote ───────────────────────────────────────────────────────
+        //
+        // Allows a player to clear their vote while opponent hasn't voted yet.
+        // Once both have voted the outcome is final — no retraction possible.
+        if (action === 'retractVote') {
+            const { wagerId } = data;
+            if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+
+            const wager = await getWager(wagerId);
+            if (wager.status !== 'voting') return respond({ error: 'Wager is not in voting state' }, 400);
+
+            const isPlayerA = wager.player_a_wallet === walletAddress;
+            const isPlayerB = wager.player_b_wallet === walletAddress;
+            if (!isPlayerA && !isPlayerB) return respond({ error: 'Not a participant' }, 403);
+
+            // Can only retract if opponent hasn't voted — once both voted outcome is locked
+            const opponentVote = isPlayerA ? wager.vote_player_b : wager.vote_player_a;
+            if (opponentVote) return respond({ error: 'Cannot retract — opponent has already voted' }, 400);
+
+            const voteField = isPlayerA ? 'vote_player_a' : 'vote_player_b';
+            const voteAtField = isPlayerA ? 'vote_a_at' : 'vote_b_at';
+
+            const { data: updated, error: updateErr } = await supabase
+                .from('wagers')
+                .update({ [voteField]: null, [voteAtField]: null })
+                .eq('id', wagerId)
+                .select()
+                .single();
+
+            if (updateErr) return respond({ error: updateErr.message }, 500);
+
+            return respond({ wager: updated });
+        }
+
         return respond({ error: 'Invalid action' }, 400);
 
     } catch (error) {

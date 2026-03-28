@@ -196,7 +196,7 @@ export function useSearchPlayers(searchQuery: string) {
 
       const { data, error } = await getSupabaseClient()
         .from('players')
-        .select('wallet_address, username, avatar_url, total_wins, total_losses')
+        .select('wallet_address, username, avatar_url, total_wins, total_losses, lichess_username')
         .or(`username.ilike.%${searchQuery}%,wallet_address.ilike.%${searchQuery}%`)
         .limit(20);
 
