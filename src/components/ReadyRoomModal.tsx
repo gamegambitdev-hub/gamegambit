@@ -36,6 +36,8 @@ interface ReadyRoomModalProps {
   onEditWager: () => void;
   isSettingReady?: boolean;
   currentWallet?: string;
+  /** Called when non-chess game starts — opens GameCompleteModal */
+  onOpenGameComplete?: (wager: Wager) => void;
 }
 
 type TxState = 'idle' | 'signing' | 'waiting_other' | 'confirmed' | 'error';
@@ -50,6 +52,7 @@ const getGameData = (game: string) => {
     case 'chess': return GAMES.CHESS;
     case 'codm': return GAMES.CODM;
     case 'pubg': return GAMES.PUBG;
+    case 'free_fire': return GAMES.FREE_FIRE;
     default: return GAMES.CHESS;
   }
 };
@@ -70,6 +73,7 @@ export function ReadyRoomModal({
   onEditWager,
   isSettingReady,
   currentWallet,
+  onOpenGameComplete,
 }: ReadyRoomModalProps) {
 
   const { data: playerA } = usePlayerByWallet(wager?.player_a_wallet ?? null);
@@ -572,11 +576,75 @@ export function ReadyRoomModal({
 
               {txState === 'confirmed' && !hasLichessGame && (
                 <motion.div key="confirmed" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                  className="flex flex-col items-center gap-2 py-4"
+                  className="flex flex-col gap-3 py-2"
                 >
-                  <ShieldCheck className="h-8 w-8 text-success" />
-                  <p className="text-sm font-medium text-success">Both stakes locked in escrow!</p>
-                  <p className="text-xs text-muted-foreground">Funds release automatically to the winner after the game.</p>
+                  {/* Stakes locked banner */}
+                  <div className="flex flex-col items-center gap-1 py-3 rounded-lg bg-success/10 border border-success/30">
+                    <ShieldCheck className="h-7 w-7 text-success" />
+                    <p className="text-sm font-medium text-success">Stakes locked in escrow!</p>
+                    <p className="text-xs text-muted-foreground text-center px-4">
+                      {formatSol(wager.stake_lamports * 2)} SOL secured on-chain. Winner receives{' '}
+                      {formatSol(Math.floor(wager.stake_lamports * 2 * 0.9))} SOL (90%) automatically.
+                    </p>
+                  </div>
+
+                  {/* Game-specific instructions */}
+                  <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5">
+                    <p className="text-xs font-medium text-foreground">How to settle this wager</p>
+                    {wager.game === 'codm' && (
+                      <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+                        <li>Add your opponent in CODM using their username</li>
+                        <li>Create a custom private room and share the code</li>
+                        <li>Play the agreed mode — screenshot the result screen</li>
+                        <li>Both players tap <span className="text-foreground font-medium">"Game Complete"</span> below when done</li>
+                        <li>Each player votes the winner — matching votes pay out instantly</li>
+                      </ol>
+                    )}
+                    {wager.game === 'pubg' && (
+                      <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+                        <li>Add your opponent in PUBG Mobile using their ID</li>
+                        <li>Agree on the match type (Squad vs Squad / 1v1 TDM etc.)</li>
+                        <li>Play the match — keep your end-of-match results screen</li>
+                        <li>Both players tap <span className="text-foreground font-medium">"Game Complete"</span> below when done</li>
+                        <li>Each player votes the winner — matching votes pay out instantly</li>
+                      </ol>
+                    )}
+                    {wager.game === 'free_fire' && (
+                      <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+                        <li>Add your opponent in Free Fire using their UID</li>
+                        <li>Create a custom room and share the room code</li>
+                        <li>Play the agreed mode — screenshot the result screen</li>
+                        <li>Both players tap <span className="text-foreground font-medium">"Game Complete"</span> below when done</li>
+                        <li>Each player votes the winner — matching votes pay out instantly</li>
+                      </ol>
+                    )}
+                  </div>
+
+                  {/* Opponent usernames for easy reference */}
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {[
+                      { label: isPlayerA ? 'You' : (playerA?.username || wager.player_a_wallet.slice(0, 8) + '…'), wallet: wager.player_a_wallet },
+                      { label: isPlayerA ? (playerB?.username || wager.player_b_wallet?.slice(0, 8) + '…') : 'You', wallet: wager.player_b_wallet },
+                    ].map((p) => (
+                      <div key={p.wallet} className="rounded-md bg-muted/40 border border-border p-2 space-y-0.5">
+                        <p className="text-muted-foreground">{p.wallet === currentWallet ? 'You' : 'Opponent'}</p>
+                        <p className="font-medium text-foreground truncate">{p.label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Game Complete CTA */}
+                  <button
+                    className="w-full rounded-lg bg-primary text-primary-foreground py-2.5 text-sm font-gaming font-semibold hover:bg-primary/90 transition-colors"
+                    onClick={() => {
+                      if (wager && onOpenGameComplete) {
+                        onOpenChange(false)
+                        onOpenGameComplete(wager)
+                      }
+                    }}
+                  >
+                    🏁 Game Complete — Vote Now
+                  </button>
                 </motion.div>
               )}
 

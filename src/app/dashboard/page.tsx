@@ -28,8 +28,9 @@ import { useWalletBalance } from '@/hooks/useWalletBalance'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useBalanceAnimation } from '@/contexts/BalanceAnimationContext'
 import { useGameEvents } from '@/contexts/GameEventContext'
-import { GameCompleteModal } from '@/components/Gamecompletemodal'
+import { GameCompleteModal } from '@/components/GameCompletemodal'
 import { VotingModal } from '@/components/Votingmodal'
+import { DisputeGraceModal } from '@/components/DisputeGraceModal'
 
 const getGameData = (game: string) => {
   switch (game) {
@@ -210,6 +211,9 @@ export default function DashboardPage() {
   const [gameCompleteOpen, setGameCompleteOpen] = useState(false)
   const [votingWager, setVotingWager] = useState<Wager | null>(null)
   const [votingOpen, setVotingOpen] = useState(false)
+  // ── Step 4: Dispute Grace Period modal state ──────────────────────────────
+  const [graceWager, setGraceWager] = useState<Wager | null>(null)
+  const [graceOpen, setGraceOpen] = useState(false)
 
   const { data: gameCompleteWagerLive } = useWagerById(gameCompleteOpen ? gameCompleteWager?.id ?? null : null)
   const { data: votingWagerLive } = useWagerById(votingOpen ? votingWager?.id ?? null : null)
@@ -222,6 +226,8 @@ export default function DashboardPage() {
       if (!isParticipant) return
       if (gameCompleteWager?.id === wager.id) { setGameCompleteOpen(false); setGameCompleteWager(null) }
       if (votingWager?.id === wager.id) { setVotingOpen(false); setVotingWager(null) }
+      // ── Step 4: close grace modal on resolution ──────────────────────────
+      if (graceWager?.id === wager.id) { setGraceOpen(false); setGraceWager(null) }
       clearPendingResult(wager.id)
     })
     return unsub
@@ -242,6 +248,12 @@ export default function DashboardPage() {
     const w = gameCompleteWagerLive ?? gameCompleteWager
     setGameCompleteOpen(false)
     if (w) { setVotingWager(w); setVotingOpen(true) }
+  }
+
+  // ── Step 4: open DisputeGraceModal ───────────────────────────────────────
+  const handleOpenGrace = (wager: Wager) => {
+    setGraceWager(wager)
+    setGraceOpen(true)
   }
 
   const activeWagers = wagers?.filter(w => ['created', 'joined', 'voting', 'disputed'].includes(w.status)) || []
@@ -627,6 +639,7 @@ export default function DashboardPage() {
                           ? wager.player_b_wallet
                           : wager.player_a_wallet
                         const isLive = wager.status === 'joined' || wager.status === 'voting'
+                        const isDisputed = wager.status === 'disputed' && !wager.grace_conceded_by
                         const isNonChessVoting = wager.status === 'voting' && wager.game !== 'chess'
                         const needsGameComplete = wager.status === 'voting' && wager.game !== 'chess' &&
                           !(wager.player_a_wallet === walletAddress ? wager.game_complete_a : wager.game_complete_b)
@@ -648,6 +661,12 @@ export default function DashboardPage() {
                                 <div className="text-[10px] text-muted-foreground">{formatSol(wager.stake_lamports)} SOL</div>
                               </div>
                             </div>
+                            {isDisputed && (
+                              <Button size="sm" variant="outline" className="text-[10px] h-6 px-2 flex-shrink-0 border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+                                onClick={() => handleOpenGrace(wager)}>
+                                Disputed
+                              </Button>
+                            )}
                             {needsGameComplete && (
                               <Button size="sm" variant="neon" className="text-[10px] h-6 px-2 flex-shrink-0"
                                 onClick={() => handleOpenGameComplete(wager)}>
@@ -660,7 +679,7 @@ export default function DashboardPage() {
                                 Vote
                               </Button>
                             )}
-                            {isLive && !isNonChessVoting && (
+                            {isLive && !isNonChessVoting && !isDisputed && (
                               <span className="flex h-2 w-2 flex-shrink-0">
                                 <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-400 opacity-75" />
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400" />
@@ -739,6 +758,14 @@ export default function DashboardPage() {
         wager={votingWagerLive ?? votingWager}
         open={votingOpen}
         onOpenChange={(open) => { setVotingOpen(open); if (!open) setVotingWager(null) }}
+        currentWallet={walletAddress}
+      />
+
+      {/* Dispute Grace — shown when wager is disputed and not yet conceded */}
+      <DisputeGraceModal
+        wager={graceWager}
+        open={graceOpen}
+        onOpenChange={(open) => { setGraceOpen(open); if (!open) setGraceWager(null) }}
         currentWallet={walletAddress}
       />
     </div>

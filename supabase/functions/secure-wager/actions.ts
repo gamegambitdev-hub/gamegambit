@@ -75,6 +75,18 @@ export async function handleJoin(supabase: Supabase, walletAddress: string, data
         const { data: p } = await supabase.from('players').select('lichess_username').eq('wallet_address', walletAddress).single();
         if (!p?.lichess_username) return respond({ error: 'Connect your Lichess account before joining chess wagers' }, 400);
     }
+    if (wager.game === 'codm') {
+        const { data: p } = await supabase.from('players').select('codm_username').eq('wallet_address', walletAddress).single();
+        if (!p?.codm_username) return respond({ error: 'Link your CODM account on your profile before joining CODM wagers' }, 400);
+    }
+    if (wager.game === 'pubg') {
+        const { data: p } = await supabase.from('players').select('pubg_username').eq('wallet_address', walletAddress).single();
+        if (!p?.pubg_username) return respond({ error: 'Link your PUBG Mobile account on your profile before joining PUBG wagers' }, 400);
+    }
+    if (wager.game === 'free_fire') {
+        const { data: p } = await supabase.from('players').select('free_fire_username').eq('wallet_address', walletAddress).single();
+        if (!p?.free_fire_username) return respond({ error: 'Link your Free Fire account on your profile before joining Free Fire wagers' }, 400);
+    }
 
     const { data: updatedWager, error } = await supabase.from('wagers')
         .update({ player_b_wallet: walletAddress, status: 'joined' })
@@ -482,6 +494,41 @@ export async function handleMarkGameComplete(supabase: Supabase, walletAddress: 
 
     const { data: updated, error: updateErr } = await supabase.from('wagers').update(updates).eq('id', wagerId).select().single();
     if (updateErr) return respond({ error: updateErr.message }, 500);
+
+    // Notify opponent that this player confirmed game complete
+    const opponentWallet = isPlayerA ? wager.player_b_wallet : wager.player_a_wallet;
+    if (opponentWallet) {
+        const confirmerName = await getDisplayName(supabase, walletAddress);
+        if (opponentConfirmed) {
+            // Both confirmed — voting is starting
+            await insertNotifications(supabase, [
+                {
+                    player_wallet: opponentWallet,
+                    type: 'game_started',
+                    title: '🗳️ Time to vote!',
+                    message: `Both players confirmed the game is done. Open the app to vote on the winner — you have 5 minutes.`,
+                    wager_id: wagerId as string,
+                },
+                {
+                    player_wallet: walletAddress,
+                    type: 'game_started',
+                    title: '🗳️ Both confirmed — vote now!',
+                    message: `Both players confirmed. Open the voting screen to select the winner.`,
+                    wager_id: wagerId as string,
+                },
+            ]);
+        } else {
+            // Only this player confirmed — nudge opponent
+            await insertNotifications(supabase, [{
+                player_wallet: opponentWallet,
+                type: 'game_started',
+                title: '⏳ Opponent confirmed game complete',
+                message: `${confirmerName} has marked the game as done. Open the app to confirm and start voting.`,
+                wager_id: wagerId as string,
+            }]);
+        }
+    }
+
     return respond({ wager: updated });
 }
 
@@ -513,23 +560,20 @@ export async function handleSubmitVote(supabase: Supabase, walletAddress: string
         const payoutSol = (payout / 1e9).toFixed(4);
 
         if (opponentVote === votedWinner) {
-            // Agreement
+            // Agreement — enter 15s retractable window before resolving on-chain
             const resultType: 'playerA' | 'playerB' | 'draw' = votedWinner === 'draw' ? 'draw' : votedWinner === wager.player_a_wallet ? 'playerA' : 'playerB';
             const winnerWallet = votedWinner === 'draw' ? null : votedWinner as string;
-            await supabase.from('wagers').update({ status: 'resolved', winner_wallet: winnerWallet, resolved_at: new Date().toISOString() }).eq('id', wagerId);
-            if (resultType === 'draw') {
-                await insertNotifications(supabase, [
-                    { player_wallet: wager.player_a_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId as string },
-                    { player_wallet: wager.player_b_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId as string },
-                ]);
-            } else if (winnerWallet) {
-                const loserWallet = winnerWallet === wager.player_a_wallet ? wager.player_b_wallet : wager.player_a_wallet;
-                await insertNotifications(supabase, [
-                    { player_wallet: winnerWallet, type: 'wager_won', title: '🏆 You won!', message: `${payoutSol} SOL has been sent to your wallet.`, wager_id: wagerId as string },
-                    { player_wallet: loserWallet as string, type: 'wager_lost', title: 'You lost this one', message: 'Better luck next time.', wager_id: wagerId as string },
-                ]);
-            }
-            await resolveOnChain(supabase, wager, winnerWallet, resultType);
+            const retractDeadline = new Date(Date.now() + 15_000).toISOString();
+            await supabase.from('wagers').update({
+                status: 'retractable',
+                winner_wallet: winnerWallet,
+                retract_deadline: retractDeadline,
+            }).eq('id', wagerId);
+            // Notify both — they see the 15s window in VotingModal
+            await insertNotifications(supabase, [
+                { player_wallet: wager.player_a_wallet, type: 'wager_vote', title: '✅ Votes agree!', message: 'Both players agree. Result locks in 15 seconds — retract if it was a mistake.', wager_id: wagerId as string },
+                { player_wallet: wager.player_b_wallet as string, type: 'wager_vote', title: '✅ Votes agree!', message: 'Both players agree. Result locks in 15 seconds — retract if it was a mistake.', wager_id: wagerId as string },
+            ]);
         } else {
             // Dispute
             await supabase.from('wagers').update({ status: 'disputed', dispute_created_at: new Date().toISOString() }).eq('id', wagerId);
@@ -537,6 +581,23 @@ export async function handleSubmitVote(supabase: Supabase, walletAddress: string
                 { player_wallet: wager.player_a_wallet, type: 'wager_disputed', title: '⚠️ Result disputed', message: 'You and your opponent voted differently. A moderator will review the match.', wager_id: wagerId as string },
                 { player_wallet: wager.player_b_wallet as string, type: 'wager_disputed', title: '⚠️ Result disputed', message: 'You and your opponent voted differently. A moderator will review the match.', wager_id: wagerId as string },
             ]);
+            // ── Kick off moderator assignment (fire-and-forget) ───────────────
+            // We don't await this — it runs async so the vote response returns
+            // immediately. assign-moderator handles its own error logging.
+            // If it fails (e.g. no eligible moderators), moderation-timeout
+            // will retry every 30s via pg_cron.
+            const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+            const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+            fetch(`${supabaseUrl}/functions/v1/assign-moderator`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${serviceKey}`,
+                },
+                body: JSON.stringify({ wagerId }),
+            }).catch((err: unknown) => {
+                console.error('[actions] assign-moderator invoke failed:', err instanceof Error ? err.message : String(err));
+            });
         }
     }
 
@@ -545,6 +606,152 @@ export async function handleSubmitVote(supabase: Supabase, walletAddress: string
 }
 
 // ── retractVote ───────────────────────────────────────────────────────────────
+
+
+// ── concedeDispute ─────────────────────────────────────────────────────────────────────────────
+//
+// Step 4 grace period: player admits they voted wrong.
+// - Validates wager is 'disputed' and not already conceded
+// - Sets grace_conceded_by + grace_conceded_at, marks 'resolved'
+// - Resolves on-chain (winner = opponent, no moderator fee)
+// - Logs dispute_conceded to player_behaviour_log
+// - Notifies both players
+
+export async function handleConcedeDispute(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+    const { wagerId } = data;
+    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+    const wager = await getWager(supabase, wagerId as string);
+
+    if (wager.status !== 'disputed') return respond({ error: 'Wager is not in disputed state' }, 400);
+    if (wager.player_a_wallet !== walletAddress && wager.player_b_wallet !== walletAddress)
+        return respond({ error: 'Not a participant' }, 403);
+    if (wager.grace_conceded_by) return respond({ error: 'Dispute has already been conceded' }, 400);
+
+    const isPlayerA = wager.player_a_wallet === walletAddress;
+    const winnerWallet = isPlayerA ? wager.player_b_wallet as string : wager.player_a_wallet;
+    const resultType: 'playerA' | 'playerB' = isPlayerA ? 'playerB' : 'playerA';
+    const now = new Date().toISOString();
+
+    const { data: updated, error: updateErr } = await supabase
+        .from('wagers')
+        .update({
+            status: 'resolved',
+            winner_wallet: winnerWallet,
+            resolved_at: now,
+            grace_conceded_by: walletAddress,
+            grace_conceded_at: now,
+        })
+        .eq('id', wagerId)
+        .eq('status', 'disputed')
+        .select()
+        .single();
+
+    if (updateErr || !updated) return respond({ error: 'Failed to record concession — may have already been resolved' }, 500);
+
+    const stake = wager.stake_lamports as number;
+    const payout = Math.floor(stake * 2 * 0.9);
+    const payoutSol = (payout / 1e9).toFixed(4);
+    const concederName = await getDisplayName(supabase, walletAddress);
+
+    await insertNotifications(supabase, [
+        {
+            player_wallet: winnerWallet,
+            type: 'wager_won',
+            title: '\uD83C\uDFC6 Opponent conceded \u2014 you won!',
+            message: `${concederName} admitted they voted incorrectly. ${payoutSol} SOL is on its way.`,
+            wager_id: wagerId as string,
+        },
+        {
+            player_wallet: walletAddress,
+            type: 'wager_lost',
+            title: 'Concession recorded',
+            message: 'Thanks for your honesty. Your opponent has been paid out.',
+            wager_id: wagerId as string,
+        },
+    ]);
+
+    try {
+        await supabase.from('player_behaviour_log').insert({
+            player_wallet: walletAddress,
+            event_type: 'dispute_conceded',
+            wager_id: wagerId,
+            metadata: { winner_wallet: winnerWallet, conceded_at: now },
+        });
+    } catch { /* non-critical */ }
+
+    try {
+        await resolveOnChain(supabase, wager, winnerWallet, resultType);
+    } catch (err) {
+        console.error('[actions] concedeDispute resolveOnChain failed:', err instanceof Error ? err.message : String(err));
+    }
+
+    const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
+    return respond({ wager: final ?? updated });
+}
+
+
+// ── finalizeVote ──────────────────────────────────────────────────────────────
+//
+// Called by VotingModal after the 15s retractable window expires.
+// Resolves the wager on-chain and notifies both players.
+// Guards against double-fire: wager must still be 'retractable'.
+
+export async function handleFinalizeVote(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+    const { wagerId } = data;
+    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+    const wager = await getWager(supabase, wagerId as string);
+
+    if (wager.status !== 'retractable') {
+        // Already finalized or retracted — return current state silently
+        return respond({ wager });
+    }
+    const isParticipant = wager.player_a_wallet === walletAddress || wager.player_b_wallet === walletAddress;
+    if (!isParticipant) return respond({ error: 'Not a participant' }, 403);
+
+    const winnerWallet = wager.winner_wallet as string | null;
+    const resultType: 'playerA' | 'playerB' | 'draw' = !winnerWallet ? 'draw'
+        : winnerWallet === wager.player_a_wallet ? 'playerA' : 'playerB';
+
+    const { data: updated, error: updateErr } = await supabase
+        .from('wagers')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString() })
+        .eq('id', wagerId)
+        .eq('status', 'retractable') // race guard
+        .select()
+        .single();
+
+    if (updateErr || !updated) {
+        // Another request already finalized it — return current state
+        const { data: current } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
+        return respond({ wager: current ?? wager });
+    }
+
+    const stake = wager.stake_lamports as number;
+    const payout = Math.floor(stake * 2 * 0.9);
+    const payoutSol = (payout / 1e9).toFixed(4);
+
+    if (resultType === 'draw') {
+        await insertNotifications(supabase, [
+            { player_wallet: wager.player_a_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId as string },
+            { player_wallet: wager.player_b_wallet, type: 'wager_draw', title: 'Game ended in a draw', message: 'Your stake has been refunded in full.', wager_id: wagerId as string },
+        ]);
+    } else if (winnerWallet) {
+        const loserWallet = winnerWallet === wager.player_a_wallet ? wager.player_b_wallet : wager.player_a_wallet;
+        await insertNotifications(supabase, [
+            { player_wallet: winnerWallet, type: 'wager_won', title: '🏆 You won!', message: `${payoutSol} SOL has been sent to your wallet.`, wager_id: wagerId as string },
+            { player_wallet: loserWallet as string, type: 'wager_lost', title: 'You lost this one', message: 'Better luck next time.', wager_id: wagerId as string },
+        ]);
+    }
+
+    try {
+        await resolveOnChain(supabase, wager, winnerWallet, resultType);
+    } catch (err) {
+        console.error('[actions] finalizeVote resolveOnChain failed:', err instanceof Error ? err.message : String(err));
+    }
+
+    const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
+    return respond({ wager: final ?? updated });
+}
 
 export async function handleRetractVote(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { wagerId } = data;

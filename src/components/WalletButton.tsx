@@ -9,6 +9,8 @@ import { Smartphone, ChevronDown, LogOut, Copy, ExternalLink, Wallet } from 'luc
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { useWalletAuth } from '@/hooks/useWalletAuth'
+import { useQueryClient } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false)
@@ -51,6 +53,8 @@ export function WalletButton() {
   const { connected, publicKey, disconnect, wallet } = useWallet()
   const { setVisible } = useWalletModal()
   const { clearSession } = useWalletAuth()
+  const queryClient = useQueryClient()
+  const router = useRouter()
   const isMobile = useIsMobile()
   const isWalletBrowser = useIsWalletBrowser()
   const [open, setOpen] = useState(false)
@@ -112,7 +116,9 @@ export function WalletButton() {
   const handleDisconnect = () => {
     clearSession()
     disconnect()
+    queryClient.clear()
     setOpen(false)
+    router.push('/')
   }
 
   const handleConnect = () => {

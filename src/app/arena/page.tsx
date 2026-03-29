@@ -39,8 +39,9 @@ import { QuickMatchModal } from '@/components/QuickMatchModal'
 import { ReadyRoomModal } from '@/components/ReadyRoomModal'
 import { EditWagerModal, EditWagerData } from '@/components/EditWagerModal'
 import { LiveGameModal } from '@/components/LiveGameModal'
-import { GameCompleteModal } from '@/components/Gamecompletemodal'
+import { GameCompleteModal } from '@/components/GameCompletemodal'
 import { VotingModal } from '@/components/Votingmodal'
+import { DisputeGraceModal } from '@/components/DisputeGraceModal'
 import { GameResultModal } from '@/components/GameResultModal'
 import { PlayerLink } from '@/components/PlayerLink'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
@@ -160,12 +161,13 @@ function OpenWagerCard({
 // ── Live Match Card ───────────────────────────────────────────────────────────
 
 function LiveMatchCard({
-  wager, onEnterReadyRoom, onWatchGame, onViewDetails, currentWallet,
+  wager, onEnterReadyRoom, onWatchGame, onViewDetails, onOpenGrace, currentWallet,
 }: {
   wager: Wager
   onEnterReadyRoom?: (wagerId: string) => void
   onWatchGame?: (wager: Wager) => void
   onViewDetails?: (wager: Wager) => void
+  onOpenGrace?: (wager: Wager) => void
   currentWallet?: string
 }) {
   const game = getGameData(wager.game)
@@ -174,10 +176,12 @@ function LiveMatchCard({
   const isResolved = wager.status === 'resolved' || (wager.status as string) === 'closed'
   const canEnterReadyRoom = wager.status === 'joined' && isParticipant
   const isInProgress = wager.status === 'voting'
+  const isDisputed = wager.status === 'disputed' && isParticipant && !wager.grace_conceded_by
 
   const handleClick = () => {
     if (isResolved) onViewDetails?.(wager)
     else if (canEnterReadyRoom) onEnterReadyRoom?.(wager.id)
+    else if (isDisputed) onOpenGrace?.(wager)
     else if (isInProgress) onWatchGame?.(wager)
   }
 
@@ -226,6 +230,10 @@ function LiveMatchCard({
               </Badge>
             ) : canEnterReadyRoom ? (
               <Badge variant="joined" className="cursor-pointer text-xs whitespace-nowrap">Ready Room</Badge>
+            ) : isDisputed ? (
+              <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap border-yellow-500/50 text-yellow-400">
+                ⚠️ Disputed
+              </Badge>
             ) : isInProgress && isParticipant ? (
               <Badge variant="voting" className="cursor-pointer flex items-center gap-1 text-xs whitespace-nowrap">
                 <Play className="h-3 w-3" /> Watch
@@ -308,6 +316,11 @@ function ArenaInner() {
   const [gameCompleteOpen, setGameCompleteOpen] = useState(false)
   const [votingWager, setVotingWager] = useState<Wager | null>(null)
   const [votingOpen, setVotingOpen] = useState(false)
+
+  // ── Step 4: Dispute Grace Period ────────────────────────────────────────
+  const [graceWager, setGraceWager] = useState<Wager | null>(null)
+  const [graceOpen, setGraceOpen] = useState(false)
+  const handleOpenGrace = (wager: Wager) => { setGraceWager(wager); setGraceOpen(true) }
 
   const pendingModalRef = useRef<Wager | null>(null)
 
@@ -440,7 +453,6 @@ function ArenaInner() {
   }, [wagerPlayers, searchedPlayers])
 
   // ── Filtering ────────────────────────────────────────────────────────────
-  // Build the set of matched wallet addresses from username search results
   const matchedWalletSet = useMemo(() => {
     if (!searchQuery || !searchedPlayers) return new Set<string>()
     return new Set(searchedPlayers.map(p => p.wallet_address.toLowerCase()))
@@ -451,12 +463,8 @@ function ArenaInner() {
     if (!searchQuery) return openWagers
     const q = searchQuery.toLowerCase()
     return openWagers.filter(w =>
-      // match on wallet address substring
       w.player_a_wallet.toLowerCase().includes(q) ||
-      // match on resolved username from our map
-      (playerUsernameMap[w.player_a_wallet.toLowerCase()] ?? '')
-        .toLowerCase().includes(q) ||
-      // match via search API results
+      (playerUsernameMap[w.player_a_wallet.toLowerCase()] ?? '').toLowerCase().includes(q) ||
       matchedWalletSet.has(w.player_a_wallet.toLowerCase())
     )
   }, [openWagers, searchQuery, playerUsernameMap, matchedWalletSet])
@@ -488,13 +496,8 @@ function ArenaInner() {
     try {
       const wager = await quickMatch.mutateAsync(game)
       setQuickMatchOpen(false)
-      // mutateAsync now returns the full Wager object — open ready room immediately
-      if (wager?.id) {
-        setReadyRoomWagerId(wager.id)
-      }
+      if (wager?.id) setReadyRoomWagerId(wager.id)
     } catch (err: any) {
-      // toast is already shown by useQuickMatch onError — only re-throw so
-      // QuickMatchModal can display inline error feedback
       throw err
     }
   }
@@ -570,7 +573,7 @@ function ArenaInner() {
     }
     // Non-chess wagers in voting state: show game complete / voting flow
     if (wager.game !== 'chess' && wager.status === 'voting') {
-      const bothConfirmed = !!(wager as any).game_complete_a && !!(wager as any).game_complete_b
+      const bothConfirmed = !!wager.game_complete_a && !!wager.game_complete_b
       if (bothConfirmed) {
         setVotingWager(wager)
         setVotingOpen(true)
@@ -584,6 +587,14 @@ function ArenaInner() {
     setLiveGameModalOpen(true)
   }
 
+  // ── ReadyRoom → non-chess game started → open GameCompleteModal ──────────
+  // Called by ReadyRoomModal via onOpenGameComplete prop once both stakes
+  // are locked and the player taps "Game Complete — Vote Now"
+  const handleOpenGameComplete = (wager: Wager) => {
+    setGameCompleteWager(wager)
+    setGameCompleteOpen(true)
+  }
+
   // ── GameCompleteModal → both confirmed → open VotingModal ────────────────
   const handleBothConfirmedArena = () => {
     const w = gameCompleteWager
@@ -595,9 +606,6 @@ function ArenaInner() {
   }
 
   // ── Rematch ───────────────────────────────────────────────────────────────
-  // Creates a new wager with the same game + stake, then sends a push
-  // notification + in-app notification to the opponent via secure-wager
-  // (which already has the full insertNotifications + sendWebPush pipeline).
   const handleRematch = useCallback(async () => {
     if (!gameResultWager || !walletAddress) return
     if (needsSetup) { toast.error('Please set up your username first'); return }
@@ -614,7 +622,6 @@ function ArenaInner() {
       const sessionToken = await getSessionToken()
       if (!sessionToken) throw new Error('Wallet verification required')
 
-      // Step 1: Create the new open wager
       const createResult = await invokeSecureWager<{ wager: Wager }>(
         {
           action: 'create',
@@ -626,9 +633,6 @@ function ArenaInner() {
 
       const newWagerId: string = createResult.wager.id
 
-      // Step 2: Send rematch notification to opponent via secure-wager
-      // (notifyRematch is a lightweight action that calls insertNotifications
-      //  which handles both in-app DB insert + web push in one call)
       await invokeSecureWager<{ ok: boolean }>(
         {
           action: 'notifyRematch',
@@ -800,6 +804,7 @@ function ArenaInner() {
                         onEnterReadyRoom={setReadyRoomWagerId}
                         onWatchGame={handleWatchGame}
                         onViewDetails={handleViewDetails}
+                        onOpenGrace={handleOpenGrace}
                       />
                     </motion.div>
                   ))}
@@ -950,6 +955,7 @@ function ArenaInner() {
         }}
         isSettingReady={setReadyMutation.isPending}
         currentWallet={walletAddress}
+        onOpenGameComplete={handleOpenGameComplete}
       />
 
       <EditWagerModal
@@ -969,6 +975,14 @@ function ArenaInner() {
           if (!open) setLiveGameWagerId(null)
         }}
         currentWallet={walletAddress}
+      />
+
+      {/* Dispute Grace — shown when wager is disputed and not yet conceded */}
+      <DisputeGraceModal
+        wager={graceWager}
+        open={graceOpen}
+        onOpenChange={(open) => { setGraceOpen(open); if (!open) setGraceWager(null) }}
+        currentWallet={walletAddress || ''}
       />
 
       {/* Game Complete — non-chess wagers */}

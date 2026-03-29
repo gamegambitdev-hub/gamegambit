@@ -6,6 +6,7 @@ import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletReady } from '@/app/providers'
 import dynamic from 'next/dynamic'
+import { useQueryClient } from '@tanstack/react-query'
 
 const WalletMultiButton = dynamic(
   () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
@@ -46,6 +47,7 @@ function ProfilePageInner() {
   const walletReady = useWalletReady()
   const searchParams = useSearchParams()
   const { getSessionToken } = useWalletAuth()
+  const queryClient = useQueryClient()
   const currentUserWallet = publicKey?.toBase58()
   const viewingWallet = currentUserWallet
 
@@ -180,11 +182,8 @@ function ProfilePageInner() {
     }
 
     toast.success(`${gameId.toUpperCase()} account linked!`)
-    // Invalidate player query so the new username shows immediately
-    // useUpdatePlayer already calls invalidateQueries — we replicate that here
-    // by triggering a no-op update so the cache refreshes cleanly.
-    // A cleaner approach: export the queryClient and call invalidateQueries directly.
-    // For now we rely on the Supabase Realtime subscription refreshing the player row.
+    // Invalidate player query so the new username reflects immediately
+    queryClient.invalidateQueries({ queryKey: ['player'] })
   }
 
   /**
