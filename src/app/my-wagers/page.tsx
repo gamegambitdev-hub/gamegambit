@@ -24,8 +24,9 @@ import { getExplorerUrl } from '@/lib/solana-config'
 import { ReadyRoomModal } from '@/components/ReadyRoomModal'
 import { GameResultModal } from '@/components/GameResultModal'
 import { EditWagerModal, EditWagerData } from '@/components/EditWagerModal'
-import { GameCompleteModal } from '@/components/Gamecompletemodal'
+import { GameCompleteModal } from '@/components/GameCompletemodal'
 import { VotingModal } from '@/components/Votingmodal'
+import { DisputeGraceModal } from '@/components/DisputeGraceModal'
 import { useEditWager } from '@/hooks/useWagers'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
 import { useGameEvents } from '@/contexts/GameEventContext'
@@ -63,6 +64,7 @@ function WagerRow({
   onViewResult,
   onOpenGameComplete,
   onOpenVoting,
+  onOpenGrace,
 }: {
   wager: Wager
   myWallet: string
@@ -71,6 +73,7 @@ function WagerRow({
   onViewResult?: (wagerId: string) => void
   onOpenGameComplete?: (wager: Wager) => void
   onOpenVoting?: (wager: Wager) => void
+  onOpenGrace?: (wager: Wager) => void
 }) {
   const game = getGameData(wager.game)
   const isChallenger = wager.player_a_wallet === myWallet
@@ -181,6 +184,18 @@ function WagerRow({
               </Button>
             )}
 
+            {/* Disputed: show grace period button */}
+            {wager.status === 'disputed' && !wager.grace_conceded_by && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); onOpenGrace?.(wager) }}
+                className="whitespace-nowrap border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+              >
+                View Dispute
+              </Button>
+            )}
+
             {/* Non-chess in-progress: show game complete / voting button */}
             {isNonChessVoting && (
               <Button
@@ -243,6 +258,9 @@ function MyWagersInner() {
   const [gameCompleteOpen, setGameCompleteOpen] = useState(false)
   const [votingWager, setVotingWager] = useState<Wager | null>(null)
   const [votingOpen, setVotingOpen] = useState(false)
+  // ── Step 4: Dispute Grace Period modal state ──────────────────────────────
+  const [graceWager, setGraceWager] = useState<Wager | null>(null)
+  const [graceOpen, setGraceOpen] = useState(false)
 
   // ── useWagerChat — must come AFTER editWager useState ───────────────────
   const { sendProposal } = useWagerChat(editWager?.id ?? null)
@@ -375,6 +393,12 @@ function MyWagersInner() {
   const handleOpenVoting = (wager: Wager) => {
     setVotingWager(wager)
     setVotingOpen(true)
+  }
+
+  // ── Open DisputeGraceModal ────────────────────────────────────────────────
+  const handleOpenGrace = (wager: Wager) => {
+    setGraceWager(wager)
+    setGraceOpen(true)
   }
 
   // ── GameCompleteModal → both confirmed → open VotingModal ────────────────
@@ -529,6 +553,7 @@ function MyWagersInner() {
                             onViewResult={handleViewResult}
                             onOpenGameComplete={handleOpenGameComplete}
                             onOpenVoting={handleOpenVoting}
+                            onOpenGrace={handleOpenGrace}
                           />
                         </motion.div>
                       ))}
@@ -559,6 +584,7 @@ function MyWagersInner() {
                           onViewResult={handleViewResult}
                           onOpenGameComplete={handleOpenGameComplete}
                           onOpenVoting={handleOpenVoting}
+                          onOpenGrace={handleOpenGrace}
                         />
                       </motion.div>
                     ))}
@@ -611,6 +637,15 @@ function MyWagersInner() {
           if (readyRoomWager) { setEditWager(readyRoomWager); setEditModalOpen(true) }
         }}
         isSettingReady={setReadyMutation.isPending}
+        currentWallet={walletAddress}
+        onOpenGameComplete={handleOpenGameComplete}
+      />
+
+      {/* Dispute Grace — shown when wager is disputed and not yet conceded */}
+      <DisputeGraceModal
+        wager={graceWager}
+        open={graceOpen}
+        onOpenChange={(open) => { setGraceOpen(open); if (!open) setGraceWager(null) }}
         currentWallet={walletAddress}
       />
 

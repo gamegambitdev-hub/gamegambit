@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 
 const STORAGE_KEY = 'gg_wallet_session';
@@ -25,6 +25,8 @@ export function useWalletAuth() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  // Singleton: if verification is already in flight, reuse the same promise
+  const verifyingRef = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
     const token = readToken();
@@ -42,6 +44,7 @@ export function useWalletAuth() {
     if (!publicKey) {
       setSessionToken(null);
       removeToken();
+      verifyingRef.current = null;
     }
   }, [publicKey, isHydrated]);
 
@@ -54,78 +57,84 @@ export function useWalletAuth() {
       return existing;
     }
 
-    // Token missing or expired — clear it and re-verify
-    removeToken();
+    // If already verifying, reuse the in-flight promise (prevents double sign prompts)
+    if (verifyingRef.current) return verifyingRef.current;
 
+    removeToken();
     setIsVerifying(true);
+
     const walletAddress = publicKey.toBase58();
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    try {
-      const nonceRes = await fetch(`${supabaseUrl}/functions/v1/verify-wallet`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${supabaseAnonKey}`,
-        },
-        body: JSON.stringify({ action: 'generate-nonce', walletAddress }),
-      });
+    const promise = (async () => {
+      try {
+        const nonceRes = await fetch(`${supabaseUrl}/functions/v1/verify-wallet`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+          },
+          body: JSON.stringify({ action: 'generate-nonce', walletAddress }),
+        });
 
-      if (!nonceRes.ok) {
-        const err = await nonceRes.json().catch(() => ({ error: nonceRes.statusText }));
-        throw new Error(err.error || 'Failed to generate nonce');
+        if (!nonceRes.ok) {
+          const err = await nonceRes.json().catch(() => ({ error: nonceRes.statusText }));
+          throw new Error(err.error || 'Failed to generate nonce');
+        }
+
+        const { message } = await nonceRes.json();
+        const signature = await signMessage(new TextEncoder().encode(message));
+
+        const verifyRes = await fetch(`${supabaseUrl}/functions/v1/verify-wallet`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseAnonKey}`,
+          },
+          body: JSON.stringify({
+            action: 'verify-signature',
+            walletAddress,
+            signature: Array.from(signature),
+            message,
+          }),
+        });
+
+        if (!verifyRes.ok) {
+          const err = await verifyRes.json().catch(() => ({ error: verifyRes.statusText }));
+          throw new Error(err.error || 'Wallet verification failed');
+        }
+
+        const verifyData = await verifyRes.json();
+        if (!verifyData.verified || !verifyData.sessionToken) {
+          throw new Error('Failed to generate session token');
+        }
+
+        writeToken(verifyData.sessionToken);
+        setSessionToken(verifyData.sessionToken);
+        return verifyData.sessionToken as string;
+      } catch (error) {
+        console.error('[useWalletAuth] Verification error:', error);
+        throw error;
+      } finally {
+        setIsVerifying(false);
+        verifyingRef.current = null;
       }
+    })();
 
-      const { message } = await nonceRes.json();
-
-      const signature = await signMessage(new TextEncoder().encode(message));
-
-      const verifyRes = await fetch(`${supabaseUrl}/functions/v1/verify-wallet`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${supabaseAnonKey}`,
-        },
-        body: JSON.stringify({
-          action: 'verify-signature',
-          walletAddress,
-          signature: Array.from(signature),
-          message,
-        }),
-      });
-
-      if (!verifyRes.ok) {
-        const err = await verifyRes.json().catch(() => ({ error: verifyRes.statusText }));
-        throw new Error(err.error || 'Wallet verification failed');
-      }
-
-      const verifyData = await verifyRes.json();
-      if (!verifyData.verified || !verifyData.sessionToken) {
-        throw new Error('Failed to generate session token');
-      }
-
-      writeToken(verifyData.sessionToken);
-      setSessionToken(verifyData.sessionToken);
-      return verifyData.sessionToken;
-
-    } catch (error) {
-      console.error('[useWalletAuth] Verification error:', error);
-      throw error;
-    } finally {
-      setIsVerifying(false);
-    }
+    verifyingRef.current = promise;
+    return promise;
   }, [publicKey, signMessage]);
 
   const clearSession = useCallback(() => {
     setSessionToken(null);
     removeToken();
+    verifyingRef.current = null;
   }, []);
 
   const getSessionToken = useCallback(async (): Promise<string | null> => {
     const stored = readToken();
     if (stored && !isTokenExpired(stored)) return stored;
-    // Expired or missing — trigger re-verification
     removeToken();
     return await verifyWallet();
   }, [verifyWallet]);

@@ -41,6 +41,12 @@ export interface Wager {
   vote_b_at: string | null;
   vote_deadline: string | null;
   dispute_created_at: string | null;
+  // ── Step 4: Dispute Grace Period ──────────────────────────────────────────
+  grace_conceded_by: string | null;
+  grace_conceded_at: string | null;
+  moderator_wallet: string | null;
+  moderator_assigned_at: string | null;
+  moderation_skipped_count: number | null;
 }
 
 export async function invokeSecureWager<T>(
@@ -162,7 +168,9 @@ export function useMyWagers() {
           cancelled_at, cancelled_by, cancel_reason, created_at, updated_at,
           ready_player_a, ready_player_b, countdown_started_at,
           game_complete_a, game_complete_b, game_complete_deadline,
-          vote_a_at, vote_b_at, vote_deadline, dispute_created_at
+          vote_a_at, vote_b_at, vote_deadline, dispute_created_at,
+          grace_conceded_by, grace_conceded_at,
+          moderator_wallet, moderator_assigned_at, moderation_skipped_count
         `)
         .or(`player_a_wallet.eq.${walletAddress},player_b_wallet.eq.${walletAddress}`)
         .order('created_at', { ascending: false });
@@ -487,6 +495,26 @@ export function useRetractVote() {
       const data = await invokeSecureWager<{ wager: Wager }>(
         { action: 'retractVote', wagerId },
         sessionToken,
+      );
+      return data.wager;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+  });
+}
+// Called by VotingModal after the 15s retractable window expires.
+// Resolves the wager on-chain. Server guards against double-fire.
+export function useFinalizeVote() {
+  const queryClient = useQueryClient();
+  const { getSessionToken } = useWalletAuth();
+
+  return useMutation({
+    mutationFn: async ({ wagerId }: { wagerId: string }) => {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) throw new Error('Wallet verification required.');
+      const data = await invokeSecureWager<{ wager: Wager }>(
+        { action: 'finalizeVote', wagerId },
+        sessionToken,
+        30_000,
       );
       return data.wager;
     },
