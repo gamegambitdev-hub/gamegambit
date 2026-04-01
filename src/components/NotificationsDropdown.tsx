@@ -88,8 +88,13 @@ export function NotificationsDropdown() {
         return { route: 'arena', modal: 'ready-room' };
       case 'wager_disputed':
         return { route: 'my-wagers', modal: 'details' };
+      // Bug 3 fix: previously routed to /dashboard?modal=moderation which the
+      // dashboard page had no handler for — the user would land and see nothing.
+      // Now we route to /dashboard with no modal param. ModerationOrchestrator
+      // is mounted in Providers and its polling fallback (Bug 1 fix) will
+      // automatically surface the panel within 5s of the page loading.
       case 'moderation_request':
-        return { route: 'dashboard', modal: 'moderation' };
+        return { route: 'dashboard', modal: '' };
       default:
         return { route: 'my-wagers', modal: 'details' };
     }
@@ -103,6 +108,14 @@ export function NotificationsDropdown() {
       if (!notification.wager_id) return;
 
       const { route, modal } = getModalTarget(notification.type);
+
+      // Bug 3 fix: for moderation_request, modal is '' — navigate cleanly
+      // to /dashboard without any search params. The orchestrator handles the rest.
+      if (!modal) {
+        router.push(`/${route}`);
+        return;
+      }
+
       const params = new URLSearchParams({ wager: notification.wager_id, modal });
       router.push(`/${route}?${params.toString()}`);
     },
