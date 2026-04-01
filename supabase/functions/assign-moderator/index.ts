@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
             return respond({ error: "Wager not found" }, 404);
         }
 
-        if (!["disputed", "voting"].includes(wager.status)) {
+        if (wager.status !== "disputed") {
             console.log(`[assign-moderator] Wager ${wagerId} not assignable — status: ${wager.status}`);
             return respond({ ok: false, reason: `Wager not in assignable state: ${wager.status}` });
         }
