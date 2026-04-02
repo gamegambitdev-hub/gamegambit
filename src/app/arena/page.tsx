@@ -348,12 +348,26 @@ function ArenaInner() {
   const { sendProposal } = useWagerChat(editWager?.id ?? null)
 
   // ── Deep-link from notification ──────────────────────────────────────────
+  // Handles ?wager=<id>&modal=<target> URLs pushed by NotificationsDropdown.
+  // After reading the params we immediately wipe them from the URL so a
+  // subsequent refresh doesn't re-open the modal.
+  //
+  // For 'game-complete' and 'voting' we need the full wager object, so we
+  // store the pending IDs and open the modals once the wager data has loaded
+  // (see the two effects below that watch deepLink*Id).
+  const [deepLinkGameCompleteId, setDeepLinkGameCompleteId] = useState<string | null>(null)
+  const [deepLinkVotingId, setDeepLinkVotingId] = useState<string | null>(null)
+
   useEffect(() => {
     const wagerId = searchParams.get('wager')
     const modal = searchParams.get('modal')
     if (!wagerId || !modal) return
+
     if (modal === 'ready-room') setReadyRoomWagerId(wagerId)
     else if (modal === 'result') setDeepLinkResultId(wagerId)
+    else if (modal === 'game-complete') setDeepLinkGameCompleteId(wagerId)
+    else if (modal === 'voting') setDeepLinkVotingId(wagerId)
+
     const url = new URL(window.location.href)
     url.searchParams.delete('wager')
     url.searchParams.delete('modal')
@@ -425,6 +439,9 @@ function ArenaInner() {
   const { data: walletBalance, isLoading: balanceLoading } = useWalletBalance()
   const { data: readyRoomWager } = useWagerById(readyRoomWagerId)
   const { data: deepLinkResultWager } = useWagerById(deepLinkResultId)
+  // Fetch wager objects for deep-link game-complete and voting targets
+  const { data: deepLinkGameCompleteWager } = useWagerById(deepLinkGameCompleteId)
+  const { data: deepLinkVotingWager } = useWagerById(deepLinkVotingId)
 
   // Only fire the search query when there's actual input
   const { data: searchedPlayers, isLoading: searchLoading } = useSearchPlayers(
@@ -435,6 +452,74 @@ function ArenaInner() {
     if (!liveGameWagerId) return null
     return liveWagers?.find(w => w.id === liveGameWagerId) ?? null
   }, [liveGameWagerId, liveWagers])
+
+  // ── Open GameCompleteModal when deep-link wager data arrives ─────────────
+  useEffect(() => {
+    if (!deepLinkGameCompleteWager || !deepLinkGameCompleteId) return
+    if (gameCompleteOpen || votingOpen) return // already open
+    const w = deepLinkGameCompleteWager as Wager
+    // If both already confirmed, skip straight to voting
+    if (w.game_complete_a && w.game_complete_b) {
+      setVotingWager(w)
+      setVotingOpen(true)
+    } else {
+      setGameCompleteWager(w)
+      setGameCompleteOpen(true)
+    }
+    setDeepLinkGameCompleteId(null)
+  }, [deepLinkGameCompleteWager, deepLinkGameCompleteId, gameCompleteOpen, votingOpen])
+
+  // ── Open VotingModal when deep-link wager data arrives ───────────────────
+  useEffect(() => {
+    if (!deepLinkVotingWager || !deepLinkVotingId) return
+    if (votingOpen) return // already open
+    setVotingWager(deepLinkVotingWager as Wager)
+    setVotingOpen(true)
+    setDeepLinkVotingId(null)
+  }, [deepLinkVotingWager, deepLinkVotingId, votingOpen])
+
+  // ── Auto-recover modals after hard refresh ───────────────────────────────
+  // If the user hard-refreshes while a voting or game-complete flow is active,
+  // votingOpen and gameCompleteOpen are both false. This effect checks liveWagers
+  // once on load and re-opens the right modal for any in-progress wager the
+  // current player is participating in.
+  const recoveryFiredRef = useRef(false)
+  useEffect(() => {
+    if (!walletAddress || !liveWagers || recoveryFiredRef.current) return
+    // Only run once per mount — liveWagers may re-fetch but we don't want to
+    // re-open modals the user deliberately closed.
+    recoveryFiredRef.current = true
+
+    for (const wager of liveWagers) {
+      if (wager.game === 'chess') continue // chess uses LiveGameModal
+      const isParticipant =
+        wager.player_a_wallet === walletAddress ||
+        wager.player_b_wallet === walletAddress
+      if (!isParticipant) continue
+
+      const isA = wager.player_a_wallet === walletAddress
+      const iVoted = isA ? !!wager.vote_player_a : !!wager.vote_player_b
+
+      // Wager is in an active voting/retractable state and I haven't voted yet
+      if (
+        (wager.status === 'voting' || wager.status === 'retractable') &&
+        !iVoted &&
+        !votingOpen &&
+        !gameCompleteOpen
+      ) {
+        const bothConfirmed = !!wager.game_complete_a && !!wager.game_complete_b
+        if (bothConfirmed || wager.status === 'retractable') {
+          setVotingWager(wager)
+          setVotingOpen(true)
+        } else {
+          setGameCompleteWager(wager)
+          setGameCompleteOpen(true)
+        }
+        break // only auto-open one at a time
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, liveWagers])
 
   const quickMatch = useQuickMatch()
   const joinWager = useJoinWager()
@@ -609,8 +694,6 @@ function ArenaInner() {
   }
 
   // ── ReadyRoom → non-chess game started → open GameCompleteModal ──────────
-  // Called by ReadyRoomModal via onOpenGameComplete prop once both stakes
-  // are locked and the player taps "Game Complete — Vote Now"
   const handleOpenGameComplete = (wager: Wager) => {
     setGameCompleteWager(wager)
     setGameCompleteOpen(true)
