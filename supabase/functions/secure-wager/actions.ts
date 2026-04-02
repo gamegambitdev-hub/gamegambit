@@ -827,6 +827,96 @@ export async function handleRetractVote(supabase: Supabase, walletAddress: strin
     return respond({ wager: updated });
 }
 
+
+// ── voteTimeout ────────────────────────────────────────────────────────────────
+//
+// Called by VotingModal when the 5-min vote timer expires and the caller
+// has NOT voted yet. Marks the wager as 'disputed' so both players know the
+// result needs moderator review.
+//
+// Guards:
+//   - Only acts when wager is still in 'voting' status (idempotent otherwise).
+//   - If both players already voted by the time this fires (race), do nothing
+//     and let the normal vote-agreement / retractable flow continue.
+//   - Uses .eq('status', 'voting') on the UPDATE as a DB-level race guard so
+//     only one client's call wins.
+
+export async function handleVoteTimeout(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+    const { wagerId } = data;
+    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+
+    const wager = await getWager(supabase, wagerId as string);
+
+    // Already past voting — return current state silently so the client
+    // can update its UI without showing an error.
+    if (wager.status !== 'voting') {
+        return respond({ wager });
+    }
+
+    const isParticipant = wager.player_a_wallet === walletAddress || wager.player_b_wallet === walletAddress;
+    if (!isParticipant) return respond({ error: 'Not a participant' }, 403);
+
+    // If both players already voted, don't dispute — normal flow will resolve it.
+    if (wager.vote_player_a && wager.vote_player_b) {
+        return respond({ wager });
+    }
+
+    // Sanity-check: only fire if deadline has actually passed.
+    if (wager.vote_deadline) {
+        const deadline = new Date(wager.vote_deadline as string).getTime();
+        if (Date.now() < deadline) {
+            return respond({ error: 'Vote deadline has not passed yet' }, 400);
+        }
+    }
+
+    const { data: updated, error: updateErr } = await supabase
+        .from('wagers')
+        .update({ status: 'disputed', dispute_created_at: new Date().toISOString() })
+        .eq('id', wagerId)
+        .eq('status', 'voting') // race guard
+        .select()
+        .single();
+
+    if (updateErr || !updated) {
+        // Another request already moved the status — return current state.
+        const { data: current } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
+        return respond({ wager: current ?? wager });
+    }
+
+    await insertNotifications(supabase, [
+        {
+            player_wallet: wager.player_a_wallet,
+            type: 'wager_disputed',
+            title: '⏰ Vote timer expired',
+            message: 'Not all players voted in time. A moderator will review the match.',
+            wager_id: wagerId as string,
+        },
+        {
+            player_wallet: wager.player_b_wallet as string,
+            type: 'wager_disputed',
+            title: '⏰ Vote timer expired',
+            message: 'Not all players voted in time. A moderator will review the match.',
+            wager_id: wagerId as string,
+        },
+    ]);
+
+    // Kick off moderator assignment fire-and-forget (same pattern as submitVote dispute)
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    fetch(`${supabaseUrl}/functions/v1/assign-moderator`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ wagerId }),
+    }).catch((err: unknown) => {
+        console.error('[actions] assign-moderator invoke failed:', err instanceof Error ? err.message : String(err));
+    });
+
+    return respond({ wager: updated });
+}
+
 // ── Lichess game creation helper ──────────────────────────────────────────────
 
 async function createLichessGame(

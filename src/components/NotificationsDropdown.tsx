@@ -70,31 +70,41 @@ export function NotificationsDropdown() {
   ): { route: NotificationRoute; modal: string } => {
     switch (type) {
       case 'wager_joined':
-      case 'game_started':
+        // Someone joined my wager — go to ready room
         return { route: 'arena', modal: 'ready-room' };
+
+      case 'game_started':
+        // "Opponent confirmed game done" OR "Both confirmed — vote now"
+        // Both of these should open the GameCompleteModal so the player can
+        // confirm (or see the countdown before voting opens).
+        return { route: 'arena', modal: 'game-complete' };
+
+      case 'wager_vote':
+        // "Votes agree", "Time to vote", or "Opponent voted" — open VotingModal
+        return { route: 'arena', modal: 'voting' };
+
       case 'wager_won':
       case 'wager_lost':
       case 'wager_draw':
         return { route: 'my-wagers', modal: 'result' };
+
       case 'wager_cancelled':
         return { route: 'my-wagers', modal: 'details' };
-      // rematch opens arena so user can find and accept the new open wager
+
       case 'rematch_challenge':
         return { route: 'arena', modal: 'details' };
-      // vote + chat + proposal go to ready room
-      case 'wager_vote':
+
       case 'chat_message':
       case 'wager_proposal':
         return { route: 'arena', modal: 'ready-room' };
+
       case 'wager_disputed':
         return { route: 'my-wagers', modal: 'details' };
-      // Bug 3 fix: previously routed to /dashboard?modal=moderation which the
-      // dashboard page had no handler for — the user would land and see nothing.
-      // Now we route to /dashboard with no modal param. ModerationOrchestrator
-      // is mounted in Providers and its polling fallback (Bug 1 fix) will
-      // automatically surface the panel within 5s of the page loading.
+
       case 'moderation_request':
+        // No modal param — ModerationOrchestrator auto-surfaces the panel
         return { route: 'dashboard', modal: '' };
+
       default:
         return { route: 'my-wagers', modal: 'details' };
     }
@@ -109,8 +119,6 @@ export function NotificationsDropdown() {
 
       const { route, modal } = getModalTarget(notification.type);
 
-      // Bug 3 fix: for moderation_request, modal is '' — navigate cleanly
-      // to /dashboard without any search params. The orchestrator handles the rest.
       if (!modal) {
         router.push(`/${route}`);
         return;
@@ -238,8 +246,9 @@ export function NotificationsDropdown() {
 function getActionLabel(type: AppNotification['type']): string {
   switch (type) {
     case 'wager_joined':
-    case 'game_started':
       return 'Open Ready Room →';
+    case 'game_started':
+      return 'Confirm Game Done →';
     case 'wager_won':
     case 'wager_lost':
     case 'wager_draw':
@@ -249,7 +258,7 @@ function getActionLabel(type: AppNotification['type']): string {
     case 'rematch_challenge':
       return 'View Challenge →';
     case 'wager_vote':
-      return 'View Vote →';
+      return 'Open Voting →';
     case 'chat_message':
       return 'Open Chat →';
     case 'wager_proposal':

@@ -10,10 +10,21 @@
  *   - Agree → wager enters 'retractable' for 15s → shows countdown ring
  *     → after 15s, calls finalizeVote → resolves on-chain
  *   - Disagree → wager becomes 'disputed'
- *   - 5-min vote timer expires → wager becomes 'disputed'
+ *   - 5-min vote timer expires → server marks wager 'disputed'
  *
- * Close guard: blocks close ONLY if player hasn't voted yet.
- * Once voted (even waiting on opponent), modal can be closed.
+ * Timer behaviour:
+ *   - Timer only starts once vote_deadline is set by the server (which happens
+ *     when the SECOND player confirms game complete via markGameComplete).
+ *     This prevents the timer running before voting is actually open.
+ *   - Timer stops if the wager reaches retractable / disputed / resolved.
+ *   - If timer hits 0 and the local player has NOT voted, we call voteTimeout
+ *     on the server to mark the wager disputed. The server guards against
+ *     double-fire so this is safe to call from either client.
+ *
+ * Close guard:
+ *   - Blocks close ONLY if the player hasn't voted yet AND no error occurred.
+ *   - Once voted (even waiting on opponent), modal can be closed.
+ *   - On submit error the close guard is lifted so the user can always exit.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -23,10 +34,11 @@ import { Badge } from '@/components/ui/badge'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     Trophy, Scale, Swords, Loader2, Clock, CheckCircle2,
-    AlertTriangle, Hourglass, RotateCcw, ShieldCheck,
+    AlertTriangle, Hourglass, RotateCcw, ShieldCheck, Zap,
 } from 'lucide-react'
-import { Wager, useFinalizeVote } from '@/hooks/useWagers'
+import { Wager, useFinalizeVote, invokeSecureWager } from '@/hooks/useWagers'
 import { useSubmitVote, useRetractVote, deriveVoteOutcome } from '@/hooks/useVoting'
+import { useWalletAuth } from '@/hooks/useWalletAuth'
 import { GAMES, formatSol } from '@/lib/constants'
 import { PlayerLink } from '@/components/PlayerLink'
 import { usePlayerByWallet } from '@/hooks/usePlayer'
@@ -39,7 +51,6 @@ interface VotingModalProps {
     currentWallet: string
 }
 
-const VOTE_DEADLINE_MS = 5 * 60 * 1000
 const RETRACT_WINDOW_MS = 15_000
 
 const getGameData = (game: string) => {
@@ -58,33 +69,67 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
     const submitVote = useSubmitVote()
     const retractVote = useRetractVote()
     const finalizeVote = useFinalizeVote()
+    const { getSessionToken } = useWalletAuth()
 
     const [timeLeft, setTimeLeft] = useState<number | null>(null)
     const [retractLeft, setRetractLeft] = useState<number | null>(null)
+    // Tracks whether a vote submission errored so we unlock the close guard
+    const [hasSubmitError, setHasSubmitError] = useState(false)
     const finalizeCalledRef = useRef(false)
+    const timeoutDisputeCalledRef = useRef(false)
 
     const isPlayerA = currentWallet === wager?.player_a_wallet
     const isPlayerB = currentWallet === wager?.player_b_wallet
     const myVote = isPlayerA ? wager?.vote_player_a : wager?.vote_player_b
+    const opponentVoted = isPlayerA ? !!wager?.vote_player_b : !!wager?.vote_player_a
     const outcome = deriveVoteOutcome(wager, currentWallet)
 
     const isRetractable = wager?.status === 'retractable'
     const isDisputed = wager?.status === 'disputed'
     const isResolved = wager?.status === 'resolved'
 
-    // 5-min vote deadline countdown
+    // ── 5-min vote deadline countdown ────────────────────────────────────────
+    // IMPORTANT: only starts once vote_deadline exists on the wager object.
+    // vote_deadline is set by the server only when BOTH players have confirmed
+    // game complete — so the timer can never run before voting is open.
     useEffect(() => {
-        if (!wager || !open || isRetractable || isResolved || isDisputed) return
-        const deadline = wager.vote_deadline
-            ? new Date(wager.vote_deadline).getTime()
-            : Date.now() + VOTE_DEADLINE_MS
+        if (!wager?.vote_deadline || !open || isRetractable || isResolved || isDisputed) {
+            setTimeLeft(null)
+            return
+        }
+        const deadline = new Date(wager.vote_deadline).getTime()
         const tick = () => setTimeLeft(Math.max(0, deadline - Date.now()))
         tick()
         const id = setInterval(tick, 1000)
         return () => clearInterval(id)
-    }, [wager?.id, open, isRetractable, isResolved, isDisputed])
+    }, [wager?.vote_deadline, open, isRetractable, isResolved, isDisputed])
 
-    // 15s retractable countdown + auto-finalize
+    // ── Timer expiry → trigger dispute on server ──────────────────────────────
+    // When the timer hits 0 and the current player still hasn't voted, we
+    // call the voteTimeout action. The server checks if both players have voted
+    // and, if not, marks the wager as disputed. Fire-and-forget — the realtime
+    // subscription will push the status update back.
+    useEffect(() => {
+        if (timeLeft !== 0 || !wager || myVote || timeoutDisputeCalledRef.current) return
+        timeoutDisputeCalledRef.current = true
+            ; (async () => {
+                try {
+                    const sessionToken = await getSessionToken()
+                    if (!sessionToken) return
+                    await invokeSecureWager(
+                        { action: 'voteTimeout', wagerId: wager.id },
+                        sessionToken,
+                    )
+                } catch {
+                    // Server may have already handled it — safe to ignore
+                }
+            })()
+    }, [timeLeft, wager, myVote, getSessionToken])
+
+    // Reset timeout ref when wager changes so each wager gets a fresh attempt
+    useEffect(() => { timeoutDisputeCalledRef.current = false }, [wager?.id])
+
+    // ── 15s retractable countdown + auto-finalize ─────────────────────────────
     useEffect(() => {
         if (!wager || !isRetractable) { setRetractLeft(null); return }
         const deadline = wager.retract_deadline
@@ -106,6 +151,11 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
 
     useEffect(() => { finalizeCalledRef.current = false }, [wager?.id])
 
+    // Clear error state when modal opens fresh for a wager
+    useEffect(() => {
+        if (open) setHasSubmitError(false)
+    }, [open, wager?.id])
+
     const formatTime = (ms: number) => {
         const s = Math.ceil(ms / 1000)
         return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -113,10 +163,12 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
 
     const handleVote = useCallback(async (votedWinner: string) => {
         if (!wager) return
+        setHasSubmitError(false)
         try {
             await submitVote.mutateAsync({ wagerId: wager.id, votedWinner })
             toast.success('Vote submitted — waiting for opponent')
         } catch (err: unknown) {
+            setHasSubmitError(true)
             toast.error(err instanceof Error ? err.message : 'Failed to submit vote')
         }
     }, [wager, submitVote])
@@ -136,7 +188,9 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
     const game = getGameData(wager.game)
     const pot = wager.stake_lamports * 2
     const payout = Math.floor(pot * 0.9)
-    const canClose = !!myVote || isResolved || isDisputed
+
+    // Allow closing if: already voted, resolved/disputed/retractable, or submit errored
+    const canClose = !!myVote || isResolved || isDisputed || isRetractable || hasSubmitError
 
     return (
         <Dialog open={open} onOpenChange={(v) => {
@@ -165,7 +219,7 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                 <div className="space-y-4 mt-2">
                     <AnimatePresence mode="wait">
 
-                        {/* Retractable — 15s countdown ring */}
+                        {/* ── Retractable — 15s countdown ring ── */}
                         {isRetractable && (
                             <motion.div key="retractable" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
                                 className="p-4 rounded-xl bg-success/10 border border-success/30 text-center space-y-3"
@@ -206,7 +260,7 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                             </motion.div>
                         )}
 
-                        {/* Resolved */}
+                        {/* ── Resolved ── */}
                         {isResolved && (
                             <motion.div key="resolved" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
                                 className={`p-4 rounded-xl border text-center space-y-2 ${wager.winner_wallet === currentWallet ? 'bg-success/10 border-success/30' : wager.winner_wallet ? 'bg-muted/30 border-border' : 'bg-yellow-500/10 border-yellow-500/30'}`}
@@ -222,7 +276,7 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                             </motion.div>
                         )}
 
-                        {/* Disputed */}
+                        {/* ── Disputed ── */}
                         {isDisputed && (
                             <motion.div key="disputed" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                                 className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2"
@@ -236,7 +290,7 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                             </motion.div>
                         )}
 
-                        {/* Active voting */}
+                        {/* ── Active voting ── */}
                         {!isResolved && !isDisputed && !isRetractable && (
                             <motion.div key="voting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
 
@@ -246,6 +300,34 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                                         {timeLeft !== null && timeLeft < 60000 && <span className="text-red-400 font-medium"> Time running out!</span>}
                                     </p>
                                 </div>
+
+                                {/* Prompt shown when opponent already voted but you haven't */}
+                                {opponentVoted && !myVote && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: -4 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/30"
+                                    >
+                                        <Zap className="h-4 w-4 text-primary flex-shrink-0" />
+                                        <p className="text-xs text-primary font-medium">
+                                            Your opponent has voted — your vote decides the result!
+                                        </p>
+                                    </motion.div>
+                                )}
+
+                                {/* Submit error state — always allow close */}
+                                {hasSubmitError && (
+                                    <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+                                        <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
+                                        <div className="flex-1">
+                                            <p className="text-xs text-destructive font-medium">Vote failed to submit</p>
+                                            <p className="text-[10px] text-muted-foreground">You can retry below or close and reopen to try again.</p>
+                                        </div>
+                                        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => onOpenChange(false)}>
+                                            Close
+                                        </Button>
+                                    </div>
+                                )}
 
                                 {/* Vote status rows */}
                                 <div className="space-y-2">
@@ -265,13 +347,15 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                                                 </div>
                                             </div>
                                             <Badge variant={p.voted ? 'success' : 'secondary'} className="text-[10px]">
-                                                {p.voted ? 'Voted ✓' : 'Waiting…'}
+                                                {p.voted
+                                                    ? 'Voted ✓'
+                                                    : (p.isMe ? 'Your turn' : 'Waiting…')}
                                             </Badge>
                                         </div>
                                     ))}
                                 </div>
 
-                                {/* Waiting for opponent */}
+                                {/* Waiting for opponent (I already voted) */}
                                 {outcome === 'pending' && (
                                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                                         className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-border"
@@ -285,14 +369,14 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                                     </motion.div>
                                 )}
 
-                                {/* Vote picker */}
+                                {/* Vote picker — shown when I haven't voted yet */}
                                 {outcome === 'waiting' && (
                                     <div className="space-y-3">
                                         <p className="text-xs text-muted-foreground text-center">Select the winner</p>
 
                                         {[
                                             { wallet: wager.player_a_wallet, player: playerA, label: 'Challenger', isMe: isPlayerA },
-                                            null, // draw
+                                            null, // draw spacer
                                             { wallet: wager.player_b_wallet ?? '', player: playerB, label: 'Opponent', isMe: isPlayerB },
                                         ].map((p, i) => p === null ? (
                                             <button key="draw" onClick={() => handleVote('draw')} disabled={submitVote.isPending}
