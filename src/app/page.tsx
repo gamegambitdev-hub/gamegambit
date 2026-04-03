@@ -2,15 +2,25 @@
 
 import dynamic from 'next/dynamic'
 import { Hero } from '@/components/landing/Hero'
-import { LiveFeed } from '@/components/landing/LiveFeed'
-import { HowItWorks } from '@/components/landing/HowItWorks'
-import { SupportedGames } from '@/components/landing/SupportedGames'
-import { Footer } from '@/components/landing/Footer'
 
 // Fixed full-page Three.js canvas — covers the entire landing page.
 // Must be here (page level) so particles persist through every section.
 const HeroCanvas = dynamic(
   () => import('@/components/landing/HeroCanvas').then(m => ({ default: m.HeroCanvas })),
+  { ssr: false, loading: () => null }
+)
+
+// Below-fold sections — not visible on first load, defer their JS
+const LiveFeed = dynamic(
+  () => import('@/components/landing/LiveFeed').then(m => ({ default: m.LiveFeed })),
+  { ssr: false, loading: () => null }
+)
+const HowItWorks = dynamic(
+  () => import('@/components/landing/HowItWorks').then(m => ({ default: m.HowItWorks })),
+  { ssr: false, loading: () => null }
+)
+const SupportedGames = dynamic(
+  () => import('@/components/landing/SupportedGames').then(m => ({ default: m.SupportedGames })),
   { ssr: false, loading: () => null }
 )
 

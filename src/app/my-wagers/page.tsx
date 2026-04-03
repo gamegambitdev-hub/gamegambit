@@ -11,7 +11,7 @@ const WalletMultiButton = dynamic(
   () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
   { ssr: false }
 )
-import { Swords, Clock, Trophy, XCircle, CheckCircle, Filter, Loader2, Play, ExternalLink, Link2 } from 'lucide-react'
+import { Swords, Clock, Trophy, XCircle, CheckCircle, Filter, Play, ExternalLink, Link2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +31,10 @@ import { PunishmentNoticeModal } from '@/components/PunishmentNoticeModal'
 import { ReportModeratorModal } from '@/components/ReportModeratorModal'
 import { useEditWager } from '@/hooks/useWagers'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
+import {
+  WagerRowsSkeleton,
+  MyWagersPageSkeleton,
+} from '@/components/skeletons/GamingSkeletonLoader'
 import { useGameEvents } from '@/contexts/GameEventContext'
 import { useWagerChat } from '@/hooks/useWagerChat'
 import { useBalanceAnimation } from '@/contexts/BalanceAnimationContext'
@@ -485,13 +489,7 @@ function MyWagersInner() {
   }, [readyRoomWager?.id, readyRoomWager?.status, readyRoomWager?.ready_player_a, readyRoomWager?.ready_player_b, readyRoomWager?.countdown_started_at])
 
   if (!walletReady) {
-    return (
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    )
+    return <MyWagersPageSkeleton />
   }
 
   if (!connected) {
@@ -584,9 +582,7 @@ function MyWagersInner() {
           </div>
 
           {isLoading ? (
-            <div className="flex justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
+            <WagerRowsSkeleton />
           ) : (
             <>
               <TabsContent value="all" className="space-y-3">
@@ -776,17 +772,10 @@ function MyWagersInner() {
 }
 
 import { Suspense } from 'react'
-import { Loader2 as _L2 } from 'lucide-react'
 
 export default function MyWagersPage() {
   return (
-    <Suspense fallback={
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <_L2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<WagerRowsSkeleton />}>
       <MyWagersInner />
     </Suspense>
   )

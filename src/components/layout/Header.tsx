@@ -10,9 +10,14 @@ import { usePathname } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { truncateAddress } from '@/lib/constants'
-import { NotificationsDropdown } from '@/components/NotificationsDropdown'
+import dynamic from 'next/dynamic'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { WalletButton } from '@/components/WalletButton'
+
+const NotificationsDropdown = dynamic(
+  () => import('@/components/NotificationsDropdown').then(m => ({ default: m.NotificationsDropdown })),
+  { ssr: false, loading: () => null }
+)
 
 const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: '📊', LucideIcon: BarChart2 },

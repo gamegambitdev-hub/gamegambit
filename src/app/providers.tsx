@@ -15,11 +15,25 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 // import { Toaster } from '@/components/ui/toaster'
 import { Toaster as Sonner } from '@/components/ui/sonner'
 import { useAutoCreatePlayer } from '@/hooks/useAutoCreatePlayer'
-import { PWAInstallPrompt, ServiceWorkerUpdater } from '@/components/PWASetup'
-import { GameEventProvider } from '@/contexts/GameEventContext'
+import dynamic from 'next/dynamic'
+
 import { ModalProvider } from '@/contexts/ModalContext'
 import { BalanceAnimationProvider } from '@/contexts/BalanceAnimationContext'
-import { ModerationOrchestrator } from '@/components/ModerationOrchestrator'
+import { GameEventProvider } from '@/contexts/GameEventContext'
+
+// ── Lazy-loaded non-critical UI ───────────────────────────────────────────────
+const PWAInstallPrompt = dynamic(
+  () => import('@/components/PWASetup').then(m => ({ default: m.PWAInstallPrompt })),
+  { ssr: false, loading: () => null }
+)
+const ServiceWorkerUpdater = dynamic(
+  () => import('@/components/PWASetup').then(m => ({ default: m.ServiceWorkerUpdater })),
+  { ssr: false, loading: () => null }
+)
+const ModerationOrchestrator = dynamic(
+  () => import('@/components/ModerationOrchestrator').then(m => ({ default: m.ModerationOrchestrator })),
+  { ssr: false, loading: () => null }
+)
 
 import '@solana/wallet-adapter-react-ui/styles.css'
 
