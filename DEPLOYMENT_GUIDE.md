@@ -23,7 +23,7 @@ Complete guide for deploying Game Gambit to production with Vercel, Supabase, an
 │  ┌─────────────────────────────────────────────────┐        │
 │  │              Supabase                            │        │
 │  │  - PostgreSQL (20 tables, RLS, triggers)         │        │
-│  │  - Edge Functions (6 deployed)                   │        │
+│  │  - Edge Functions (10 deployed)                   │        │
 │  │  - Realtime (4 tables)                           │        │
 │  │  - Row-level security                            │        │
 │  └─────────────────────────────────────────────────┘        │
@@ -72,10 +72,12 @@ Complete guide for deploying Game Gambit to production with Vercel, Supabase, an
 - [ ] Instruction discriminators match current IDL
 
 ### Edge Functions
-- [ ] All 6 functions deployed
+- [ ] All 10 functions deployed
 - [ ] All secrets configured (see table below)
 - [ ] `verify-wallet` smoke-tested
 - [ ] `check-chess-games` cron job configured at cron-job.org
+- [ ] `moderation-timeout` pg_cron job activated in Supabase SQL Editor
+- [ ] `increment_moderation_skip_count` RPC created in Supabase SQL Editor
 
 ### Infrastructure
 - [ ] Vercel project created
@@ -174,7 +176,7 @@ Supabase Dashboard → Project Settings → Backups
 
 ## Step 2: Deploy Edge Functions
 
-All 6 edge functions must be deployed before the frontend.
+All 10 edge functions must be deployed before the frontend.
 
 ```bash
 # Install Supabase CLI
@@ -190,6 +192,10 @@ supabase functions deploy admin-action
 supabase functions deploy resolve-wager
 supabase functions deploy verify-wallet
 supabase functions deploy check-chess-games
+supabase functions deploy assign-moderator
+supabase functions deploy moderation-timeout
+supabase functions deploy process-verdict
+supabase functions deploy process-concession
 ```
 
 ### Configure Edge Function Secrets
@@ -211,7 +217,46 @@ Set all secrets in **Supabase Dashboard → Edge Functions → Secrets** (not in
 > ```typescript
 > Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret)))
 > ```
-> If the format is wrong, the function will throw a silent parse error on every on-chain call. The same secret must also be set in Vercel (see Step 3) because Next.js API routes use it for session token validation.
+> If the format is wrong, the function will throw a silent parse error on every on-chain call. The same secret must also be set in Vercel (see Step 4) because Next.js API routes use it for session token validation.
+
+### Activate `moderation-timeout` pg_cron (run once)
+
+After deploying, activate the moderation timeout cron job in the **Supabase SQL Editor**:
+
+```sql
+-- Required for HTTP calls from pg_cron
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- Schedule the timeout handler (runs every minute)
+SELECT cron.schedule(
+  'moderation-timeout', '* * * * *',
+  $$
+    SELECT net.http_post(
+      url        := current_setting('app.supabase_url') || '/functions/v1/moderation-timeout',
+      headers    := jsonb_build_object(
+                      'Content-Type',  'application/json',
+                      'Authorization', 'Bearer ' || current_setting('app.service_role_key')
+                    ),
+      body       := '{}'::jsonb
+    )
+  $$
+);
+
+-- Verify it was created
+SELECT jobname, schedule FROM cron.job WHERE jobname = 'moderation-timeout';
+```
+
+Also create the atomic skip-count RPC if not already present:
+
+```sql
+CREATE OR REPLACE FUNCTION increment_moderation_skip_count(p_wallet text)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE players SET moderation_skipped_count = moderation_skipped_count + 1
+  WHERE wallet_address = p_wallet;
+$$;
+```
+
+> The 30s popup window is enforced by the `deadline` column in `moderation_requests`, not the cron frequency. Running every minute is safe — queries inside the function filter by `deadline < NOW()`.
 
 ### Smoke Test Edge Functions
 
@@ -229,6 +274,19 @@ curl -X POST https://<project>.supabase.co/functions/v1/check-chess-games \
   -H "Authorization: Bearer <your-anon-key>" \
   -H "Content-Type: application/json"
 # Expected: {"checked":0,"message":"No active chess wagers"} (or similar)
+
+# Test assign-moderator (expects 400 with missing wagerId)
+curl -X POST https://<project>.supabase.co/functions/v1/assign-moderator \
+  -H "Authorization: Bearer <your-anon-key>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+# Expected: {"error":"wagerId required"} or similar
+
+# Test process-verdict (expects 401 — auth required)
+curl -X POST https://<project>.supabase.co/functions/v1/process-verdict \
+  -H "Content-Type: application/json" \
+  -d '{}'
+# Expected: 401 or missing fields error
 ```
 
 ---
@@ -461,6 +519,10 @@ supabase functions logs secure-wager --tail
 supabase functions logs resolve-wager --tail
 supabase functions logs admin-action --tail
 supabase functions logs check-chess-games --tail
+supabase functions logs assign-moderator --tail
+supabase functions logs moderation-timeout --tail
+supabase functions logs process-verdict --tail
+supabase functions logs process-concession --tail
 ```
 
 ### Failed Transaction Monitoring
@@ -518,6 +580,8 @@ ORDER BY created_at ASC;
 | Solana RPC failures | > 5 in 5 min | Switch RPC URL |
 | `check-chess-games` cron | Missing > 5 min | Check cron-job.org status |
 | Disputes with `moderation_skipped_count` > 5 | Any | Review moderator pool availability |
+| `process-verdict` errors | Any | Punishment may not have applied — check logs |
+| Players with `is_suspended = true` and expired `suspension_ends_at` | Any | Suspension lift cron not running or missing |
 
 ### Supabase Monitoring
 
@@ -647,8 +711,11 @@ Migration 005 from v1.5.0 was not run. Run the `CREATE OR REPLACE FUNCTION merge
 - [ ] Check `wager_transactions` for `error_*` rows weekly
 - [ ] Check `username_appeals` for expired response deadlines weekly
 - [ ] Review `username_change_requests` for `pending_review` items weekly
+- [ ] Review `behaviour-flags` admin page for high-risk players weekly
+- [ ] Check `punishment_log` for `ban_indefinite` entries — confirm ban is intentional
 - [ ] Monitor Solana authority wallet balance (needs SOL for transaction fees)
 - [ ] Verify cron-job.org `check-chess-games` is executing every minute
+- [ ] Verify pg_cron `moderation-timeout` is active: `SELECT jobname, schedule FROM cron.job WHERE jobname = 'moderation-timeout';`
 - [ ] Update dependencies quarterly
 - [ ] Run security audit quarterly
 
@@ -659,7 +726,7 @@ If the Solana program is redeployed:
 1. Update `NEXT_PUBLIC_PROGRAM_ID` in Vercel env vars
 2. Update `PROGRAM_ID` in `src/lib/solana-config.ts`
 3. Update all instruction discriminators in `src/lib/solana-config.ts` from the new IDL
-4. Update discriminators in all 3 edge functions that build raw instructions (`secure-wager`, `admin-action`, `resolve-wager`)
+4. Update discriminators in all 5 edge functions that build raw Solana instructions (`secure-wager`, `admin-action`, `resolve-wager`, `process-verdict`, `process-concession`)
 5. Redeploy all edge functions
 6. Redeploy frontend
 
@@ -689,4 +756,4 @@ Currently pending regeneration (v1.5.0 tables and columns are not yet in `types.
 
 ---
 
-**Last Updated**: March 28, 2026 — v1.6.0
+**Last Updated**: April 3, 2026 — v1.7.0
