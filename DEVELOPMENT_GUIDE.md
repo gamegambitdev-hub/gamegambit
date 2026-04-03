@@ -100,6 +100,9 @@ gamegambit/
 │   │   │   ├── disputes/
 │   │   │   ├── users/
 │   │   │   ├── wagers/
+│   │   │   ├── behaviour-flags/       # Phase 6 — player risk scores, false vote/dispute loss events
+│   │   │   ├── username-appeals/      # Phase 6 — review username ownership appeals
+│   │   │   ├── username-changes/      # Phase 6 — review username change requests
 │   │   │   └── unauthorized/
 │   │   ├── arena/                     # Wager creation & lobby
 │   │   ├── dashboard/
@@ -185,11 +188,15 @@ gamegambit/
 │       └── admin/                     # Admin DB operations (actions, audit, auth, sessions, wallets)
 │
 ├── supabase/functions/
-│   ├── secure-wager/    # All wager lifecycle actions (17 actions — see table below)
+│   ├── secure-wager/    # All wager lifecycle actions (18 actions — see table below)
 │   ├── secure-player/   # Player create/update/bindGame
 │   ├── admin-action/    # Admin dispute resolution (forceResolve, forceRefund, markDisputed, banPlayer, etc.)
 │   ├── resolve-wager/   # Low-level on-chain settlement (called by admin-action + Lichess webhook)
 │   ├── check-chess-games/ # Cron-driven: polls active chess wagers every 60s, auto-resolves finished games
+│   ├── assign-moderator/  # Fire-and-forget: assigns eligible moderator on dispute creation + timeout retry
+│   ├── moderation-timeout/ # pg_cron every 60s: marks expired moderation requests, triggers reassignment
+│   ├── process-verdict/   # On-chain settlement + punishment tiers after moderator verdict
+│   └── process-concession/ # On-chain settlement for grace period concessions (no mod fee)
 │   └── verify-wallet/   # Ed25519 wallet signature → JWT session token
 │
 ├── public/
@@ -229,6 +236,7 @@ All 17 actions handled by the `secure-wager` edge function:
 | `markGameComplete` | ✓ | Non-chess: player signals game is done; triggers shared countdown when both confirm |
 | `submitVote` | ✓ | Non-chess: submit winner vote; resolves or disputes based on both votes |
 | `retractVote` | ✓ | Non-chess: retract own vote (only before opponent has voted) |
+| `concedeDispute` | ✓ | Phase 6: concede during grace period — resolves on-chain instantly, no moderator fee, logs honesty event to `player_behaviour_log` |
 
 ### `secure-player` Actions Reference
 
@@ -367,7 +375,35 @@ The `join_wager` instruction reads `stake_lamports` directly from the `WagerAcco
 
 ---
 
-### 7. Supabase Realtime — Avoid Duplicate Channels
+### 7. Dispute Grace Period + Punishment System (Phase 6)
+
+When `submitVote` detects a vote mismatch (both votes in but they disagree), it sets `status = 'disputed'` and calls `assign-moderator` fire-and-forget. Simultaneously, the frontend shows `DisputeGraceModal` to both players.
+
+**Grace period concession flow:**
+```typescript
+// Either player can concede — this triggers process-concession on-chain
+await invokeSecureWager({ action: 'concedeDispute', wagerId }, sessionToken)
+// No moderator fee. Honesty logged to player_behaviour_log.
+// Moderator search continues silently in background — process-concession wins the race.
+```
+
+If nobody concedes, the moderator accepts and submits a verdict. `process-verdict` then calls `applyPunishment()` on the losing player, incrementing their `dispute_loss` offense count in `punishment_log` and applying the appropriate tier:
+
+| Offense # | Punishment applied |
+|-----------|-------------------|
+| 1 | Warning (no suspension, `is_suspended` stays false) |
+| 2 | 24h suspension |
+| 3 | 72h suspension |
+| 4 | 7-day (168h) suspension |
+| 5+ | Indefinite ban (`suspension_ends_at` = null) |
+
+`applyPunishment` is intentionally non-critical — it catches its own exceptions and never fails the verdict settlement. If you add new offense types, mirror the same `punishment_log` insert + `player_behaviour_log` insert pattern.
+
+**`cannot_determine` verdicts:** Skip on-chain action and punishment. The wager stays `disputed` and escalates to admin review. The moderator earns no fee.
+
+---
+
+### 8. Supabase Realtime — Avoid Duplicate Channels
 
 Four tables have Realtime enabled: `wagers`, `wager_transactions`, `notifications`, `wager_messages`.
 
@@ -383,7 +419,7 @@ Four tables have Realtime enabled: `wagers`, `wager_transactions`, `notification
   <WagerChat messages={messages} onSend={sendMessage} />  // receives props
 ```
 
-### 8. Type Safety
+### 9. Type Safety
 
 Types have two sources:
 
@@ -704,4 +740,4 @@ Application-level rate limits are enforced in edge functions. `notifyChat` is ca
 
 ---
 
-**Last Updated**: March 28, 2026 — v1.6.0
+**Last Updated**: April 3, 2026 — v1.7.0

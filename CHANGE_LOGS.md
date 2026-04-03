@@ -11,27 +11,104 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased] — In Progress (April 2, 2026)
+## [1.7.0] — April 3, 2026
 
-### Bug Fixes — Moderation System Hardening (Batch 1 + Batch 2)
-
-Six bugs confirmed and resolved across the moderation stack before Step 6 work begins.
-Divided into two batches based on scope.
+### Phase 6 — Punishment System + Dispute Grace Period
 
 ---
 
-#### Batch 1
+#### Dispute Grace Period (Step 4 — Completed)
+
+**New Component — `DisputeGraceModal`**
+
+Shown to both players immediately when `wager.status === 'disputed'` and `grace_conceded_by` is null. Gives players a chance to admit they voted wrong before a moderator is pulled in. No countdown — the moderator search runs silently in the background.
+
+If either player taps "I was wrong", `concedeDispute` is called on `secure-wager`. The concession is resolved on-chain instantly via `process-concession` with no moderator fee. The honesty event is logged to `player_behaviour_log` positively. The moderator popup is never shown if concession wins the race.
+
+**New Edge Function — `process-concession`**
+
+Handles on-chain resolution for grace period concessions. Calls `resolve_wager` (90/10 split) or `close_wager` (draw). Does NOT apply punishment tiers — concession rewards honesty. Logs a positive `honesty_concession` event to `player_behaviour_log`.
+
+**New `secure-wager` action — `concedeDispute`**
+
+Validates `status === 'disputed'`, stamps `grace_conceded_by` and `grace_conceded_at`, triggers `process-concession`, and notifies both players.
+
+---
+
+#### Auto-Escalating Punishment Tiers (Step 6 — Completed)
+
+**New Edge Function — `process-verdict`**
+
+Called after a moderator submits a verdict. Handles full on-chain settlement and applies punishment to the dispute loser based on their `dispute_loss` offense count in `punishment_log`:
+
+| Offense # | Punishment |
+|-----------|-----------|
+| 1 | Warning — no suspension |
+| 2 | 24h suspension |
+| 3 | 72h suspension |
+| 4 | 7-day (168h) suspension |
+| 5+ | Indefinite ban (`suspension_ends_at` = null) |
+
+Punishment is written to `punishment_log` (immutable) and reflected on the player row (`is_suspended`, `suspension_ends_at`). `cannot_determine` verdicts skip punishment and escalate to admin. `applyPunishment` catches its own exceptions — a punishment failure never blocks verdict settlement.
+
+Also handles: on-chain `resolve_wager` or `close_wager`, winner/loser stats update, `wager_transactions` ledger entries, and notifications to both players + moderator.
+
+**New Hook — `useDisputeGrace`**
+
+Exports `useConcede()` — mutation that calls `concedeDispute` via `invokeSecureWager`. Allows 30s timeout for on-chain resolution.
+
+---
+
+#### New Admin Pages
+
+- **`/itszaadminlogin/behaviour-flags`** — Aggregates `player_behaviour_log` per player into risk scores. Tracks false votes, dispute losses, and moderator reports with per-event weights. Admins can drill into full event history per player.
+- **`/itszaadminlogin/username-appeals`** — Review queue for username ownership appeals filed by players.
+- **`/itszaadminlogin/username-changes`** — Review queue for formal username change/rebind requests.
+
+---
+
+#### New Edge Functions — Moderation Infrastructure
+
+**`assign-moderator`**
+
+Called fire-and-forget from `secure-wager/actions.ts` (`handleSubmitVote`) when a dispute is created, and by `moderation-timeout` on retry. Finds the eligible moderator with the lowest `moderation_skipped_count` (not a participant, not suspended, has `moderation_requests_enabled = true`, not already tried on this wager). Inserts a `moderation_requests` row with `deadline = now + 30s` and sends an in-app notification.
+
+**`moderation-timeout`**
+
+Triggered by pg_cron every minute. Handles two cases:
+- **Pending timeout** — moderator didn't accept within 30s → `status = 'timed_out'` → `assign-moderator` retried
+- **Accepted timeout** — moderator accepted but didn't submit verdict within decision window → `status = 'timed_out'` → skip count incremented atomically via `increment_moderation_skip_count` RPC → `assign-moderator` retried
+
+Skip count updates run concurrently with `Promise.all` — no sequential blocking in loops.
+
+---
+
+#### New Player-Facing Features
+
+**Player Settings Page (`/settings`)**
+- Push notification toggle (per event type)
+- Moderation assignment opt-in/opt-out (`moderation_requests_enabled`)
+- Managed via `GET/PATCH /api/settings` with session token auth
+- `usePlayerSettings` hook with optimistic updates and camelCase↔snake_case mapping
+
+**Username Binding System**
+- `GameAccountCard` updated with bind/appeal/change-request flows for PUBG, CODM, Free Fire
+- `useUsernameBinding` hook — `useBindUsername`, `useUsernameAppeal`, `useSubmitChangeRequest` mutations
+- `/api/username/bind` — bind game username; returns `USERNAME_TAKEN` if conflict → triggers appeal flow
+- `/api/username/appeal` — file ownership appeal; notifies current holder
+- `/api/username/appeal/respond` — holder releases or contests; contested appeals go to admin queue
+- `/api/username/change-request` — formal rebind request; max 2 approved/pending per game per 12 months enforced server-side
+- PUBG binding calls `/api/pubg/verify-username` first (live PUBG API lookup); falls back to manual confirmation if `PUBG_API_KEY` not configured
+
+---
+
+### Bug Fixes (April 2, 2026 — Moderation System Hardening)
 
 **Bug 1 — `ModerationRequestModal` stale closure on countdown auto-dismiss**
 
-The 30s countdown timer called `onDismissed` directly via a closure captured at mount. If the parent
-component (`ModerationOrchestrator`) re-rendered and passed a new `onDismissed` reference before the
-countdown expired, the interval would invoke the stale version — the context state would not clear and
-the popup could appear frozen or fail to transition.
+The 30s countdown timer called `onDismissed` via a closure captured at mount. If the parent re-rendered before the timer fired, the stale closure wouldn't clear context state — popup appeared frozen or failed to transition.
 
-Fix: `onDismissed` and `onAccepted` are now stored in `useRef` with a `useEffect` that keeps them in sync.
-Both `handleDismiss` and `handleAccept` call `ref.current()` instead of the raw prop. The interval is
-stable for the lifetime of the request regardless of parent re-renders.
+Fix: `onDismissed` and `onAccepted` stored in `useRef`, synced via `useEffect`. Handlers call `ref.current()` instead of the raw prop.
 
 File: `src/components/ModerationRequestModal.tsx`
 
@@ -39,127 +116,97 @@ File: `src/components/ModerationRequestModal.tsx`
 
 **Bug 2 — `moderation-timeout` pg_cron job was never activated**
 
-The `moderation-timeout` edge function was deployed and fully functional. However, the pg_cron schedule
-that calls it every minute was never executed in the Supabase SQL editor — it existed only as a comment
-inside the edge function source. As a result, timed-out pending requests (moderator didn't accept within
-30s) and timed-out accepted requests (moderator accepted but didn't submit verdict in time) were never
-marked timed_out and never reassigned. The retry loop was completely inactive.
+The edge function was deployed but the pg_cron schedule was never run in the SQL editor — it existed only as a comment. Timed-out requests were never marked `timed_out` and never reassigned. The retry loop was completely inactive.
 
-Fix: Run in Supabase SQL Editor (once):
-```sql
-create extension if not exists pg_net;
-select cron.schedule(
-  'moderation-timeout', '* * * * *',
-  $$ select net.http_post(
-       url := 'https://vqgtwalwvalbephvpxap.supabase.co/functions/v1/moderation-timeout',
-       headers := jsonb_build_object('Content-Type','application/json','Authorization','Bearer ' || current_setting('app.service_role_key')),
-       body := '{}'::jsonb) $$);
-```
-Verify: `select jobname, schedule from cron.job where jobname = 'moderation-timeout';`
+Fix: pg_cron job now documented and required in the deployment checklist. See deployment guide Step 2.
 
 ---
 
-#### Batch 2
-
 **Bug 3 — Hard refresh re-showed already-dismissed moderation popup**
 
-`seenModerationRequestIds` in `GameEventContext` was an in-memory `useRef<Set<string>>` initialised to
-`new Set()` on every mount. After a hard page refresh, the ref reset — any pending `moderation_requests`
-row still in the DB would fire a new Realtime INSERT event and re-trigger the popup, even if the user
-had already dismissed it in the same browser session.
+`seenModerationRequestIds` was an in-memory `useRef<Set<string>>` — reset on every page load. Pending `moderation_requests` rows in the DB would re-trigger the popup after a hard refresh.
 
-Fix: `seenModerationRequestIds` now initialises from `sessionStorage` (key `gg:seen_mod_requests`) and
-writes back to it every time a new ID is added. On hard refresh the Set is restored from sessionStorage,
-so already-seen request IDs are never shown again within the same tab session.
+Fix: `seenModerationRequestIds` now initialises from `sessionStorage` (key `gg:seen_mod_requests`) and writes back on every addition.
 
 File: `src/contexts/GameEventContext.tsx`
 
 ---
 
-**Bug 4 — Skip count increment in `moderation-timeout` was not atomic (race condition)**
+**Bug 4 — Skip count increment in `moderation-timeout` was not atomic**
 
-When `moderation-timeout` penalised a moderator who accepted but didn't submit a verdict, it used a
-read-then-write pattern: `SELECT moderation_skipped_count`, then `UPDATE ... SET count + 1`. If two cron
-ticks fired in quick succession (e.g. brief pg_cron overlap), both reads would see the same value and
-both writes would set `count + 1` — resulting in only one increment instead of two.
+Read-then-write pattern (`SELECT count`, then `UPDATE count + 1`) meant overlapping cron ticks could both read the same value and produce only one increment.
 
-Fix: Replaced with a call to the `increment_moderation_skip_count(p_wallet)` Postgres RPC (single atomic
-`UPDATE ... SET moderation_skipped_count = moderation_skipped_count + 1`). No read required; no race.
+Fix: Replaced with `increment_moderation_skip_count(p_wallet)` Postgres RPC — single atomic `UPDATE ... SET count = count + 1`.
 
 File: `supabase/functions/moderation-timeout/index.ts`
 
 ---
 
-**Bug 5 — Same race condition in `decline/route.ts` skip count increment**
+**Bug 5 — Same race condition in `decline/route.ts`**
 
-`POST /api/moderation/decline` had the identical read-then-write skip count pattern. A simultaneous
-cron timeout + manual decline click (rare but possible within the 30s window) would produce the same
-double-read race — one of the two increments would be lost.
+`POST /api/moderation/decline` had the identical read-then-write pattern. Simultaneous cron timeout + manual decline within the 30s window could lose one increment.
 
-Fix: Same `increment_moderation_skip_count` RPC call replaces the read-then-write chain.
+Fix: Same `increment_moderation_skip_count` RPC.
 
 File: `src/app/api/moderation/decline/route.ts`
 
 ---
 
-**Bug 6 (SQL) — `increment_moderation_skip_count` RPC did not exist**
+**Bug 6 — `increment_moderation_skip_count` RPC did not exist**
 
-Both Bug 4 and Bug 5 fixes depend on an `increment_moderation_skip_count(p_wallet text)` Postgres
-function. It was not present in the DB — calling `.rpc()` on it would throw until created.
+Both Bug 4 and Bug 5 fixes depend on this Postgres function. It was not present in the DB.
 
-Fix: Run in Supabase SQL Editor (once):
+Fix:
 ```sql
-create or replace function increment_moderation_skip_count(p_wallet text)
-returns void language sql as $$
-  update players set moderation_skipped_count = moderation_skipped_count + 1
-  where wallet_address = p_wallet;
+CREATE OR REPLACE FUNCTION increment_moderation_skip_count(p_wallet text)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE players SET moderation_skipped_count = moderation_skipped_count + 1
+  WHERE wallet_address = p_wallet;
 $$;
 ```
 
 ---
 
-### Fixed Summary (April 2, 2026)
+### Bug Fixes (March 30, 2026)
 
-- [x] `ModerationRequestModal` — stale closure on `onDismissed`/`onAccepted` refs
-- [x] `GameEventContext` — `seenModerationRequestIds` not persisted across hard refresh
-- [x] `moderation-timeout` — skip count read-then-write race condition
-- [x] `decline/route.ts` — skip count read-then-write race condition
-- [x] `increment_moderation_skip_count` SQL RPC — created and live
-- [x] pg_cron job `moderation-timeout` — scheduled and verified active
+**Bug — Player B Deposit Ordering (`ReadyRoomModal`)**
 
-## [Unreleased] — In Progress (March 30, 2026)
+`join_wager` reads `stake_lamports` from the WagerAccount PDA that `create_wager` initialises. If Player A's transaction hadn't confirmed when Player B's fired, the PDA didn't exist — the program fell back to minimum rent (~0.00008 SOL).
 
-### Bug Fix — Player B Deposit Ordering (`ReadyRoomModal`)
-
-**Problem:** When both players marked ready and the countdown reached zero, Player A's `create_wager` and Player B's `join_wager` transactions fired simultaneously. The `join_wager` on-chain instruction reads the stake amount directly from the PDA that `create_wager` initialises. If Player A's transaction had not confirmed yet, the PDA did not exist and the program fell back to minimum rent (~0.00008 SOL) — so Player B always deposited the wrong amount regardless of the agreed stake.
-
-**Fix:** Inside `runDepositFlow`, Player B now polls `wagerRef.current.deposit_player_a` every 2 seconds (up to 2 minutes) before calling `joinWagerOnChain`. Since `wagerRef` stays in sync with the live Supabase Realtime wager object, the poll resolves as soon as Player A's deposit is confirmed in the DB. The countdown, Ready button, and all other UX are unchanged. Player B sees a spinner with the message "Waiting for [challenger name] to deposit their stake first..." during the wait.
+Fix: Player B polls `wagerRef.current.deposit_player_a` every 2s (up to 2 min) before calling `joinWagerOnChain`. `wagerRef` stays in sync with Realtime — poll resolves as soon as `recordOnChainCreate` sets `deposit_player_a = true`. Player B sees a spinner during the wait; countdown and Ready button are unaffected.
 
 ---
 
-## [Unreleased] — In Progress (March 28, 2026)
+### Added (v1.7.0 summary)
 
-### Step 4 — Dispute Grace Period
-- `raiseDispute` action in `secure-wager` — either player can formally open a dispute after vote disagreement
-- 24-hour window before moderator is auto-assigned — allows players to resolve informally
-- Grace period concession flow (`grace_conceded_by`, `grace_conceded_at`)
+- `DisputeGraceModal` component — concession prompt before moderator search
+- `process-concession` edge function — on-chain settlement for grace concessions, no mod fee
+- `process-verdict` edge function — on-chain settlement + 5-tier auto-punishment after moderator verdict
+- `assign-moderator` edge function — fire-and-forget moderator assignment
+- `moderation-timeout` edge function — pg_cron retry handler for expired moderation requests
+- `useDisputeGrace` hook — `useConcede` mutation
+- `usePlayerSettings` hook — push/moderation preference management
+- `useUsernameBinding` hook — bind/appeal/change-request mutations
+- `/settings` player settings page
+- `/api/settings` GET/PATCH route
+- `/api/username/bind`, `/api/username/appeal`, `/api/username/appeal/respond`, `/api/username/change-request` routes
+- `/itszaadminlogin/behaviour-flags` admin page
+- `/itszaadminlogin/username-appeals` admin page
+- `/itszaadminlogin/username-changes` admin page
+- `concedeDispute` action in `secure-wager`
+- `increment_moderation_skip_count` Postgres RPC
+- `punishment_log` offense tracking with 5-tier auto-escalation
+- `player_behaviour_log` events for all dispute/punishment/concession outcomes
 
-### Step 5 — Moderator System
-- Moderator assignment queue — candidate pulled from eligible player pool
-- 20s accept window per candidate, `moderation_skipped_count` increments on timeout/decline
-- Screenshot upload + moderator verdict UI
-- Moderator payout on decision
+### Changed (v1.7.0)
 
-### Step 6 — Punishment System
-- Strike tracking (`false_vote_count`, `false_claim_count`, `moderator_abuse_count`)
-- Auto-suspend thresholds
-- `punishment_log` entries for every penalty
-- Admin escalation path
-
-### Planned Admin Features
-- Batch operations on wagers/players
-- Advanced admin analytics dashboard
-- Automated dispute resolution (AI-assisted)
+- Total edge functions: 6 → 10
+- `moderation-timeout` skip count increment made atomic via RPC
+- `GameEventContext` `seenModerationRequestIds` now persisted in `sessionStorage`
+- `ModerationRequestModal` stale closure on `onDismissed`/`onAccepted` fixed via `useRef`
+- Wager lifecycle now includes dispute grace period step before moderator assignment
+- `DEPLOYMENT_GUIDE.md` — pg_cron activation, new deploy commands, updated checklist
+- `DEVELOPMENT_GUIDE.md` — new design patterns, updated structure tree, action tables
 
 ---
 
@@ -470,21 +517,25 @@ When deploying to Solana Mainnet:
 
 ## Known Issues
 
-### Current (April 1, 2026)
+### Current (April 3, 2026)
 
-- `wager_messages`, v1.5.0/v1.6.0 player/wager columns, and `free_fire` game type are not reflected in auto-generated `src/integrations/supabase/types.ts` — worked around with `as any` casts and local interface definitions. Re-run `supabase gen types typescript` after any schema change.
+- `wager_messages`, v1.5.0/v1.6.0/v1.7.0 player/wager columns, and `free_fire` game type are not reflected in auto-generated `src/integrations/supabase/types.ts` — worked around with `as any` casts and local interface definitions. Re-run `supabase gen types typescript` after any schema change.
 - `retractable` wager status exists in DB enum but is unused in the current flow.
 - High latency on leaderboard queries with > 100k players (requires sharding).
 - Occasional delays in Lichess game data synchronization.
 - Admin analytics need optimization for large datasets.
 - 2FA implementation requires email service integration.
+- No automated lift for timed suspensions — `is_suspended` must be cleared manually or via a scheduled job when `suspension_ends_at` is reached. A pg_cron suspension-lift job is planned.
 
-### Fixed (April 1, 2026)
+### Fixed (April 3, 2026 — v1.7.0)
 
-- [x] `settings/route.ts` validated session tokens with `AUTHORITY_WALLET_SECRET` instead of `SUPABASE_SERVICE_ROLE_KEY` — every call to GET/PATCH `/api/settings` returned 401
-- [x] `SupportedGames.tsx` was missing Free Fire card — landing page showed 3 games instead of 4
-- [x] `LiveFeed.tsx` `getGameData()` had no `free_fire` case — Free Fire wagers showed chess icon/name
-- [x] `moderation-timeout` pg_cron job was never activated — timed-out moderation requests were never reassigned
+- [x] `ModerationRequestModal` — stale closure on `onDismissed`/`onAccepted` refs
+- [x] `GameEventContext` — `seenModerationRequestIds` not persisted across hard refresh
+- [x] `moderation-timeout` — skip count read-then-write race condition
+- [x] `decline/route.ts` — skip count read-then-write race condition
+- [x] `increment_moderation_skip_count` SQL RPC — created and live
+- [x] pg_cron job `moderation-timeout` — scheduled and verified active
+- [x] Player B deposit ordering race — polling guard added in `runDepositFlow`
 
 ### Fixed (v1.6.0)
 
@@ -532,7 +583,8 @@ When deploying to Solana Mainnet:
 ## Roadmap
 
 ### Q2 2026
-- [ ] Step 6 completion (punishment system — strike tracking, auto-suspend, admin escalation)
+- [x] Phase 6 — punishment system (strike tracking, auto-suspend/ban, behaviour flags, grace period concession, username binding/appeals)
+- [ ] Suspension auto-lift pg_cron job
 - [ ] Mobile application (React Native)
 - [ ] Tournament mode with brackets
 - [ ] Advanced admin analytics dashboard
@@ -585,4 +637,4 @@ For issues or feature requests:
 
 ---
 
-**Last Updated:** April 1, 2026
+**Last Updated:** April 3, 2026 — v1.7.0
