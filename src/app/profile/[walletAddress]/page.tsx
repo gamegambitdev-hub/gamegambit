@@ -3,7 +3,8 @@
 import { use } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { User, Trophy, Swords, Clock, Copy, Check, Loader2 } from 'lucide-react'
+import { User, Trophy, Swords, Clock, Copy, Check } from 'lucide-react'
+import { ProfilePageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -56,13 +57,7 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
     : 0
 
   if (isLoading) {
-    return (
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    )
+    return <ProfilePageSkeleton />
   }
 
   if (!player) {

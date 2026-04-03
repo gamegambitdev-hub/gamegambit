@@ -1,13 +1,14 @@
 'use client'
 
 import { motion } from 'framer-motion'
-import { Trophy, Medal, TrendingUp, Crown, Flame, Loader2 } from 'lucide-react'
+import { Trophy, Medal, TrendingUp, Crown, Flame } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { truncateAddress, formatSol } from '@/lib/constants'
 import { useLeaderboard, Player } from '@/hooks/usePlayer'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
+import { LeaderboardRowsSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import Link from 'next/link'
 
 const getRankIcon = (rank: number) => {
@@ -195,9 +196,7 @@ export default function LeaderboardPage() {
 
           <TabsContent value="earnings">
             {earningsLoading ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
+              <LeaderboardRowsSkeleton />
             ) : earningsData && earningsData.length > 0 ? (
               <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
                 {earningsData.map((player, index) => (
@@ -213,9 +212,7 @@ export default function LeaderboardPage() {
 
           <TabsContent value="wins">
             {winsLoading ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
+              <LeaderboardRowsSkeleton />
             ) : winsData && winsData.length > 0 ? (
               <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
                 {winsData.map((player, index) => (
@@ -231,9 +228,7 @@ export default function LeaderboardPage() {
 
           <TabsContent value="streak">
             {streakLoading ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
+              <LeaderboardRowsSkeleton />
             ) : streakData && streakData.length > 0 ? (
               <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-2">
                 {streakData.map((player, index) => (

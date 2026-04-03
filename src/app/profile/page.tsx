@@ -18,6 +18,7 @@ import {
   Wallet, Edit2, Save, Link2, CheckCircle2, Settings,
   AlertTriangle, ShieldAlert, LogOut as Unlink,
 } from 'lucide-react'
+import { ProfilePageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -33,13 +34,28 @@ import {
   useDisconnectLichess,
   startLichessOAuth,
 } from '@/hooks/useLichess'
-import { GameAccountCard, type ChangeRequestPayload } from '@/components/GameAccountCard'
-import { NFTGallery } from '@/components/NFTGallery'
-import { AchievementBadges } from '@/components/AchievementBadges'
+import type { ChangeRequestPayload } from '@/components/GameAccountCard'
 import { getSupabaseClient } from '@/integrations/supabase/client'
 import { useWalletAuth } from '@/hooks/useWalletAuth'
 import Link from 'next/link'
-import { SuspensionBanner } from '@/components/SuspensionBanner'
+
+// ── Lazy-loaded heavy components ──────────────────────────────────────────────
+const GameAccountCard = dynamic(
+  () => import('@/components/GameAccountCard').then(m => ({ default: m.GameAccountCard })),
+  { ssr: false, loading: () => null }
+)
+const NFTGallery = dynamic(
+  () => import('@/components/NFTGallery').then(m => ({ default: m.NFTGallery })),
+  { ssr: false, loading: () => null }
+)
+const AchievementBadges = dynamic(
+  () => import('@/components/AchievementBadges').then(m => ({ default: m.AchievementBadges })),
+  { ssr: false, loading: () => null }
+)
+const SuspensionBanner = dynamic(
+  () => import('@/components/SuspensionBanner').then(m => ({ default: m.SuspensionBanner })),
+  { ssr: false, loading: () => null }
+)
 
 // ── Inner component — uses useSearchParams, must be inside Suspense ──────────
 
@@ -295,13 +311,7 @@ function ProfilePageInner() {
   // ── Loading / not-connected states ────────────────────────────────────────
 
   if (!walletReady) {
-    return (
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    )
+    return <ProfilePageSkeleton />
   }
 
   if (!connected) {
@@ -328,13 +338,7 @@ function ProfilePageInner() {
   }
 
   if (isLoading) {
-    return (
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    )
+    return <ProfilePageSkeleton />
   }
 
   // ── Main render ──────────────────────────────────────────────────────────
@@ -765,13 +769,7 @@ function ProfilePageInner() {
 
 export default function ProfilePage() {
   return (
-    <Suspense fallback={
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<ProfilePageSkeleton />}>
       <ProfilePageInner />
     </Suspense>
   )

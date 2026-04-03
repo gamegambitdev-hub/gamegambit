@@ -11,7 +11,7 @@ const WalletMultiButton = dynamic(
 )
 import {
   Trophy, Swords, TrendingUp, Wallet, Clock, Target,
-  ChevronRight, Flame, Star, Activity, Loader2, Zap,
+  ChevronRight, Flame, Star, Activity, Zap,
   Shield, Crown, ArrowUpRight, ArrowDownRight, Minus,
   BarChart3, CircleDot
 } from 'lucide-react'
@@ -32,6 +32,9 @@ import { GameCompleteModal } from '@/components/GameCompletemodal'
 import { VotingModal } from '@/components/Votingmodal'
 import { DisputeGraceModal } from '@/components/DisputeGraceModal'
 import { SuspensionBanner } from '@/components/SuspensionBanner'
+import {
+  DashboardPageSkeleton,
+} from '@/components/skeletons/GamingSkeletonLoader'
 
 const getGameData = (game: string) => {
   switch (game) {
@@ -186,19 +189,6 @@ function StatBar({ value, max, color }: { value: number; max: number; color: str
   )
 }
 
-function WalletLoader() {
-  return (
-    <div className="py-8 pb-16 min-h-screen flex flex-col items-center justify-center">
-      <div className="container px-4">
-        <div className="max-w-sm mx-auto text-center py-12">
-          <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto mb-4" />
-          <p className="text-sm text-muted-foreground font-gaming">Connecting wallet...</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export default function DashboardPage() {
   const { connected, publicKey } = useWallet()
   const walletReady = useWalletReady()
@@ -344,7 +334,7 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletBalance])
 
-  if (!walletReady) return <WalletLoader />
+  if (!walletReady) return <DashboardPageSkeleton />
 
   if (!connected) {
     return (
@@ -390,13 +380,7 @@ export default function DashboardPage() {
   }
 
   if (playerLoading || wagersLoading) {
-    return (
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    )
+    return <DashboardPageSkeleton />
   }
 
   return (

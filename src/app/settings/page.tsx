@@ -6,7 +6,7 @@ import { useWalletReady } from '@/app/providers'
 import dynamic from 'next/dynamic'
 import {
     Bell, BellOff, Shield, ShieldOff, ChevronRight,
-    Loader2, Settings, FileText, Clock, Coins,
+    Settings, FileText, Clock, Coins,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import { usePlayerSettings } from '@/hooks/usePlayerSettings'
+import { SettingsPageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
@@ -48,8 +49,13 @@ export default function SettingsPage() {
     const walletReady = useWalletReady()
     const { settings, isLoading, updateSettings, isUpdating } = usePlayerSettings()
 
+    // ── Not ready yet — show skeleton instead of flashing connect screen ────
+    if (!walletReady) {
+        return <SettingsPageSkeleton />
+    }
+
     // ── Not connected ─────────────────────────────────────────────────────────
-    if (!walletReady || !connected) {
+    if (!connected) {
         return (
             <div className="py-8 pb-16">
                 <div className="container px-4 max-w-2xl mx-auto">
@@ -64,6 +70,11 @@ export default function SettingsPage() {
                 </div>
             </div>
         )
+    }
+
+    // ── Data loading ──────────────────────────────────────────────────────────
+    if (isLoading) {
+        return <SettingsPageSkeleton />
     }
 
     // ── Toggle handlers ───────────────────────────────────────────────────────
@@ -292,13 +303,6 @@ export default function SettingsPage() {
                         </CardContent>
                     </Card>
                 </motion.div>
-
-                {/* ── Loading overlay ───────────────────────────────────────────────── */}
-                {isLoading && (
-                    <div className="flex justify-center py-8">
-                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                    </div>
-                )}
 
             </div>
         </div>

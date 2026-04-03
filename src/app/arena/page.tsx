@@ -15,7 +15,7 @@ const WalletMultiButton = dynamic(
 
 import {
   Search, Zap, Filter, Plus, Swords, Clock, Trophy,
-  Loader2, Wallet, Eye, Pencil, Trash2, Play, X,
+  Wallet, Eye, Pencil, Trash2, Play, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -46,6 +46,12 @@ import { SuspensionBanner } from '@/components/SuspensionBanner'
 import { GameResultModal } from '@/components/GameResultModal'
 import { PlayerLink } from '@/components/PlayerLink'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
+import {
+  WagerRowsSkeleton,
+  WinnersSidebarSkeleton,
+  ButtonDots,
+  SearchArcSpinner,
+} from '@/components/skeletons/GamingSkeletonLoader'
 import { useGameEvents } from '@/contexts/GameEventContext'
 import { useWagerChat } from '@/hooks/useWagerChat'
 import { useBalanceAnimation } from '@/contexts/BalanceAnimationContext'
@@ -162,7 +168,7 @@ function OpenWagerCard({
                   disabled={isJoining}
                 >
                   {isJoining
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    ? <ButtonDots />
                     : 'Accept Challenge'
                   }
                 </Button>
@@ -771,13 +777,7 @@ function ArenaInner() {
 
   // ── Loading / disconnected states ────────────────────────────────────────
   if (!walletReady) {
-    return (
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    )
+    return <WagerRowsSkeleton />
   }
 
   if (!connected) {
@@ -833,7 +833,7 @@ function ArenaInner() {
         >
           <div className="relative flex-1">
             {searchLoading && searchQuery.length >= 2
-              ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+              ? <SearchArcSpinner />
               : <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             }
             <Input
@@ -859,10 +859,9 @@ function ArenaInner() {
               className="flex-1 sm:flex-none hover:border-primary/50 hover:shadow-neon transition-all"
             >
               {quickMatch.isPending
-                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                : <Zap className="h-4 w-4 mr-2" />
+                ? <><ButtonDots /><span className="ml-2">Quick Match</span></>
+                : <><Zap className="h-4 w-4 mr-2" />Quick Match</>
               }
-              Quick Match
             </Button>
             <Button variant="ghost" size="icon"><Filter className="h-4 w-4" /></Button>
           </div>
@@ -896,9 +895,7 @@ function ArenaInner() {
                 <Badge variant="outline" className="ml-auto">{filteredLiveWagers.length}</Badge>
               </div>
               {liveLoading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                </div>
+                <WagerRowsSkeleton />
               ) : filteredLiveWagers.length > 0 ? (
                 <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-3">
                   {filteredLiveWagers.map((wager) => (
@@ -928,9 +925,7 @@ function ArenaInner() {
                 <Badge variant="outline" className="ml-auto">{filteredOpenWagers.length}</Badge>
               </div>
               {openLoading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                </div>
+                <WagerRowsSkeleton />
               ) : filteredOpenWagers.length > 0 ? (
                 <motion.div variants={staggerContainer} initial="initial" animate="animate" className="space-y-3">
                   {filteredOpenWagers.map((wager) => (
@@ -989,9 +984,7 @@ function ArenaInner() {
                 </div>
                 <div className="p-4">
                   {winnersLoading ? (
-                    <div className="flex justify-center py-4">
-                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    </div>
+                    <WinnersSidebarSkeleton />
                   ) : recentWinners && recentWinners.length > 0 ? (
                     <div className="space-y-3">
                       {recentWinners.map((wager) => {
@@ -1152,17 +1145,10 @@ function ArenaInner() {
 // ── Page export ───────────────────────────────────────────────────────────────
 
 import { Suspense } from 'react'
-import { Loader2 as _L2 } from 'lucide-react'
 
 export default function ArenaPage() {
   return (
-    <Suspense fallback={
-      <div className="py-8 pb-16">
-        <div className="container px-4 flex justify-center items-center py-20">
-          <_L2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<WagerRowsSkeleton />}>
       <ArenaInner />
     </Suspense>
   )
