@@ -113,7 +113,7 @@ serve(async (req) => {
 
         const rpcUrl = Deno.env.get("SOLANA_RPC_URL") || "https://api.devnet.solana.com";
         const connection = new Connection(rpcUrl, "confirmed");
-        const authority = loadAuthorityKeypair(Deno.env.get("AUTHORITY_KEYPAIR")!);
+        const authority = loadAuthorityKeypair(Deno.env.get("AUTHORITY_WALLET_SECRET")!);
 
         const playerAPubkey = new PublicKey(wager.player_a_wallet);
         const wagerPda = deriveWagerPda(playerAPubkey, BigInt(wager.match_id));
