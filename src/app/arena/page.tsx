@@ -344,6 +344,19 @@ function ArenaInner() {
   const [votingWager, setVotingWager] = useState<Wager | null>(null)
   const [votingOpen, setVotingOpen] = useState(false)
 
+  // Keep votingWager live from the per-wager cache.
+  // GameEventContext writes [wagers, id] on every Realtime UPDATE - including
+  // when the opponent submits their vote and when the wager transitions to
+  // retractable/resolved/disputed. Without this sync the modal reads a stale
+  // snapshot and the result/retractable screen never triggers.
+  const { data: liveVotingData } = useWagerById(
+    votingOpen ? (votingWager?.id ?? null) : null
+  )
+  useEffect(() => {
+    if (!votingOpen || !liveVotingData) return
+    setVotingWager(liveVotingData as Wager)
+  }, [liveVotingData, votingOpen])
+
   // Keep gameCompleteWager live from the per-wager cache.
   // GameEventContext writes ['wagers', id] on every Realtime UPDATE — including
   // when the opponent sets game_complete_b/a. Without this sync the modal reads
