@@ -19,7 +19,7 @@ const orbitron = Orbitron({
 export const metadata: Metadata = {
   title: 'Game Gambit | Competitive Gaming Wagers on Solana',
   description: 'Challenge opponents, stake SOL, and prove your skills in competitive gaming matches. Built on Solana for instant, secure transactions.',
-  keywords: ['gaming', 'wagers', 'solana', 'competitive', 'esports', 'chess', 'codm', 'pubg'],
+  keywords: ['gaming', 'wagers', 'solana', 'competitive', 'esports', 'chess', 'codm', 'pubg', 'free fire'],
   authors: [{ name: 'Game Gambit Team' }],
   manifest: '/manifest.json',
   appleWebApp: {
@@ -33,23 +33,25 @@ export const metadata: Metadata = {
     apple: '/logo.png',
   },
   openGraph: {
-    title: 'Game Gambit | Competitive Gaming Wagers',
-    description: 'Challenge opponents and stake SOL in competitive gaming matches',
+    title: 'Game Gambit | Competitive Gaming Wagers on Solana',
+    description: 'Challenge opponents and stake SOL in competitive gaming matches. Chess, CODM, PUBG, Free Fire — all live on Solana.',
     type: 'website',
     images: [
       {
-        url: '/logo.png',
+        // ✅ Bug 3 fix — replaced /logo.png (tiny icon) with proper 1200×630 OG banner
+        url: '/og-banner.png',
         width: 1200,
         height: 630,
-        alt: 'Game Gambit Logo',
+        alt: 'Game Gambit — Competitive Gaming Wagers on Solana',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Game Gambit',
-    description: 'Competitive Gaming Wagers on Solana',
-    images: ['/logo.png'],
+    title: 'Game Gambit | Competitive Gaming Wagers on Solana',
+    description: 'Stake SOL. Prove your skills. Win on-chain. Chess, CODM, PUBG, Free Fire.',
+    // ✅ Bug 3 fix — replaced /logo.png with proper 1200×630 OG banner
+    images: ['/og-banner.png'],
   },
   formatDetection: {
     telephone: false,

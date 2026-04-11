@@ -19,6 +19,7 @@ const GAME_OPTIONS: { value: GameType | 'any'; label: string; icon: string }[] =
   { value: 'chess', label: GAMES.CHESS.name, icon: GAMES.CHESS.icon },
   { value: 'codm', label: GAMES.CODM.name, icon: GAMES.CODM.icon },
   { value: 'pubg', label: GAMES.PUBG.name, icon: GAMES.PUBG.icon },
+  { value: 'free_fire', label: GAMES.FREE_FIRE.name, icon: GAMES.FREE_FIRE.icon }, // ✅ Task 2 — Free Fire added
 ];
 
 export function QuickMatchModal({ open, onOpenChange, onMatch, isPending }: QuickMatchModalProps) {

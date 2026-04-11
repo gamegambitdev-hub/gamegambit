@@ -31,6 +31,7 @@ const getGameData = (game: string) => {
     case 'chess': return GAMES.CHESS;
     case 'codm': return GAMES.CODM;
     case 'pubg': return GAMES.PUBG;
+    case 'free_fire': return GAMES.FREE_FIRE; // ✅ Bug 1 fix — was falling through to CHESS
     default: return GAMES.CHESS;
   }
 };

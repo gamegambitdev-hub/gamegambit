@@ -144,7 +144,8 @@ function ChatBubble({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function WagerChat({ wager, currentWallet, opponentWallet }: WagerChatProps) {
-    const [collapsed, setCollapsed] = useState(false)
+    // ✅ Bug 2 fix — was useState(false), chat was open by default. Now starts collapsed.
+    const [collapsed, setCollapsed] = useState(true)
     const [input, setInput] = useState('')
     const { messages, loading, sending, sendMessage, respondToProposal, pendingProposals, bottomRef } = useWagerChat(wager.id)
 
