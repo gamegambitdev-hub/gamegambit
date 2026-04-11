@@ -15,7 +15,7 @@ import {
   Check, X, Clock, ExternalLink, Swords,
   Loader2, AlertCircle, ShieldCheck, Ban, Hourglass,
   Monitor, LayoutGrid, Trophy, Scale, Pencil, Info,
-  Shuffle,
+  Shuffle, Share2,
 } from 'lucide-react';
 import { Wager, useCancelWager } from '@/hooks/useWagers';
 import { GAMES, formatSol } from '@/lib/constants';
@@ -84,6 +84,7 @@ export function ReadyRoomModal({
   const [txState, setTxState] = useState<TxState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('details');
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const wagerRef = useRef<Wager | null>(wager);
   useEffect(() => { wagerRef.current = wager; }, [wager]);
@@ -271,6 +272,15 @@ export function ReadyRoomModal({
     }
   }, [isPlayerA, isPlayerB, createWagerOnChain, joinWagerOnChain, txState]);
 
+  const handleShareLink = useCallback(() => {
+    if (!wager) return;
+    const url = `${window.location.origin}/wager/${wager.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  }, [wager]);
+
   const handleRetry = useCallback(() => {
     hasTriggeredTx.current = false;
     depositConfirmedRef.current = false;
@@ -409,24 +419,36 @@ export function ReadyRoomModal({
                 <Badge variant="joined">Match Found</Badge>
               </div>
             </div>
-            {hasLichessGame && (
-              <div className="flex rounded-lg border border-border overflow-hidden">
-                <button
-                  onClick={() => setActiveTab('board')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'board' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                  Play
-                </button>
-                <button
-                  onClick={() => setActiveTab('details')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'details' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                  Details
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {hasLichessGame && (
+                <div className="flex rounded-lg border border-border overflow-hidden">
+                  <button
+                    onClick={() => setActiveTab('board')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'board' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                  >
+                    <Monitor className="h-3.5 w-3.5" />
+                    Play
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('details')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'details' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    Details
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={handleShareLink}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors border border-border/40"
+                title="Copy spectator link"
+              >
+                {linkCopied
+                  ? <><Check className="h-3.5 w-3.5 text-green-400" /><span className="text-green-400">Copied!</span></>
+                  : <><Share2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Share</span></>
+                }
+              </button>
+            </div>
           </div>
         </DialogHeader>
 
