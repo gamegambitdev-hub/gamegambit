@@ -5,7 +5,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletReady } from '@/app/providers'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 
 const WalletMultiButton = dynamic(
@@ -298,6 +298,7 @@ function ArenaInner() {
   const walletReady = useWalletReady()
   const walletAddress = publicKey?.toBase58()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const queryClient = useQueryClient()
   const { getSessionToken } = useWalletAuth()
 
@@ -389,6 +390,7 @@ function ArenaInner() {
   // (see the two effects below that watch deepLink*Id).
   const [deepLinkGameCompleteId, setDeepLinkGameCompleteId] = useState<string | null>(null)
   const [deepLinkVotingId, setDeepLinkVotingId] = useState<string | null>(null)
+  const [deepLinkDetailsId, setDeepLinkDetailsId] = useState<string | null>(null)
 
   useEffect(() => {
     const wagerId = searchParams.get('wager')
@@ -399,6 +401,7 @@ function ArenaInner() {
     else if (modal === 'result') setDeepLinkResultId(wagerId)
     else if (modal === 'game-complete') setDeepLinkGameCompleteId(wagerId)
     else if (modal === 'voting') setDeepLinkVotingId(wagerId)
+    else if (modal === 'details') setDeepLinkDetailsId(wagerId)
 
     const url = new URL(window.location.href)
     url.searchParams.delete('wager')
@@ -474,6 +477,7 @@ function ArenaInner() {
   // Fetch wager objects for deep-link game-complete and voting targets
   const { data: deepLinkGameCompleteWager } = useWagerById(deepLinkGameCompleteId)
   const { data: deepLinkVotingWager } = useWagerById(deepLinkVotingId)
+  const { data: deepLinkDetailsWager } = useWagerById(deepLinkDetailsId)
 
   // Only fire the search query when there's actual input
   const { data: searchedPlayers, isLoading: searchLoading } = useSearchPlayers(
@@ -509,6 +513,14 @@ function ArenaInner() {
     setVotingOpen(true)
     setDeepLinkVotingId(null)
   }, [deepLinkVotingWager, deepLinkVotingId, votingOpen])
+
+  // ── Open WagerDetailsModal when deep-link wager data arrives ─────────────
+  useEffect(() => {
+    if (!deepLinkDetailsWager || !deepLinkDetailsId) return
+    setSelectedWager(deepLinkDetailsWager as Wager)
+    setDetailsModalOpen(true)
+    setDeepLinkDetailsId(null)
+  }, [deepLinkDetailsWager, deepLinkDetailsId])
 
   // ── Auto-recover modals after hard refresh ───────────────────────────────
   // If the user hard-refreshes while a voting or game-complete flow is active,
@@ -785,12 +797,13 @@ function ArenaInner() {
       setGameResultOpen(false)
       setGameResultWager(null)
       queryClient.invalidateQueries({ queryKey: ['wagers'] })
+      router.push(`/arena?wager=${newWagerId}&modal=details`)
     } catch (err: any) {
       toast.error(err.message || 'Failed to send rematch challenge')
     } finally {
       setRematchPending(false)
     }
-  }, [gameResultWager, walletAddress, player, needsSetup, getSessionToken, queryClient])
+  }, [gameResultWager, walletAddress, player, needsSetup, getSessionToken, queryClient, router])
 
   // ── Derived result state ─────────────────────────────────────────────────
   const gameResultTotalPot = (gameResultWager?.stake_lamports ?? 0) * 2
