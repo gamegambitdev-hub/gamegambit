@@ -197,9 +197,9 @@ export function LiveFeed() {
               </h2>
               <p className="text-muted-foreground">Watch matches unfold in real-time</p>
             </div>
-            <Link href="/arena">
+            <Link href="/feed">
               <Button variant="outline" className="group hover:border-primary/50 hover:shadow-neon transition-all">
-                View All
+                See Full Feed
                 <ExternalLink className="h-4 w-4 ml-2 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </Button>
             </Link>

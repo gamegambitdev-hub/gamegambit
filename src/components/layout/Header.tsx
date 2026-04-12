@@ -2,7 +2,7 @@
 
 import { useWallet } from '@solana/wallet-adapter-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, User, Copy, Check, Smartphone, Swords, LayoutDashboard, Dice5, Trophy, BarChart2, Settings } from 'lucide-react'
+import { Menu, X, User, Copy, Check, Smartphone, Swords, LayoutDashboard, Dice5, Trophy, BarChart2, Settings, Rss, MessageCircle } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -21,6 +21,7 @@ const NotificationsDropdown = dynamic(
 
 const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: '📊', LucideIcon: BarChart2 },
+  { label: 'Feed', href: '/feed', icon: '📡', LucideIcon: Rss },
   { label: 'Arena', href: '/arena', icon: '⚔️', LucideIcon: Swords },
   { label: 'My Wagers', href: '/my-wagers', icon: '🎲', LucideIcon: Dice5 },
   { label: 'Leaderboard', href: '/leaderboard', icon: '🏆', LucideIcon: Trophy },
@@ -111,6 +112,34 @@ export function Header() {
               {connected && (
                 <>
                   <NotificationsDropdown />
+
+                  {/* Messages icon — wired fully in Task 9 */}
+                  <div
+                    className="relative hidden sm:block"
+                    onMouseEnter={() => setHoveredIcon('/messages')}
+                    onMouseLeave={() => setHoveredIcon(null)}
+                  >
+                    <Link href="/messages">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          'h-8 w-8 sm:h-9 sm:w-9',
+                          pathname === '/messages'
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                        aria-label="Messages"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                      </Button>
+                    </Link>
+                    {hoveredIcon === '/messages' && (
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 px-2 py-1 bg-card border border-border rounded text-xs whitespace-nowrap text-foreground pointer-events-none z-50">
+                        Messages
+                      </div>
+                    )}
+                  </div>
 
                   {/* Settings icon — desktop only */}
                   <div
