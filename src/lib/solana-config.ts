@@ -20,12 +20,13 @@ export const SOLANA_NETWORK: "devnet" | "mainnet-beta" = "devnet";
 
 // ── Fee config ───────────────────────────────────────────────────────────────
 
-/** 10% total platform fee (1000 bps out of 10,000) — matches PLATFORM_FEE_BPS in lib.rs */
-export const PLATFORM_FEE_BPS = 1000;
-export const PLATFORM_FEE_PERCENT = 10;
+/** 10% total platform fee (1000 bps out of 10,000) — micro tier only, kept for reference */
+export const PLATFORM_FEE_BPS = 1000;             // micro tier only — kept for reference
+export const PLATFORM_FEE_PERCENT = 10;            // micro tier only — kept for reference
 
-/** Moderator gets 40% of the platform fee = 4% of total pot */
-export const MODERATOR_FEE_SHARE_PERCENT = 40;
+/** Moderator gets 30% of the platform fee — was 40%, updated to 30% */
+export const MODERATOR_FEE_SHARE_PERCENT = 30;     // was 40 — updated to 30%
+export const MODERATOR_FEE_CAP_USD = 10;           // new — hard cap in USD
 
 // ── Wager timing ─────────────────────────────────────────────────────────────
 

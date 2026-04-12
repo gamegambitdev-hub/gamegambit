@@ -82,13 +82,6 @@ export const STATUS_LABELS: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 
-// ── Fees ──────────────────────────────────────────────────────────────────────
-
-export const PLATFORM_FEE_BPS = 1000;   // 10% — must match PLATFORM_FEE_BPS in lib.rs
-export const MODERATOR_FEE_PERCENT = 3;      // 3% of pot goes to player-moderator
-export const MODERATOR_FEE_CAP_USD = 2.00;   // Hard cap in USD — never pay more than this
-export const WINNER_PAYOUT_PERCENT = 87;     // When moderator involved (90 - 3)
-
 // ── Timers (milliseconds unless noted) ───────────────────────────────────────
 
 export const GAME_COMPLETE_WAIT_MS = 15 * 60 * 1000;  // 15 min for opponent to confirm
@@ -102,6 +95,44 @@ export const USERNAME_APPEAL_RESPONSE_HOURS = 48;               // Hours holder 
 // ── Solana ────────────────────────────────────────────────────────────────────
 
 export const LAMPORTS_PER_SOL = 1_000_000_000;
+
+// ── Fees ──────────────────────────────────────────────────────────────────────
+// Tiered platform fee — mirrors calculate_platform_fee() in lib.rs exactly.
+// Micro : stake < 0.5 SOL  → 10% of pot
+// Mid   : stake 0.5–5 SOL  →  7% of pot
+// Whale : stake > 5 SOL    →  5% of pot
+
+export const FEE_TIERS = {
+  MICRO: { maxStakeSol: 0.5,     feeBps: 1000 },
+  MID:   { maxStakeSol: 5,       feeBps: 700  },
+  WHALE: { maxStakeSol: Infinity, feeBps: 500  },
+} as const;
+
+export const MOD_FEE_SHARE   = 0.30;   // 30% of platform fee goes to moderator
+export const MOD_FEE_CAP_USD = 10;     // moderator never earns more than $10 per verdict
+
+// ── Fee helpers ───────────────────────────────────────────────────────────────
+
+export function getPlatformFeeBps(stakeLamports: number): number {
+  const sol = stakeLamports / LAMPORTS_PER_SOL;
+  if (sol < FEE_TIERS.MICRO.maxStakeSol)  return FEE_TIERS.MICRO.feeBps;
+  if (sol <= FEE_TIERS.MID.maxStakeSol)   return FEE_TIERS.MID.feeBps;
+  return FEE_TIERS.WHALE.feeBps;
+}
+
+/** Returns platform fee in lamports for a given per-player stake amount. */
+export function calculatePlatformFee(stakeLamports: number): number {
+  const pot = stakeLamports * 2;
+  return Math.floor((pot * getPlatformFeeBps(stakeLamports)) / 10_000);
+}
+
+/** Human-readable tier label for display in UI. */
+export function getFeeTierLabel(stakeLamports: number): string {
+  const sol = stakeLamports / LAMPORTS_PER_SOL;
+  if (sol < 0.5) return '10% fee';
+  if (sol <= 5)  return '7% fee';
+  return '5% fee';
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
