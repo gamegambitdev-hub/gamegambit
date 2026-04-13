@@ -11,6 +11,260 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [1.8.0] — April 2026
+
+### Hackathon Sprint — Social, Sharing & Spectator Economy
+
+---
+
+### Bug Fixes
+
+**Bug 1 — Free Fire broken in `WagerDetailsModal`**
+Free Fire game data was missing from the `getGameData` switch in `WagerDetailsModal.tsx`, causing the modal to render empty for Free Fire wagers.
+Fix: Added `free_fire` case returning `GAMES.FREE_FIRE`.
+
+**Bug 2 — Chat starts open by default**
+Ready room chat panel initialised as open, pushing layout content down on load.
+Fix: `chatOpen` initial state changed to `false`.
+
+**Bug 3 — OG image was just the logo**
+`layout.tsx` root metadata used a static logo PNG for all pages.
+Fix: Dynamic per-wager OG image via `src/app/wager/[id]/opengraph-image.tsx` (see Task 11). Root layout still uses the static logo; wager pages now override it.
+
+**Bug 4 — TS2882 CSS import errors**
+CSS module imports in several components triggered TS2882 type errors during build.
+Fix: Moved global CSS imports to `app/layout.tsx`; converted affected components to Tailwind-only styling.
+
+**Bug 5 — Spectator page `RealtimeChannel` type error**
+`ReturnType<ReturnType<typeof supabase.channel>>` produced a TS constraint error in `wager/[id]/page.tsx`.
+Fix: Channel variable typed as `any`.
+
+**Bug 6 — `useSideBets` `RealtimeChannel` type error**
+Same constraint error as Bug 5, in `src/hooks/useSideBets.ts`.
+Fix: Channel variable typed as `any`.
+
+---
+
+### TASK 1 — Live Platform Stats Bar
+
+Real-time stats bar on the landing page showing live platform activity:
+- Total wagers created, total SOL wagered, active players online
+- Supabase Realtime subscription — updates without polling
+- Platform stats computed from `players` + `wagers` tables
+
+---
+
+### TASK 2 — Free Fire Fully Wired
+
+- Free Fire icon, name, and platform data correctly resolved across all modals
+- `WagerDetailsModal`, arena page, `getGameData` helpers updated
+- Free Fire wagers now display correctly end-to-end
+
+---
+
+### TASK 3 — Spectator / Share Links
+
+- Public spectator page at `/wager/[id]` — shareable, no login required
+- Shows: game, players, stake, pot, status, Lichess live board (chess), result banner
+- Supabase Realtime live updates for wager status changes
+- Copy Link button on spectator page and in arena wager cards
+
+---
+
+### TASK 4 — Social Feed Page
+
+**New Page — `/feed`**
+Three-tab feed: For You, Friends, Live Now.
+
+- Win cards, stream cards, live wager cards with inline Twitch/YouTube embeds
+- Gaming reactions (🔥💀🐐👀) via `feed_reactions` table
+- Spectator count via Supabase Realtime presence per wager channel
+- Feed + Messages links added to navbar
+- Landing page LiveFeed "View All" → `/feed`
+
+**New DB Tables**
+- `feed_reactions` — per-post reaction counts and user reactions
+- `friendships` — bidirectional friendship graph
+- `direct_messages` — DM messages per conversation
+- `spectator_bets` — spectator side bet records (see Task 10)
+
+**New Types** — all added to `src/integrations/supabase/types.ts`.
+
+---
+
+### TASK 5 — Rematch System
+
+- `handleRematch` on arena page — creates a new wager pre-filled with same game/stake
+- `GameResultModal` Rematch button with loading state + disabled-after-click
+- On rematch: navigates to `/arena?wager=ID&modal=details` to pre-open wager details
+
+---
+
+### TASK 5b — Feed Like/Unlike + Reaction Notifications
+
+- Unlike correctly toggles delete when `alreadyReacted` is true
+- 10-minute digest notification guard in `useToggleReaction` — prevents spam
+- `feed_reaction` notification type added to `AppNotification` + `NotificationsDropdown`
+- `wagerOwnerWallet` passed to all three `ReactionsBar` instances in `FeedView`
+
+---
+
+### TASK 9 — Friends System
+
+**Part A — Core Hooks + DB**
+- `src/hooks/useFriends.ts` — `sendRequest`, `accept`, `decline`, `remove`, `friendsList`, `pendingRequests`
+- `useDirectMessages` + `getDmChannelId` exported
+- `useUnreadDmCount` exported
+- SQL migration: `friendships` + `direct_messages` tables with RLS
+
+**Part B — UI Components**
+- `src/components/FriendButton.tsx` — four states: add / pending / accept / friends+remove
+- Wired into: FeedView player names, leaderboard rows, public profile header
+- `friend_request` + `friend_accepted` notification types added
+
+**Part C — Messages Page**
+- `src/app/messages/page.tsx` — split-pane inbox + realtime DM chat
+- Wrapped in `Suspense`
+- Auto-opens from `?with=WALLET` query param
+- Challenge button in DM header → `/arena?challenge=WALLET`
+- Header unread DM badge via `useUnreadDmCount`
+
+---
+
+### TASK 6 — Referral / Invite System
+
+- `supabase/migrations/task6_referral.sql` — adds `invite_code`, `referred_by_wallet`, `referral_count` + indexes
+- `invite_code` auto-generated on player create (wallet prefix + random hex suffix)
+- `useAutoCreatePlayer` reads `gg_referrer` cookie, passes `referrerCode` to create, clears after use
+- `secure-player` create action: looks up referrer by `invite_code`, links `referred_by_wallet`, increments `referral_count`
+- `src/app/invite/[code]/page.tsx` — public landing page, shows referrer stats, sets cookie, redirects to `/arena`
+- Profile "Invite Friends" section: invite link + copy button, referral count, qualify messaging
+- Supabase types updated: `invite_code`, `referred_by_wallet`, `referral_count` on `players` table
+- `secure-player` edge function redeployed
+
+---
+
+### TASK 7 — Airdrop / Events Page
+
+**New Page — `/events`**
+
+- Hero: "GameGambit Airdrop Campaign" + "Active" badge + tagline
+- How to Qualify section — engagement-focused, intentionally vague (no thresholds, amounts, or dates)
+- Your Activity card — user's own stats (total wagered, wins, referrals, game linked). Only visible when wallet connected
+- AirdropShareCard button (see Task 8)
+- No countdown timer, no spots counter, no reward amounts, no external CTA links
+- "Events" added to header nav and footer
+
+---
+
+### TASK 8 — Share Cards
+
+**New Component — `src/components/ShareCards.tsx`**
+
+Canvas-based 1200×630 PNG generation, client-side. Three actions on each card: Share on X (Twitter intent), Copy Image (clipboard), Download (PNG file).
+
+**Win Share Card** (triggered from `GameResultModal` on victory only)
+- Design: GameGambit logo, "I just won X SOL on GameGambit", game icon, opponent username, date, platform URL + invite code
+- `GameResultModal` updated: `game`, `opponentUsername`, `winnerUsername`, `inviteCode` props added; `shareOpen` state; "Share Your Win" button in claimed actions section
+
+**Airdrop/Campaign Card**
+- Design: logo, username, key stats (wagers, wins, referrals), "I'm competing in the GameGambit Airdrop", invite link
+- `AirdropShareButton` wired into `/events` activity card and `/profile` invite section
+
+**Arena page** updated to pass `game`, `opponentUsername`, `inviteCode` into `GameResultModal`.
+
+---
+
+### TASK 10 — Spectator Side Bets
+
+**New Migration — `supabase/migrations/task10_side_bets.sql`**
+`spectator_bets` table with RLS. Schema: `id`, `wager_id`, `bettor_wallet`, `backer_wallet`, `backed_player`, `amount_lamports`, `status`, `counter_amount`, `tx_signature`, timestamps.
+
+**New Edge Function — `supabase/functions/secure-bet/index.ts`**
+Five actions:
+- `place` — validates wager status, blocks players from betting on own match, records on-chain SOL transfer to platform wallet, inserts bet row with 30-min expiry
+- `counter` — proposed alternative amount, sets status → `countered`
+- `accept` — second party sends SOL to platform wallet, status → `matched`
+- `cancel` — owner cancels open bet, platform wallet refunds original amount
+- `resolveForWager` — called after main wager resolves; pays winners (95% of pot), refunds unmatched open bets, expires remainder
+
+**New Hook — `src/hooks/useSideBets.ts`**
+- `useSideBets(wagerId)` — query + Realtime subscription
+- `usePlaceSideBet(wagerId)` — SOL transfer + `place` action
+- `useCounterSideBet(wagerId)` — `counter` action
+- `useAcceptSideBet(wagerId)` — SOL transfer + `accept` action
+- `useCancelSideBet(wagerId)` — `cancel` action
+
+**Spectator Page — `src/app/wager/[id]/page.tsx`** updated:
+- `SideBetsPanel` component added — collapsible, realtime, full bet lifecycle UI
+- Place bet: pick a side (player A or B), enter SOL amount
+- Open bets list: accept at stated amount, or submit counter-offer
+- Matched bets shown as locked-in pairs with pot total
+- Resolved/settled bets shown for history
+- Login required, players blocked from betting on their own match
+- Betting locked once wager reaches `voting`/`resolved`/`cancelled`
+
+---
+
+### TASK 11 — Dynamic OG Preview Per Wager
+
+**New File — `src/app/wager/[id]/opengraph-image.tsx`**
+Next.js `ImageResponse` (edge runtime) generates a 1200×630 PNG per wager:
+- Dark gradient background with purple glow
+- Game icon + name + match ID
+- Player A vs Player B cards (winner gets crown + gold border on resolved wagers)
+- Each player stakes + total pot cards
+- Status badge
+- `gamegambit.gg` branding footer
+
+**New File — `src/app/wager/[id]/layout.tsx`**
+Server component — `generateMetadata` function provides dynamic per-wager:
+- `og:title` — "PlayerA vs PlayerB — X SOL Chess Wager" or "PlayerName won X SOL on GameGambit"
+- `og:description` — stake, game, players, winner
+- `og:image` — points to `/wager/[id]/opengraph-image`
+- `twitter:card: summary_large_image`
+- Graceful fallback to static branding if wager not found
+
+---
+
+### Added (v1.8.0 summary)
+
+- `src/app/feed/page.tsx` — social feed (For You / Friends / Live Now)
+- `src/app/messages/page.tsx` — split-pane DM inbox
+- `src/app/invite/[code]/page.tsx` — referral landing page
+- `src/app/events/page.tsx` — airdrop / events page
+- `src/app/wager/[id]/opengraph-image.tsx` — dynamic OG image
+- `src/app/wager/[id]/layout.tsx` — dynamic wager metadata
+- `src/components/ShareCards.tsx` — WinShareCard + AirdropShareCard + AirdropShareButton
+- `src/components/FriendButton.tsx` — four-state friend action button
+- `src/hooks/useFriends.ts` — friends system hooks
+- `src/hooks/useSideBets.ts` — side bet hooks + realtime
+- `supabase/functions/secure-bet/index.ts` — side bet edge function
+- `supabase/migrations/task6_referral.sql` — referral columns + indexes
+- `supabase/migrations/task10_side_bets.sql` — spectator_bets table + RLS
+- `feed_reactions`, `friendships`, `direct_messages`, `spectator_bets` DB tables
+- `invite_code`, `referred_by_wallet`, `referral_count` columns on `players`
+- "Events" + "Feed" + "Messages" added to header nav
+
+### Changed (v1.8.0)
+
+- `GameResultModal` — share props added, Win Share Card dialog mounted in VictoryContent
+- `arena/page.tsx` — rematch handler, share props passed to GameResultModal
+- `src/app/wager/[id]/page.tsx` — SideBetsPanel added, new imports
+- `src/app/profile/page.tsx` — AirdropShareButton added to invite section
+- `src/app/events/page.tsx` — AirdropShareButton wired into activity card
+- Total edge functions: 10 → 11
+- Total DB tables: ~20 → ~25
+- Navbar: Feed + Messages + Events links added
+
+### Known Issues (v1.8.0)
+
+- `spectator_bets`, `feed_reactions`, `friendships`, `direct_messages` tables and new `players` columns (`invite_code`, `referred_by_wallet`, `referral_count`) not yet in auto-generated `types.ts` — use local interface definitions until next `supabase gen types` run.
+- `secure-bet` `resolveForWager` must be called manually from `resolve-wager` edge function after main wager settlement — wire-up between the two functions is a pending integration step.
+- Suspension auto-lift (planned pg_cron job) still pending from v1.7.0.
+
+---
+
 ## [1.7.0] — April 3, 2026
 
 ### Phase 6 — Punishment System + Dispute Grace Period
@@ -105,57 +359,25 @@ Skip count updates run concurrently with `Promise.all` — no sequential blockin
 ### Bug Fixes (April 2, 2026 — Moderation System Hardening)
 
 **Bug 1 — `ModerationRequestModal` stale closure on countdown auto-dismiss**
-
-The 30s countdown timer called `onDismissed` via a closure captured at mount. If the parent re-rendered before the timer fired, the stale closure wouldn't clear context state — popup appeared frozen or failed to transition.
-
 Fix: `onDismissed` and `onAccepted` stored in `useRef`, synced via `useEffect`. Handlers call `ref.current()` instead of the raw prop.
-
 File: `src/components/ModerationRequestModal.tsx`
 
----
-
 **Bug 2 — `moderation-timeout` pg_cron job was never activated**
-
-The edge function was deployed but the pg_cron schedule was never run in the SQL editor — it existed only as a comment. Timed-out requests were never marked `timed_out` and never reassigned. The retry loop was completely inactive.
-
-Fix: pg_cron job now documented and required in the deployment checklist. See deployment guide Step 2.
-
----
+Fix: pg_cron job now documented and required in the deployment checklist.
 
 **Bug 3 — Hard refresh re-showed already-dismissed moderation popup**
-
-`seenModerationRequestIds` was an in-memory `useRef<Set<string>>` — reset on every page load. Pending `moderation_requests` rows in the DB would re-trigger the popup after a hard refresh.
-
 Fix: `seenModerationRequestIds` now initialises from `sessionStorage` (key `gg:seen_mod_requests`) and writes back on every addition.
-
 File: `src/contexts/GameEventContext.tsx`
 
----
-
 **Bug 4 — Skip count increment in `moderation-timeout` was not atomic**
-
-Read-then-write pattern (`SELECT count`, then `UPDATE count + 1`) meant overlapping cron ticks could both read the same value and produce only one increment.
-
-Fix: Replaced with `increment_moderation_skip_count(p_wallet)` Postgres RPC — single atomic `UPDATE ... SET count = count + 1`.
-
+Fix: Replaced with `increment_moderation_skip_count(p_wallet)` Postgres RPC.
 File: `supabase/functions/moderation-timeout/index.ts`
 
----
-
 **Bug 5 — Same race condition in `decline/route.ts`**
-
-`POST /api/moderation/decline` had the identical read-then-write pattern. Simultaneous cron timeout + manual decline within the 30s window could lose one increment.
-
 Fix: Same `increment_moderation_skip_count` RPC.
-
 File: `src/app/api/moderation/decline/route.ts`
 
----
-
 **Bug 6 — `increment_moderation_skip_count` RPC did not exist**
-
-Both Bug 4 and Bug 5 fixes depend on this Postgres function. It was not present in the DB.
-
 Fix:
 ```sql
 CREATE OR REPLACE FUNCTION increment_moderation_skip_count(p_wallet text)
@@ -165,28 +387,23 @@ RETURNS void LANGUAGE sql AS $$
 $$;
 ```
 
----
-
 ### Bug Fixes (March 30, 2026)
 
 **Bug — Player B Deposit Ordering (`ReadyRoomModal`)**
-
-`join_wager` reads `stake_lamports` from the WagerAccount PDA that `create_wager` initialises. If Player A's transaction hadn't confirmed when Player B's fired, the PDA didn't exist — the program fell back to minimum rent (~0.00008 SOL).
-
-Fix: Player B polls `wagerRef.current.deposit_player_a` every 2s (up to 2 min) before calling `joinWagerOnChain`. `wagerRef` stays in sync with Realtime — poll resolves as soon as `recordOnChainCreate` sets `deposit_player_a = true`. Player B sees a spinner during the wait; countdown and Ready button are unaffected.
+Fix: Player B polls `wagerRef.current.deposit_player_a` every 2s (up to 2 min) before calling `joinWagerOnChain`.
 
 ---
 
 ### Added (v1.7.0 summary)
 
-- `DisputeGraceModal` component — concession prompt before moderator search
-- `process-concession` edge function — on-chain settlement for grace concessions, no mod fee
-- `process-verdict` edge function — on-chain settlement + 5-tier auto-punishment after moderator verdict
-- `assign-moderator` edge function — fire-and-forget moderator assignment
-- `moderation-timeout` edge function — pg_cron retry handler for expired moderation requests
-- `useDisputeGrace` hook — `useConcede` mutation
-- `usePlayerSettings` hook — push/moderation preference management
-- `useUsernameBinding` hook — bind/appeal/change-request mutations
+- `DisputeGraceModal` component
+- `process-concession` edge function
+- `process-verdict` edge function
+- `assign-moderator` edge function
+- `moderation-timeout` edge function
+- `useDisputeGrace` hook
+- `usePlayerSettings` hook
+- `useUsernameBinding` hook
 - `/settings` player settings page
 - `/api/settings` GET/PATCH route
 - `/api/username/bind`, `/api/username/appeal`, `/api/username/appeal/respond`, `/api/username/change-request` routes
@@ -196,17 +413,15 @@ Fix: Player B polls `wagerRef.current.deposit_player_a` every 2s (up to 2 min) b
 - `concedeDispute` action in `secure-wager`
 - `increment_moderation_skip_count` Postgres RPC
 - `punishment_log` offense tracking with 5-tier auto-escalation
-- `player_behaviour_log` events for all dispute/punishment/concession outcomes
+- `player_behaviour_log` events
 
 ### Changed (v1.7.0)
 
 - Total edge functions: 6 → 10
 - `moderation-timeout` skip count increment made atomic via RPC
 - `GameEventContext` `seenModerationRequestIds` now persisted in `sessionStorage`
-- `ModerationRequestModal` stale closure on `onDismissed`/`onAccepted` fixed via `useRef`
+- `ModerationRequestModal` stale closure fixed via `useRef`
 - Wager lifecycle now includes dispute grace period step before moderator assignment
-- `DEPLOYMENT_GUIDE.md` — pg_cron activation, new deploy commands, updated checklist
-- `DEVELOPMENT_GUIDE.md` — new design patterns, updated structure tree, action tables
 
 ---
 
@@ -517,15 +732,24 @@ When deploying to Solana Mainnet:
 
 ## Known Issues
 
-### Current (April 3, 2026)
+### Current (April 2026 — v1.8.0)
 
-- `wager_messages`, v1.5.0/v1.6.0/v1.7.0 player/wager columns, and `free_fire` game type are not reflected in auto-generated `src/integrations/supabase/types.ts` — worked around with `as any` casts and local interface definitions. Re-run `supabase gen types typescript` after any schema change.
+- `spectator_bets`, `feed_reactions`, `friendships`, `direct_messages` and new `players` columns (v1.8.0) are not in auto-generated `src/integrations/supabase/types.ts` — use local interfaces until next `supabase gen types` run.
+- `secure-bet` `resolveForWager` not yet auto-called from `resolve-wager` — requires manual call or future wire-up.
+- Suspension auto-lift pg_cron job still pending — `is_suspended` must be cleared manually when `suspension_ends_at` is reached.
 - `retractable` wager status exists in DB enum but is unused in the current flow.
 - High latency on leaderboard queries with > 100k players (requires sharding).
 - Occasional delays in Lichess game data synchronization.
-- Admin analytics need optimization for large datasets.
 - 2FA implementation requires email service integration.
-- No automated lift for timed suspensions — `is_suspended` must be cleared manually or via a scheduled job when `suspension_ends_at` is reached. A pg_cron suspension-lift job is planned.
+
+### Fixed (April 2026 — v1.8.0)
+
+- [x] Free Fire icon/data missing from `WagerDetailsModal` (`getGameData` switch)
+- [x] Chat panel open by default in ready room
+- [x] Static logo OG image on all pages — replaced with dynamic per-wager `opengraph-image.tsx`
+- [x] TS2882 CSS import errors — moved global CSS to `app/layout.tsx`
+- [x] Spectator page `RealtimeChannel` type constraint error — typed as `any`
+- [x] `useSideBets` `RealtimeChannel` type constraint error — typed as `any`
 
 ### Fixed (April 3, 2026 — v1.7.0)
 
@@ -584,19 +808,23 @@ When deploying to Solana Mainnet:
 
 ### Q2 2026
 - [x] Phase 6 — punishment system (strike tracking, auto-suspend/ban, behaviour flags, grace period concession, username binding/appeals)
+- [x] Social feed, friends system, DMs
+- [x] Referral / invite system
+- [x] Airdrop / events page
+- [x] Share cards (win card + campaign card)
+- [x] Spectator side bets
+- [x] Dynamic OG images per wager
 - [ ] Suspension auto-lift pg_cron job
-- [ ] Mobile application (React Native)
-- [ ] Tournament mode with brackets
-- [ ] Advanced admin analytics dashboard
-- [ ] Automated dispute resolution (AI-assisted)
-- [ ] Streaming integration (Twitch)
+- [ ] `resolveForWager` auto-hook in `resolve-wager`
+- [ ] Mainnet deployment + multi-sig authority wallet
 
 ### Q3 2026
-- [ ] Additional games (Fortnite, Valorant)
+- [ ] Tournament / bracket mode
+- [ ] Mobile app (React Native)
+- [ ] Streaming integration (Twitch, YouTube)
 - [ ] Cross-chain settlement (Ethereum, Polygon)
+- [ ] Additional games (Fortnite, Valorant)
 - [ ] Multi-signature admin wallet for mainnet
-- [ ] Advanced KYC/AML integration
-- [ ] Referral program
 
 ### Q4 2026
 - [ ] International support (multiple languages)
@@ -637,4 +865,4 @@ For issues or feature requests:
 
 ---
 
-**Last Updated:** April 3, 2026 — v1.7.0
+**Last Updated:** April 2026 — v1.8.0

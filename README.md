@@ -117,6 +117,20 @@ A Next.js 15 application providing complete player and admin interfaces:
 - **Username binding system** — bind/appeal/change-request flows for PUBG, CODM, and Free Fire usernames with admin review queues
 - **Player settings** — push notification preferences and moderation opt-in/out controls
 
+### Social Layer (v1.8.0)
+
+| Feature | Description |
+|---|---|
+| **Social Feed** | `/feed` page — For You / Friends / Live Now tabs with win cards, stream cards, live wager cards |
+| **Reactions** | 🔥💀🐐👀 reactions via `feed_reactions` table with like/unlike + notifications |
+| **Friends System** | Send/accept/decline/remove, FriendButton component, pending requests |
+| **Direct Messages** | Split-pane DM inbox at `/messages`, realtime chat, auto-open from `?with=WALLET` |
+| **Referral System** | Invite codes, referral tracking, `/invite/[code]` landing page |
+| **Airdrop / Events Page** | `/events` — campaign hero, qualify section, live activity card per user |
+| **Share Cards** | Canvas-based 1200×630 PNG share cards — Win card + Airdrop campaign card |
+| **Spectator Side Bets** | Bet on match outcomes from the spectator page, counter-offer flow, auto-resolve on wager end |
+| **Dynamic OG Images** | Per-wager 1200×630 OG preview via `next/og` — game icon, players, stake, status |
+
 ---
 
 ## Architecture: Web2 Escrow → Solana
@@ -628,13 +642,17 @@ gamegambit/
 All tables confirmed in the live production DB. See [`DB_SCHEMA.md`](./DB_SCHEMA.md) for full column specs.
 
 | Table | Realtime | Purpose |
-|-------|----------|---------| 
-| `players` | ❌ | User accounts, stats, Lichess OAuth data |
+|-------|----------|---------|
+| `players` | ❌ | User accounts, stats, invite codes, referral tracking |
 | `wagers` | ✅ | Gaming matches with full lifecycle state |
 | `wager_transactions` | ✅ | On-chain transaction ledger |
 | `wager_messages` | ✅ | Ready room chat and wager edit proposals |
 | `notifications` | ✅ | In-app event notifications |
 | `push_subscriptions` | ❌ | VAPID Web Push endpoint + keys per player |
+| `feed_reactions` | ❌ | Per-post reaction counts and user reactions (v1.8.0) |
+| `friendships` | ❌ | Bidirectional friendship graph (v1.8.0) |
+| `direct_messages` | ✅ | DM messages per conversation channel (v1.8.0) |
+| `spectator_bets` | ✅ | Spectator side bet records (v1.8.0) |
 | `nfts` | ❌ | Victory NFTs minted to Solana |
 | `achievements` | ❌ | Player achievement badges |
 | `rate_limit_logs` | ❌ | Sliding-window rate limiter |
@@ -660,6 +678,10 @@ All tables confirmed in the live production DB. See [`DB_SCHEMA.md`](./DB_SCHEMA
 |-------|--------|------------|
 | `wager_messages` | ❌ Not in `types.ts` | `as any` cast in `useWagerChat.ts`; `WagerMessage` + `ProposalData` interfaces defined there |
 | `moderation_requests` | ❌ Not in `types.ts` | `ModerationRequest` interface defined in `useModeration.ts` and imported where needed |
+| `feed_reactions` | ❌ Not in `types.ts` | Local interface in `useFeed.ts` (v1.8.0) |
+| `friendships` | ❌ Not in `types.ts` | Local interface in `useFriends.ts` (v1.8.0) |
+| `direct_messages` | ❌ Not in `types.ts` | Local interface in `useDirectMessages.ts` (v1.8.0) |
+| `spectator_bets` | ❌ Not in `types.ts` | Local interface in `useSideBets.ts` (v1.8.0) |
 | `username_appeals` | ❌ Not in `types.ts` | Define local interface in consuming hook |
 | `username_change_requests` | ❌ Not in `types.ts` | Define local interface in consuming hook |
 | `punishment_log` | ❌ Not in `types.ts` | Define local interface in consuming hook |
@@ -674,7 +696,7 @@ All tables confirmed in the live production DB. See [`DB_SCHEMA.md`](./DB_SCHEMA
 
 ## Edge Functions
 
-Four edge functions handle all server-side operations. All run on Supabase's Deno runtime.
+Eleven edge functions handle all server-side operations. All run on Supabase's Deno runtime.
 
 ### `secure-wager`
 All wager lifecycle actions. Requires `X-Session-Token` header (Ed25519 wallet session token) for auth. Called via `invokeSecureWager()` in `src/hooks/useWagers.ts`.
@@ -711,8 +733,23 @@ Player profile management. Requires `X-Session-Token` header.
 
 | Action | Description |
 |--------|-------------|
-| `create` | INSERT new player row (auto-called on first wallet connect via `useAutoCreatePlayer`) |
+| `create` | INSERT new player row (accepts optional `referrerCode` — looks up referrer, links `referred_by_wallet`, increments `referral_count`) |
 | `update` | UPDATE player profile fields (username, bio, avatar, game usernames) |
+
+---
+
+### `secure-bet`
+Spectator side bet actions. Requires `X-Session-Token`. New in v1.8.0.
+
+| Action | Description |
+|--------|-------------|
+| `place` | Transfer SOL to platform wallet on-chain; INSERT bet row with 30-min expiry. Blocked if wager is `voting`/`resolved`/`cancelled`. Players cannot bet on their own match. |
+| `counter` | Propose different amount on an open bet; status → `countered` |
+| `accept` | Second party sends SOL to platform wallet; status → `matched` |
+| `cancel` | Owner cancels open (unmatched) bet; platform wallet refunds SOL |
+| `resolveForWager` | Called after wager resolves. Pays winners 95% of pot, refunds all unmatched open bets, marks all bets as `resolved` or `expired`. |
+
+> **`PLATFORM_WALLET_PRIVATE_KEY` secret:** Must be set in Supabase Edge Function Secrets as a JSON byte array. Same format as `AUTHORITY_WALLET_SECRET`. Required for all `secure-bet` payout and refund operations.
 
 ---
 
@@ -962,8 +999,11 @@ Five tables/channels are used for Realtime (confirmed live):
 | `wager_proposal` | FileEdit (amber) | `/arena?modal=ready-room` |
 | `wager_disputed` | Swords (orange) | `/my-wagers?modal=details` |
 | `moderation_request` | Scale (amber) | `/dashboard?modal=moderation` |
+| `feed_reaction` | Heart (pink) | `/feed` (v1.8.0) |
+| `friend_request` | UserPlus (primary) | `/messages` (v1.8.0) |
+| `friend_accepted` | Users (green) | `/messages` (v1.8.0) |
 
-> The `NotificationRoute` type in `NotificationsDropdown` is `'arena' | 'my-wagers' | 'dashboard'` — all three routes must be valid Next.js pages.
+> The `NotificationRoute` type in `NotificationsDropdown` is `'arena' | 'my-wagers' | 'dashboard' | 'feed' | 'messages'` — all routes must be valid Next.js pages.
 
 ---
 
@@ -1218,13 +1258,20 @@ const configs = {
 supabase link --project-ref your_project_ref
 supabase functions deploy secure-wager
 supabase functions deploy secure-player
+supabase functions deploy secure-bet
 supabase functions deploy admin-action
 supabase functions deploy resolve-wager
+supabase functions deploy assign-moderator
+supabase functions deploy moderation-timeout
+supabase functions deploy process-verdict
+supabase functions deploy process-concession
+supabase functions deploy check-chess-games
+supabase functions deploy verify-wallet
 
 # Frontend deploys automatically via Vercel on push to main
 ```
 
-Set all edge function secrets in Supabase Dashboard → Edge Functions → Secrets before deploying.
+Set all edge function secrets in Supabase Dashboard → Edge Functions → Secrets before deploying. Includes `PLATFORM_WALLET_PRIVATE_KEY` (required for `secure-bet`).
 
 See [`DEPLOYMENT_GUIDE.md`](./DEPLOYMENT_GUIDE.md) for the full checklist.
 
@@ -1253,16 +1300,26 @@ See [`DEPLOYMENT_GUIDE.md`](./DEPLOYMENT_GUIDE.md) for the full checklist.
 - [x] Real-time arena + ready room + wager chat + proposals
 - [x] In-app notifications (Supabase Realtime, bell dropdown)
 - [x] Achievement badges + NFT tier system
-- [x] Moderator dispute system — real-time assignment popup (30s countdown), 5-step guided verdict workflow, on-chain settlement with 30% of platform fee (capped at $10) incentive
-- [x] Step 6 — Punishment system (strike tracking, auto-suspend/ban, behaviour flags, dispute grace period + concession flow, username binding/appeals/change-requests, player settings)
+- [x] Moderator dispute system — real-time assignment popup, 5-step guided verdict workflow, on-chain settlement
+- [x] Phase 6 — Punishment system (strike tracking, auto-suspend/ban, behaviour flags, dispute grace period + concession flow, username binding/appeals/change-requests, player settings)
+- [x] Social feed — For You / Friends / Live Now tabs, win cards, stream cards, live wager cards
+- [x] Friends system — send/accept/decline/remove, FriendButton, pending requests
+- [x] Direct messages — split-pane DM inbox, realtime chat
+- [x] Referral / invite system — invite codes, `/invite/[code]` landing page, referral tracking
+- [x] Airdrop / events page — campaign hero, qualify section, per-user activity card
+- [x] Share cards — Win card + Airdrop campaign card (canvas PNG, share on X / copy / download)
+- [x] Spectator side bets — place/counter/accept/cancel, auto-resolve, platform wallet escrow
+- [x] Dynamic OG images — per-wager 1200×630 preview via `next/og`
 
 **Planned**
+- [ ] Suspension auto-lift pg_cron job
+- [ ] `resolveForWager` auto-hook in `resolve-wager` edge function
 - [ ] Tournament / bracket mode
-- [ ] Social share cards ("I just won X SOL")
 - [ ] Weekly leaderboard rewards
 - [ ] Mainnet deployment + multi-sig authority wallet
 - [ ] Mobile app (React Native)
-- [ ] Streaming integration (Twitch, YouTube)
+- [ ] Streaming integration (Twitch, YouTube) — embed support + CSP config
+- [ ] Cross-chain settlement
 
 ---
 

@@ -117,6 +117,13 @@ Then run the v1.5.0 migrations **in order** (blocks 001 through 005 from `DB_SCH
 Supabase Dashboard → SQL Editor → run each block in sequence
 ```
 
+Then run the v1.8.0 migrations:
+
+```
+Supabase Dashboard → SQL Editor → paste supabase/migrations/task6_referral.sql → Run
+Supabase Dashboard → SQL Editor → paste supabase/migrations/task10_side_bets.sql → Run
+```
+
 > **Do not** use `supabase db push` for initial setup — run the SQL files directly in the dashboard.
 
 ### Verify Database Setup
@@ -188,7 +195,7 @@ supabase link --project-ref <project_ref>
 # Deploy all functions
 supabase functions deploy secure-wager
 supabase functions deploy secure-player
-supabase functions deploy admin-action
+supabase functions deploy secure-bet
 supabase functions deploy resolve-wager
 supabase functions deploy verify-wallet
 supabase functions deploy check-chess-games
@@ -212,6 +219,7 @@ Set all secrets in **Supabase Dashboard → Edge Functions → Secrets** (not in
 | `VAPID_PRIVATE_KEY` | VAPID private key for Web Push |
 | `VAPID_PUBLIC_KEY` | VAPID public key (must match `NEXT_PUBLIC_VAPID_PUBLIC_KEY`) |
 | `ADMIN_WALLET` | Admin wallet address used by `admin-action` |
+| `PLATFORM_WALLET_PRIVATE_KEY` | Platform wallet keypair as JSON byte array — required by `secure-bet` for side bet payouts and refunds |
 
 > ⚠️ **`AUTHORITY_WALLET_SECRET` format:** Must be a JSON array of bytes — e.g. `[12,34,56,78,...]` — **not** a base58 string or hex. The edge functions parse it as:
 > ```typescript
@@ -340,7 +348,8 @@ SUPABASE_SERVICE_ROLE_KEY=xxxxx
 # App URL (used for Lichess OAuth PKCE redirect)
 NEXT_PUBLIC_SITE_URL=https://yourdomain.com
 
-# Authority keypair — required for Next.js API route session validation
+# OG image base URL (used for dynamic per-wager og:image links — Task 11)
+NEXT_PUBLIC_APP_URL=https://gamegambit.gg — required for Next.js API route session validation
 # Must be the same JSON byte array as AUTHORITY_WALLET_SECRET in Supabase secrets
 AUTHORITY_WALLET_SECRET=[12,34,56,78,...]
 
@@ -756,4 +765,4 @@ Currently pending regeneration (v1.5.0 tables and columns are not yet in `types.
 
 ---
 
-**Last Updated**: April 3, 2026 — v1.7.0
+**Last Updated**: April 2026 — v1.8.0

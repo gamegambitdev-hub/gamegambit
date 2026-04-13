@@ -1,99 +1,379 @@
 ---
-title: Game Gambit API Reference
-description: Complete API documentation for Game Gambit backend endpoints
+title: GameGambit API Reference
+description: Complete API documentation for GameGambit backend endpoints
 ---
 
 # GameGambit API Reference
 
 ## Overview
 
-GameGambit provides a comprehensive REST API for managing wagers, players, transactions, and administrative functions on the Solana blockchain.
+GameGambit provides a REST API and a set of Supabase edge functions for managing wagers, players, social features, side bets, and admin functions on Solana.
 
 **Two authentication methods:**
-- **Player API**: Wallet signature verification (for game-related endpoints)
-- **Admin API**: JWT bearer tokens (for administrative endpoints)
+- **Player API** — Wallet session token (`X-Session-Token` header) issued by `verify-wallet`
+- **Admin API** — JWT bearer token issued by `/api/admin/auth/login`
+
+---
 
 ## Authentication
 
-All API requests require a valid Solana wallet signature for authentication.
+### Player Session Token
 
-### Headers
-```
-Authorization: Bearer <signed_solana_message>
+All player-facing edge function calls require a wallet session token:
+
+```http
+X-Session-Token: <session_token>
 Content-Type: application/json
 ```
 
-### Example Authentication
-```typescript
-import { sign } from 'tweetnacl'
-import { PublicKey } from '@solana/web3.js'
+Session tokens are Ed25519 wallet signatures issued by `verify-wallet` and managed by `useWalletAuth`. They expire and trigger a `gg:session-expired` custom DOM event when stale.
 
-// Create message to sign
-const message = new TextEncoder().encode(`Sign this message to authenticate: ${Date.now()}`)
+### Admin JWT
 
-// Sign with wallet
-const signature = await wallet.signMessage(message)
+Admin panel routes require a JWT in the `Authorization` header or as an httpOnly cookie (set automatically on login):
 
-// Include in headers
-const headers = {
-  'Authorization': `Bearer ${signature}`,
-  'Content-Type': 'application/json'
-}
+```http
+Authorization: Bearer <admin_jwt>
+Content-Type: application/json
 ```
+
+---
 
 ## Rate Limiting
 
-Endpoints are rate-limited per wallet address:
+Per-wallet sliding window via `rate_limit_logs`:
 
-- **Public endpoints**: 100 requests/minute
-- **API endpoints**: 50 requests/minute  
-- **Wager creation**: 10 requests/minute
-- **Trading/transfers**: 3 requests/10 seconds
-- **Auth endpoints**: 5 requests/15 minutes
+| Endpoint Type | Window | Max Requests |
+|---|---|---|
+| Public | 60s | 100 |
+| API | 60s | 50 |
+| Auth | 15 min | 5 |
+| Wager creation | 60s | 10 |
 
-Rate limit headers are included in all responses:
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1647891234
-```
+`notifyChat` additionally enforces 1 push notification per wager per 5 minutes at the application level.
 
-## Base URL
+---
+
+## Base URLs
 
 ```
-https://gamegambit.com/api
+App:           https://thegamegambit.vercel.app
+API routes:    https://thegamegambit.vercel.app/api
+Edge functions: https://<project>.supabase.co/functions/v1
 ```
 
-## Endpoints
+---
+
+## Edge Functions
+
+### `secure-wager`
+
+All wager lifecycle actions. Requires `X-Session-Token`.
+
+| Action | Auth | Who Can Call | Description |
+|--------|------|--------------|-------------|
+| `create` | ✅ | Any player | INSERT new wager, create on-chain PDA |
+| `join` | ✅ | Any player (not owner) | UPDATE status → joined |
+| `edit` | ✅ | Player A only | UPDATE stake/stream_url/is_public (status = created only) |
+| `applyProposal` | ✅ | Either participant | Apply accepted proposal — bypasses owner-only restriction |
+| `notifyChat` | ✅ | Either participant | INSERT notification to opponent (rate-limited: 1/5min/wager) |
+| `notifyProposal` | ✅ | Either participant | INSERT notification to opponent for new proposals |
+| `delete` | ✅ | Player A only | DELETE wager (status = created only) |
+| `setReady` | ✅ | Either participant | Calls `set_player_ready` DB RPC |
+| `startGame` | ✅ | Either participant | UPDATE status → voting; creates Lichess game (chess) |
+| `recordOnChainCreate` | ✅ | Player A only | UPDATE deposit_player_a = true, tx_signature_a |
+| `recordOnChainJoin` | ✅ | Player B only | UPDATE deposit_player_b = true, tx_signature_b |
+| `cancelWager` | ✅ | Either participant | UPDATE status → cancelled; trigger on-chain refund |
+| `concedeDispute` | ✅ | Either participant | Grace period concession; resolves on-chain, no mod fee |
+| `markGameComplete` | ✅ | Either participant | Sets game_complete_a/b; when both set, stamps deadlines |
+| `submitVote` | ✅ | Either participant | Sets vote_player_a/b; agree → auto-resolve; disagree → disputed |
+| `retractVote` | ✅ | Either participant | Clears caller's vote (only while opponent hasn't voted) |
+
+---
+
+### `secure-player`
+
+Player profile management. Requires `X-Session-Token`.
+
+| Action | Description |
+|--------|-------------|
+| `create` | INSERT new player row (accepts optional `referrerCode`) |
+| `update` | UPDATE player profile fields (username, bio, avatar, game usernames) |
+
+---
+
+### `secure-bet`
+
+Spectator side bet actions. Requires `X-Session-Token`. New in v1.8.0.
+
+| Action | Auth | Description |
+|--------|------|-------------|
+| `place` | ✅ | Transfer SOL to platform wallet on-chain; INSERT bet row with 30-min expiry. Blocked if wager is `voting`/`resolved`/`cancelled`. Players cannot bet on their own match. |
+| `counter` | ✅ | Propose different amount; status → `countered` |
+| `accept` | ✅ | Second party sends SOL to platform wallet; status → `matched` |
+| `cancel` | ✅ | Owner cancels open (unmatched) bet; platform wallet refunds SOL |
+| `resolveForWager` | ✅ | Called after wager resolves. Pays winners 95% of pot, refunds unmatched open bets, marks all as resolved/expired. |
+
+**Request body shape (place):**
+```json
+{
+  "action": "place",
+  "wagerId": "uuid",
+  "backedPlayer": "player_a",
+  "amountLamports": 500000000,
+  "txSignature": "5yBGvU..."
+}
+```
+
+---
+
+### `admin-action`
+
+Admin dispute resolution. Requires admin JWT. Called via `/api/admin/action`.
+
+| Action | Min Role | Description |
+|--------|----------|-------------|
+| `forceResolve` | moderator | Resolve wager with given winner on-chain |
+| `forceDraw` | moderator | Resolve as draw on-chain |
+| `forceCancel` | moderator | Cancel wager on-chain |
+| `banPlayer` | admin | Ban player wallet |
+| `unbanPlayer` | admin | Unban player wallet |
+
+---
+
+### `resolve-wager`
+
+Low-level on-chain settlement. Internal only — not called from the frontend.
+
+Derives WagerAccount PDA → builds `resolve_wager` (90–95% to winner) or `close_wager` (draw/cancel refund) → signs and sends → calls `update_winner_stats` / `update_loser_stats` RPCs → INSERTs `wager_transactions` records.
+
+---
+
+### `process-verdict`
+
+Called after moderator submits verdict. On-chain settlement + 5-tier auto-punishment.
+
+---
+
+### `process-concession`
+
+Called when player concedes during dispute grace period. On-chain `resolve_wager` (no mod fee, no punishment). Logs positive honesty event.
+
+---
+
+### `assign-moderator`
+
+Fire-and-forget. Finds eligible moderator (lowest `moderation_skipped_count`, not a participant, not suspended, `moderation_requests_enabled = true`). Inserts `moderation_requests` row.
+
+---
+
+### `moderation-timeout`
+
+Triggered by pg_cron every minute. Marks expired requests `timed_out`, increments skip count atomically, retries `assign-moderator`.
+
+---
+
+### `check-chess-games`
+
+Polls Lichess API for completed games. Triggered by cron-job.org every 60s.
+
+---
+
+### `verify-wallet`
+
+Issues Ed25519 session token from wallet signature.
+
+---
+
+## Next.js API Routes
+
+### Auth
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/auth/lichess/callback` | Lichess OAuth PKCE callback |
+| `POST` | `/api/auth/verify-wallet` | Wallet signature → session token |
+
+### Admin Auth
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/admin/auth/login` | Admin login → JWT + httpOnly cookie |
+| `POST` | `/api/admin/auth/logout` | Clear session |
+| `POST` | `/api/admin/auth/signup` | Admin signup |
+| `GET` | `/api/admin/auth/verify` | Verify admin session |
+| `POST` | `/api/admin/auth/refresh` | Refresh JWT |
+
+### Admin Actions
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/admin/action` | Wager/player actions (forceResolve, forceDraw, ban, etc.) |
+| `GET` | `/api/admin/audit-logs` | Fetch audit logs |
+| `GET/PUT` | `/api/admin/profile` | Get/update admin profile |
+| `POST` | `/api/admin/wallet/bind` | Bind Solana wallet to admin |
+| `POST` | `/api/admin/wallet/verify` | Verify admin wallet signature |
+| `GET` | `/api/admin/wallet/list` | List admin wallet bindings |
+| `DELETE` | `/api/admin/wallet/unbind` | Unbind wallet |
+
+### Moderation
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/moderation/accept` | Player session | Accept moderator assignment |
+| `POST` | `/api/moderation/decline` | Player session | Decline assignment; increment skip count |
+| `POST` | `/api/moderation/verdict` | Player session | Submit verdict; triggers on-chain settlement |
+| `POST` | `/api/moderation/report` | Player session | Report unfair verdict |
+
+### Player Settings
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/settings` | Player session | Get notification + moderation prefs |
+| `PATCH` | `/api/settings` | Player session | Update prefs |
+
+### Username Binding
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/username/bind` | Player session | Bind game username to wallet |
+| `POST` | `/api/username/appeal` | Player session | File appeal on taken username |
+| `POST` | `/api/username/appeal/respond` | Player session | Holder responds to appeal |
+| `POST` | `/api/username/change-request` | Player session | Request username rebind |
+| `GET` | `/api/pubg/verify-username` | Public | Verify PUBG username via PUBG API |
+
+---
+
+## DB Functions (RPC)
+
+Callable via `.rpc()` on the Supabase client.
+
+| Function | Called By | Description |
+|----------|-----------|-------------|
+| `set_player_ready` | `secure-wager` (setReady) | Atomic ready toggle + countdown start |
+| `update_winner_stats` | `resolve-wager` | Increment wins, earnings, streak |
+| `update_loser_stats` | `resolve-wager` | Increment losses, total_spent, reset streak |
+| `merge_game_bound_at` | `secure-player` | JSONB-merge single game bound timestamp |
+| `increment_moderation_skip_count` | `moderation-timeout`, `/api/moderation/decline` | Atomic skip count increment |
+
+---
+
+## Wager Status Enum
+
+```
+created      → PDA exists, Player A deposited
+joined       → Both deposited, game about to start
+voting       → Game in progress, awaiting votes
+retractable  → Both votes agree — 15s retract window
+disputed     → Votes disagree — moderator required
+resolved     → Winner paid out — PDA closed
+cancelled    → Cancelled — funds returned
+```
+
+---
+
+## Side Bet Status Enum
+
+```
+open        → Placed, awaiting match
+countered   → Counter-offer proposed
+matched     → Both parties locked in
+expired     → Wager resolved before bet was matched — refunded
+resolved    → Winner paid out
+cancelled   → Cancelled by bettor — refunded
+```
+
+---
+
+## Fee Schedule
+
+| Stake | Platform Fee | Moderator Earns |
+|-------|-------------|-----------------|
+| < 0.5 SOL | 10% of pot | 30% of fee (capped $10 USD) |
+| 0.5–5 SOL | 7% of pot | 30% of fee (capped $10 USD) |
+| > 5 SOL | 5% of pot | 30% of fee (capped $10 USD) |
+
+Side bet platform cut: 5% of side bet pot.
+
+---
+
+## Notification Types
+
+All values that can appear in the `notifications` table and must be handled by `NotificationsDropdown`:
+
+| Type | Description |
+|------|-------------|
+| `wager_joined` | Opponent joined your wager |
+| `game_started` | Game is live |
+| `wager_won` | You won |
+| `wager_lost` | You lost |
+| `wager_draw` | Draw |
+| `wager_cancelled` | Wager cancelled |
+| `rematch_challenge` | Rematch requested |
+| `wager_vote` | Opponent submitted vote |
+| `chat_message` | New chat message (rate-limited) |
+| `wager_proposal` | New edit proposal |
+| `wager_disputed` | Dispute raised |
+| `moderation_request` | You've been assigned as moderator |
+| `feed_reaction` | Someone reacted to your feed post |
+| `friend_request` | Someone sent you a friend request |
+| `friend_accepted` | Friend request accepted |
+
+---
+
+## Error Codes
+
+| HTTP Code | Meaning |
+|-----------|---------|
+| 400 | Bad request / missing fields / invalid game type |
+| 401 | Unauthorized — missing or expired session token |
+| 403 | Forbidden — caller not permitted for this action |
+| 404 | Resource not found |
+| 409 | Conflict — e.g. wager status prevents this action |
+| 429 | Rate limit exceeded |
+| 500 | Edge function / on-chain error |
+
+---
+
+## Security Notes
+
+- All state transitions require a valid Ed25519 session token
+- DB triggers (`protect_player_sensitive_fields`, `protect_wager_sensitive_fields`) prevent direct client writes to sensitive fields — all mutations must go through edge functions
+- `PLATFORM_WALLET_PRIVATE_KEY` must be set as an edge function secret for `secure-bet` payouts
+- Players cannot bet on their own wager in `secure-bet`
+- Moderator wallet is verified server-side against the `moderation_requests` row before any mutation
+- Verdict is irreversible once submitted
+
+---
+
+---
+
+
+---
+
+## Detailed REST Endpoints
+
+> Request/response shapes for core data operations. All wager mutations go through the edge functions documented above; these shapes apply to Supabase client queries and Next.js API routes.
 
 ### Wagers
 
-#### Create Wager
-Create a new gaming wager.
+#### Create Wager — `secure-wager` `create`
 
-**POST** `/wagers`
-
-##### Request Body
 ```json
 {
   "game": "chess",
   "stake_lamports": 5000000000,
-  "lichess_game_id": "abc123def456",
-  "is_public": true,
-  "requires_moderator": false
+  "is_public": true
 }
 ```
 
-##### Parameters
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `game` | `string` | Yes | Game type: `chess`, `codm`, `pubg` |
-| `stake_lamports` | `number` | Yes | Stake per player in lamports (1 SOL = 1e9 lamports) |
-| `lichess_game_id` | `string` | No | Lichess game ID (for chess) |
-| `is_public` | `boolean` | No | Make wager visible to all players (default: true) |
-| `requires_moderator` | `boolean` | No | Require moderator for disputes (default: false) |
+| `game` | `string` | Yes | `chess` \| `codm` \| `pubg` \| `free_fire` |
+| `stake_lamports` | `number` | Yes | Stake per player in lamports (1 SOL = 1,000,000,000) |
+| `is_public` | `boolean` | No | Visible in public lobby (default: `true`) |
 
-##### Response
+**Response:**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -102,12 +382,11 @@ Create a new gaming wager.
   "game": "chess",
   "stake_lamports": 5000000000,
   "status": "created",
-  "created_at": "2026-03-09T10:30:00Z",
-  "transaction_signature": "5yBGvU...xyz"
+  "created_at": "2026-03-09T10:30:00Z"
 }
 ```
 
-##### Error Codes
+**Error codes:**
 | Code | Message |
 |------|---------|
 | 400 | Invalid game type |
@@ -117,19 +396,13 @@ Create a new gaming wager.
 
 ---
 
-#### Join Wager
-Join an existing wager as Player B.
+#### Join Wager — `secure-wager` `join`
 
-**POST** `/wagers/{wager_id}/join`
-
-##### Request Body
 ```json
-{
-  "stake_lamports": 5000000000
-}
+{ "action": "join", "wagerId": "550e8400-..." }
 ```
 
-##### Response
+**Response:**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -143,20 +416,9 @@ Join an existing wager as Player B.
 
 ---
 
-#### Resolve Wager
-Resolve a completed wager with a winner.
+#### Resolve Wager — `resolve-wager` (internal)
 
-**POST** `/wagers/{wager_id}/resolve`
-
-##### Request Body
-```json
-{
-  "winner_wallet": "G1R2k...",
-  "proof_url": "https://lichess.org/game123"
-}
-```
-
-##### Response
+**Response:**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -176,57 +438,42 @@ Resolve a completed wager with a winner.
 
 ---
 
-#### Cancel Wager
-Cancel a wager and initiate refunds to both players. Can only be called by participants when wager is in 'joined' or 'voting' status.
+#### Cancel Wager — `secure-wager` `cancelWager`
 
-**POST** `/wagers/{wager_id}/cancel`
-
-##### Request Body
 ```json
-{
-  "reason": "transaction_failed"
-}
+{ "action": "cancelWager", "wagerId": "550e8400-..." }
 ```
 
-##### Parameters
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `reason` | `string` | No | Reason for cancellation: `user_cancelled`, `transaction_failed`, `timeout` |
-
-##### Response
+**Response:**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "cancelled",
   "cancelled_at": "2026-03-09T10:40:00Z",
-  "cancelled_by": "G1R2k...",
-  "cancel_reason": "transaction_failed",
-  "message": "Wager cancelled. Refunds will be processed automatically.",
   "refundInitiated": true
 }
 ```
 
-##### Error Responses
+**Error responses:**
 | Status | Code | Description |
 |--------|------|-------------|
-| `400` | `INVALID_STATUS` | Wager cannot be cancelled in current status |
-| `403` | `NOT_PARTICIPANT` | Only participants can cancel the wager |
-| `404` | `NOT_FOUND` | Wager not found |
-
-##### Notes
-- Cancellation triggers automatic refunds to both players
-- The other player receives a notification about the cancellation
-- All deposited funds are returned (minus any gas fees)
-- Cancellation is logged in `wager_transactions` table
+| 400 | `INVALID_STATUS` | Cannot cancel in current status |
+| 403 | `NOT_PARTICIPANT` | Only participants can cancel |
+| 404 | `NOT_FOUND` | Wager not found |
 
 ---
 
-#### Get Wager Details
-Get details of a specific wager.
+#### Get Wager Details — Supabase client
 
-**GET** `/wagers/{wager_id}`
+```typescript
+const { data } = await supabase
+  .from('wagers')
+  .select('*')
+  .eq('id', wagerId)
+  .single()
+```
 
-##### Response
+**Response shape:**
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -237,177 +484,129 @@ Get details of a specific wager.
   "stake_lamports": 5000000000,
   "status": "voting",
   "winner_wallet": null,
-  "lichess_game_id": "abc123def456",
-  "requires_moderator": false,
   "ready_player_a": true,
   "ready_player_b": true,
-  "countdown_started_at": "2026-03-09T10:35:00Z",
-  "created_at": "2026-03-09T10:30:00Z",
-  "updated_at": "2026-03-09T10:35:00Z",
-  "votes": {
-    "player_a": "G1R2k...",
-    "player_b": "xyz789..."
-  }
-}
-```
-
----
-
-#### List Wagers
-Get paginated list of active wagers.
-
-**GET** `/wagers?status=created&game=chess&limit=50&offset=0`
-
-##### Query Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `status` | `string` | - | Filter by status: created, joined, voting, disputed, resolved, cancelled |
-| `game` | `string` | - | Filter by game: chess, codm, pubg |
-| `limit` | `number` | 50 | Results per page (max 100) |
-| `offset` | `number` | 0 | Pagination offset |
-| `sort` | `string` | `-created_at` | Sort field (prefix with `-` for descending) |
-
-##### Response
-```json
-{
-  "data": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "match_id": 12345,
-      "player_a_wallet": "G1R2k...",
-      "game": "chess",
-      "stake_lamports": 5000000000,
-      "status": "created",
-      "created_at": "2026-03-09T10:30:00Z"
-    }
-  ],
-  "total": 1523,
-  "limit": 50,
-  "offset": 0
-}
-```
-
----
-
-### Players
-
-#### Get Player Profile
-Get player stats and profile information.
-
-**GET** `/players/{wallet_address}`
-
-##### Response
-```json
-{
-  "id": 1,
-  "wallet_address": "G1R2k...",
-  "username": "ChessMaster",
-  "bio": "Competitive chess player",
-  "avatar_url": "https://...",
-  "is_banned": false,
-  "verified": true,
-  "total_wins": 142,
-  "total_losses": 38,
-  "win_rate": 78.89,
-  "total_earnings": 125500000000,
-  "total_spent": 50000000000,
-  "current_streak": 12,
-  "best_streak": 28,
-  "skill_rating": 1840,
-  "lichess_username": "ChessMaster2026",
-  "codm_username": "CM_Warfare",
-  "pubg_username": "ChessMaster_PUBG",
-  "last_active": "2026-03-09T10:35:00Z",
-  "created_at": "2026-01-15T08:00:00Z"
-}
-```
-
----
-
-#### Get Leaderboard
-Get top players by various metrics.
-
-**GET** `/leaderboard?sort=earnings&limit=100&game=chess`
-
-##### Query Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `sort` | `string` | `total_earnings` | Sort by: `total_earnings`, `total_wins`, `win_rate`, `skill_rating` |
-| `limit` | `number` | 100 | Number of results (max 1000) |
-| `game` | `string` | - | Filter by preferred game |
-
-##### Response
-```json
-{
-  "data": [
-    {
-      "rank": 1,
-      "wallet_address": "G1R2k...",
-      "username": "ChessMaster",
-      "total_wins": 542,
-      "total_losses": 58,
-      "win_rate": 90.33,
-      "total_earnings": 12550000000000,
-      "skill_rating": 2400,
-      "current_streak": 45
-    }
-  ],
-  "timestamp": "2026-03-09T10:35:00Z"
-}
-```
-
----
-
-#### Create Player Profile
-Initialize a new player account.
-
-**POST** `/players`
-
-##### Request Body
-```json
-{
-  "username": "NewPlayer",
-  "bio": "Just getting started!",
-  "preferred_game": "chess",
-  "lichess_username": "NewPlayer2026"
-}
-```
-
-##### Response
-```json
-{
-  "id": 1234,
-  "wallet_address": "G1R2k...",
-  "username": "NewPlayer",
+  "vote_player_a": "G1R2k...",
+  "vote_player_b": null,
+  "game_complete_a": true,
+  "game_complete_b": false,
+  "vote_deadline": "2026-04-01T10:40:00Z",
   "created_at": "2026-03-09T10:30:00Z"
 }
 ```
 
 ---
 
-#### Update Player Profile
-Update player information.
+#### List Wagers — Supabase client
 
-**PATCH** `/players/{wallet_address}`
+```typescript
+const { data } = await supabase
+  .from('wagers')
+  .select('*')
+  .eq('status', 'created')
+  .eq('is_public', true)
+  .order('created_at', { ascending: false })
+  .range(0, 49)
+```
 
-##### Request Body
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `status` | `string` | — | `created` \| `joined` \| `voting` \| `disputed` \| `resolved` \| `cancelled` |
+| `game` | `string` | — | `chess` \| `codm` \| `pubg` \| `free_fire` |
+| `limit` | `number` | 50 | Max 100 |
+
+---
+
+### Players
+
+#### Get Player Profile — Supabase client
+
+```typescript
+const { data } = await supabase
+  .from('players')
+  .select('*')
+  .eq('wallet_address', walletAddress)
+  .single()
+```
+
+**Response shape:**
 ```json
 {
+  "wallet_address": "G1R2k...",
+  "username": "ProGamer",
+  "bio": "Chess master",
+  "total_wagers": 42,
+  "wins": 28,
+  "losses": 14,
+  "total_earnings": 15000000000,
+  "invite_code": "G1R2k-a3f9",
+  "referral_count": 5,
+  "is_banned": false,
+  "is_suspended": false,
+  "created_at": "2026-01-01T00:00:00Z"
+}
+```
+
+---
+
+#### Get Leaderboard — Supabase client
+
+```typescript
+const { data } = await supabase
+  .from('players')
+  .select('wallet_address, username, wins, total_earnings, total_wagers')
+  .order('total_earnings', { ascending: false })
+  .limit(100)
+```
+
+| Sort Field | Description |
+|------------|-------------|
+| `total_earnings` | Most SOL earned (default) |
+| `wins` | Most wins |
+| `total_wagers` | Most active |
+
+---
+
+#### Create Player — `secure-player` `create`
+
+```json
+{
+  "action": "create",
+  "username": "ProGamer",
+  "referrerCode": "xyz12-b7c3"
+}
+```
+
+**Response:**
+```json
+{
+  "wallet_address": "G1R2k...",
+  "username": "ProGamer",
+  "invite_code": "G1R2k-a3f9",
+  "created_at": "2026-04-01T10:30:00Z"
+}
+```
+
+---
+
+#### Update Player — `secure-player` `update`
+
+```json
+{
+  "action": "update",
   "bio": "Updated bio",
   "avatar_url": "https://...",
-  "lichess_username": "NewUsername",
   "codm_username": "NewCODMName"
 }
 ```
 
-##### Response
+**Response:**
 ```json
 {
   "wallet_address": "G1R2k...",
-  "username": "NewPlayer",
   "bio": "Updated bio",
   "avatar_url": "https://...",
-  "updated_at": "2026-03-09T10:40:00Z"
+  "updated_at": "2026-04-01T10:40:00Z"
 }
 ```
 
@@ -415,61 +614,48 @@ Update player information.
 
 ### Transactions
 
-#### Get Transaction History
-Get all transactions for a player.
+#### Get Transaction History — Supabase client
 
-**GET** `/players/{wallet_address}/transactions?limit=50&offset=0`
+```typescript
+const { data } = await supabase
+  .from('wager_transactions')
+  .select('*')
+  .eq('wager_id', wagerId)
+  .order('created_at', { ascending: false })
+```
 
-##### Response
+**Transaction shape:**
 ```json
 {
-  "data": [
-    {
-      "id": "tx-550e8400-e29b-41d4-a716-446655440000",
-      "wager_id": "550e8400-e29b-41d4-a716-446655440001",
-      "wallet_address": "G1R2k...",
-      "tx_type": "payout",
-      "amount_lamports": 9500000000,
-      "tx_signature": "5yBGvU...",
-      "status": "confirmed",
-      "created_at": "2026-03-09T10:45:00Z"
-    }
-  ],
-  "total": 342,
-  "limit": 50,
-  "offset": 0
+  "id": "tx-uuid",
+  "wager_id": "wager-uuid",
+  "type": "payout",
+  "from_wallet": "program_pda",
+  "to_wallet": "G1R2k...",
+  "amount_lamports": 9500000000,
+  "tx_signature": "5yBGvU...",
+  "created_at": "2026-03-09T10:45:00Z"
 }
 ```
 
-#### Transaction Fields
-| Field | Type | Description |
-|-------|------|-------------|
-| `tx_type` | `string` | `deposit`, `withdraw`, `payout`, `refund`, `cancel_refund`, `cancelled`, `error_on_chain_resolve`, `error_resolution_call` |
-| `status` | `string` | pending, confirmed, failed |
-| `tx_signature` | `string` | Solana transaction hash |
-| `error_message` | `string` | Error details if status is failed |
-
-#### Transaction Types Reference
+**Transaction types:**
 | Type | Description |
 |------|-------------|
-| `deposit` | Initial stake deposited to wager |
-| `withdraw` | Player withdrawal request |
-| `payout` | Winner receives winnings |
-| `refund` | Refund on draw (both players get funds back) |
-| `cancel_refund` | Refund when wager was cancelled |
-| `cancelled` | Log entry for wager cancellation |
-| `error_on_chain_resolve` | Error occurred during on-chain resolution to winner |
-| `error_resolution_call` | Error occurred during resolution API call |
+| `deposit_a` | Player A on-chain deposit |
+| `deposit_b` | Player B on-chain deposit |
+| `payout` | Winner payout |
+| `refund_a` | Player A refund (cancel/draw) |
+| `refund_b` | Player B refund (cancel/draw) |
+| `platform_fee` | Platform fee extraction |
+| `moderator_fee` | Moderator incentive payment |
 
 ---
 
 ### Admin Endpoints
 
 #### Admin Authentication
-Admin endpoints require JWT bearer tokens from email/password authentication.
 
-##### Login
-**POST** `/admin/auth/login`
+**POST** `/api/admin/auth/login`
 
 ```json
 {
@@ -478,7 +664,7 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 }
 ```
 
-**Response**
+**Response:**
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIs...",
@@ -489,8 +675,7 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 }
 ```
 
-##### Signup
-**POST** `/admin/auth/signup`
+**POST** `/api/admin/auth/signup`
 
 ```json
 {
@@ -502,14 +687,12 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 
 ---
 
-#### Admin Dashboard Endpoints
+#### Admin Dashboard
 
-##### Get Dashboard Overview
-**GET** `/admin/dashboard`
+**GET** `/api/admin/dashboard`  
+Authorization: Admin token required
 
-**Authorization**: Admin token required
-
-**Response**
+**Response:**
 ```json
 {
   "total_wagers": 12542,
@@ -533,12 +716,9 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 
 #### Dispute Resolution
 
-##### Get Disputed Wagers
-**GET** `/admin/disputes?limit=50&offset=0`
+**GET** `/api/admin/disputes?limit=50&offset=0`  
+Authorization: Moderator role required
 
-**Authorization**: Moderator role required
-
-**Response**
 ```json
 {
   "data": [
@@ -550,21 +730,15 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
       "game": "pubg",
       "stake_lamports": 5000000000,
       "vote_a": "wallet_a",
-      "vote_b": "wallet_b",
-      "vote_timestamp": "2026-03-09T10:30:00Z",
-      "requires_moderator": true
+      "vote_b": "wallet_b"
     }
   ],
   "total": 8
 }
 ```
 
-##### Resolve Dispute
-**POST** `/admin/disputes/{wager_id}/resolve`
+**POST** `/api/admin/disputes/{wager_id}/resolve`
 
-**Authorization**: Moderator role required
-
-**Request**
 ```json
 {
   "winner_wallet": "wallet_a",
@@ -572,27 +746,13 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 }
 ```
 
-**Response**
-```json
-{
-  "success": true,
-  "wager_id": "uuid",
-  "winner": "wallet_a",
-  "payout_tx": "5yBGvU...",
-  "resolved_at": "2026-03-09T10:45:00Z"
-}
-```
-
 ---
 
 #### Player Management
 
-##### Get Player Details
-**GET** `/admin/players/{wallet_address}`
+**GET** `/api/admin/players/{wallet_address}`  
+Authorization: Admin role required
 
-**Authorization**: Admin role required
-
-**Response**
 ```json
 {
   "wallet_address": "G1R2k...",
@@ -601,85 +761,39 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
   "total_losses": 38,
   "is_banned": false,
   "flagged_for_review": false,
-  "flagged_at": null,
-  "flagged_by": null,
-  "flag_reason": null,
-  "last_active": "2026-03-09T10:35:00Z",
-  "created_at": "2026-01-15T08:00:00Z",
-  "wager_history": [
-    {
-      "wager_id": "uuid",
-      "opponent": "wallet_b",
-      "result": "won",
-      "resolved_at": "2026-03-09T10:00:00Z"
-    }
-  ]
+  "false_vote_count": 0,
+  "moderation_skipped_count": 0,
+  "last_active": "2026-03-09T10:35:00Z"
 }
 ```
 
-##### Ban Player
-**POST** `/admin/players/{wallet_address}/ban`
+**POST** `/api/admin/players/{wallet_address}/ban`
 
-**Authorization**: Admin role required
-
-**Request**
 ```json
-{
-  "ban_reason": "Suspicious voting pattern detected"
-}
+{ "ban_reason": "Suspicious voting pattern detected" }
 ```
 
-**Response**
+**POST** `/api/admin/players/{wallet_address}/flag`
+
 ```json
-{
-  "success": true,
-  "wallet_address": "G1R2k...",
-  "is_banned": true,
-  "ban_reason": "Suspicious voting pattern detected",
-  "banned_at": "2026-03-09T10:50:00Z"
-}
-```
-
-##### Flag Player for Review
-**POST** `/admin/players/{wallet_address}/flag`
-
-**Authorization**: Moderator role required
-
-**Request**
-```json
-{
-  "flag_reason": "Unusual betting pattern"
-}
-```
-
-**Response**
-```json
-{
-  "success": true,
-  "wallet_address": "G1R2k...",
-  "flagged_for_review": true,
-  "flagged_at": "2026-03-09T10:50:00Z"
-}
+{ "flag_reason": "Unusual betting pattern" }
 ```
 
 ---
 
 #### Audit Logs
 
-##### Get Audit Logs
-**GET** `/admin/audit-logs?limit=100&offset=0&resource_type=players`
+**GET** `/api/admin/audit-logs?limit=100&resource_type=players`  
+Authorization: Admin role required
 
-**Authorization**: Admin role required
-
-**Query Parameters**
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `action_type` | string | Type of action performed |
-| `resource_type` | string | What was affected (players, wagers) |
+| `resource_type` | string | `players` \| `wagers` |
 | `admin_id` | string | Filter by specific admin |
-| `limit` | number | Results per page (max 500) |
+| `limit` | number | Max 500 |
 
-**Response**
+**Response:**
 ```json
 {
   "data": [
@@ -689,15 +803,9 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
       "action_type": "ban_player",
       "resource_type": "players",
       "resource_id": "wallet_address",
-      "old_values": {
-        "is_banned": false
-      },
-      "new_values": {
-        "is_banned": true,
-        "ban_reason": "Suspicious activity"
-      },
+      "old_values": { "is_banned": false },
+      "new_values": { "is_banned": true, "ban_reason": "Suspicious activity" },
       "ip_address": "192.168.1.1",
-      "user_agent": "Mozilla/5.0...",
       "created_at": "2026-03-09T10:50:00Z"
     }
   ],
@@ -707,14 +815,10 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 
 ---
 
-#### Wallet Binding
+#### Admin Wallet Binding
 
-##### Bind Admin Wallet
-**POST** `/admin/wallet/bind`
+**POST** `/api/admin/wallet/bind`
 
-**Authorization**: Admin token required
-
-**Request**
 ```json
 {
   "wallet_address": "G1R2k...",
@@ -722,22 +826,8 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 }
 ```
 
-**Response**
-```json
-{
-  "success": true,
-  "wallet_address": "G1R2k...",
-  "verified": true,
-  "verified_at": "2026-03-09T10:50:00Z"
-}
-```
+**GET** `/api/admin/wallet/list`
 
-##### List Admin Wallets
-**GET** `/admin/wallet/list`
-
-**Authorization**: Admin role required
-
-**Response**
 ```json
 {
   "data": [
@@ -753,77 +843,65 @@ Admin endpoints require JWT bearer tokens from email/password authentication.
 
 ---
 
-### Voting (Dispute Resolution)
+### Voting (Peer Resolution)
 
-#### Submit Vote
-Vote for a winner in a disputed wager.
+#### Submit Vote — `secure-wager` `submitVote`
 
-**POST** `/wagers/{wager_id}/votes`
-
-##### Request Body
 ```json
 {
-  "voted_winner": "G1R2k..."
+  "action": "submitVote",
+  "wagerId": "550e8400-...",
+  "votedWinner": "G1R2k..."
 }
 ```
 
-##### Response
-```json
-{
-  "wager_id": "550e8400-e29b-41d4-a716-446655440000",
-  "voter_wallet": "xyz789...",
-  "voted_winner": "G1R2k...",
-  "vote_timestamp": "2026-03-09T10:50:00Z"
-}
-```
+Both votes agree → auto-resolve on-chain.  
+Votes disagree → `status: "disputed"`, moderator assigned.
 
 ---
 
-#### Retract Vote
-Retract a vote before the voting period ends.
+#### Retract Vote — `secure-wager` `retractVote`
 
-**DELETE** `/wagers/{wager_id}/votes/{voter_wallet}`
-
-##### Response
 ```json
 {
-  "success": true,
-  "message": "Vote retracted successfully"
+  "action": "retractVote",
+  "wagerId": "550e8400-..."
 }
 ```
 
+Only allowed while opponent has not yet voted.
+
 ---
 
-## Error Responses
+## Error Response Format
 
-All error responses follow this format:
+All edge functions return errors in this shape:
 
 ```json
 {
-  "error": {
-    "code": "INSUFFICIENT_FUNDS",
-    "message": "Player balance insufficient for wager stake",
-    "details": {
-      "required": 5000000000,
-      "available": 2000000000
-    }
+  "error": "INSUFFICIENT_FUNDS",
+  "message": "Player balance insufficient for wager stake",
+  "details": {
+    "required": 5000000000,
+    "available": 2000000000
   }
 }
 ```
 
 ### Common Error Codes
 
-| Code | Status | Description |
-|------|--------|-------------|
+| Code | HTTP | Description |
+|------|------|-------------|
 | `INVALID_WALLET` | 400 | Wallet address is invalid |
-| `UNAUTHORIZED` | 401 | Authentication signature invalid |
+| `UNAUTHORIZED` | 401 | Authentication signature invalid or expired |
 | `INSUFFICIENT_FUNDS` | 400 | Wallet balance insufficient |
 | `WAGER_NOT_FOUND` | 404 | Wager does not exist |
 | `INVALID_GAME_TYPE` | 400 | Game type not supported |
-| `WAGER_STATUS_INVALID` | 400 | Operation invalid for current wager status |
+| `WAGER_STATUS_INVALID` | 409 | Operation invalid for current wager status |
 | `DUPLICATE_JOIN` | 400 | Player already joined this wager |
+| `CANNOT_BET_OWN_MATCH` | 403 | Players cannot place side bets on their own wager |
 | `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
-| `INTERNAL_ERROR` | 500 | Server error occurred |
+| `INTERNAL_ERROR` | 500 | Server / on-chain error |
 
 ---
 
@@ -831,13 +909,11 @@ All error responses follow this format:
 
 Game Gambit can send webhooks for important events. Configure at `/settings/webhooks`.
 
-### Webhook Events
-
 #### wager.created
 ```json
 {
   "event": "wager.created",
-  "timestamp": "2026-03-09T10:30:00Z",
+  "timestamp": "2026-04-01T10:30:00Z",
   "data": {
     "wager_id": "550e8400-e29b-41d4-a716-446655440000",
     "player_a": "G1R2k...",
@@ -851,7 +927,7 @@ Game Gambit can send webhooks for important events. Configure at `/settings/webh
 ```json
 {
   "event": "wager.resolved",
-  "timestamp": "2026-03-09T10:45:00Z",
+  "timestamp": "2026-04-01T10:45:00Z",
   "data": {
     "wager_id": "550e8400-e29b-41d4-a716-446655440000",
     "winner": "G1R2k...",
@@ -863,73 +939,72 @@ Game Gambit can send webhooks for important events. Configure at `/settings/webh
 
 ---
 
-## Examples
+## Code Examples
+
+### Invoke a Secure Wager Action (TypeScript)
+
+```typescript
+import { invokeSecureWager } from '@/hooks/useWagers'
+
+// Create a wager
+const result = await invokeSecureWager({
+  action: 'create',
+  game: 'chess',
+  stake_lamports: 500_000_000,
+  is_public: true,
+}, sessionToken)
+
+// Submit a vote
+await invokeSecureWager({
+  action: 'submitVote',
+  wagerId: 'wager-uuid',
+  votedWinner: walletPublicKey,
+}, sessionToken)
+```
+
+### Place a Side Bet (TypeScript)
+
+```typescript
+const { placeSideBet } = usePlaceSideBet()
+
+await placeSideBet({
+  wagerId: 'wager-uuid',
+  backedPlayer: 'player_a',
+  amountLamports: 500_000_000,
+  txSignature: '5yBGvU...',
+})
+```
 
 ### Create a Wager (JavaScript)
 
 ```typescript
 const createWager = async (stake, game) => {
-  const message = `Sign to create wager: ${Date.now()}`
-  const encodedMessage = new TextEncoder().encode(message)
-  const signature = await wallet.signMessage(encodedMessage)
-
-  const response = await fetch('https://gamegambit.com/api/wagers', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${signature}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      game: game,
-      stake_lamports: stake,
-      is_public: true
-    })
-  })
-
-  return response.json()
-}
-```
-
-### Get Leaderboard (JavaScript)
-
-```typescript
-const getLeaderboard = async (sort = 'total_earnings', limit = 100) => {
   const response = await fetch(
-    `https://gamegambit.com/api/leaderboard?sort=${sort}&limit=${limit}`
+    `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/secure-wager`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': sessionToken,
+      },
+      body: JSON.stringify({ action: 'create', game, stake_lamports: stake, is_public: true })
+    }
   )
   return response.json()
 }
 ```
 
----
-
-## SDK
-
-Official JavaScript SDK available:
-
-```bash
-npm install @gamegambit/sdk
-```
+### Get Leaderboard (TypeScript)
 
 ```typescript
-import { GameGambit } from '@gamegambit/sdk'
-
-const gamegambit = new GameGambit({
-  connection: connection,
-  wallet: wallet
-})
-
-// Create wager
-const wager = await gamegambit.wagers.create({
-  game: 'chess',
-  stakeLamports: 5_000_000_000
-})
-
-// Get leaderboard
-const leaderboard = await gamegambit.leaderboard.get({ limit: 100 })
-
-// Join wager
-await gamegambit.wagers.join(wagerId)
+const getLeaderboard = async (sort = 'total_earnings', limit = 100) => {
+  const { data } = await supabase
+    .from('players')
+    .select('wallet_address, username, wins, total_earnings, total_wagers')
+    .order(sort, { ascending: false })
+    .limit(limit)
+  return data
+}
 ```
 
 ---
@@ -939,20 +1014,38 @@ await gamegambit.wagers.join(wagerId)
 Access the admin dashboard at `/itszaadminlogin/`
 
 **Features:**
-- Dispute resolution interface
-- Player management and banning
-- Wager oversight and history
-- Audit logs with before/after tracking
-- Admin wallet binding and verification
-- Session management with JWT tokens
+- Dispute resolution interface with 5-step verdict workflow
+- Player management — ban/flag/review players, full stats
+- Wager oversight — complete history, transaction ledger, status tracking
+- Audit logs with before/after state changes and IP logging
+- Admin wallet binding and on-chain signature verification
+- Session management with JWT tokens and auto-refresh
 
 **Required Roles:**
-- Superadmin: Full system access
-- Admin: Dispute resolution, player management
-- Moderator: Dispute resolution only
+
+| Role | Permissions |
+|------|-------------|
+| `superadmin` | Full system access including admin user management |
+| `admin` | Dispute resolution, player bans, wager oversight, audit logs |
+| `moderator` | Dispute resolution only |
 
 ---
 
-**Last Updated**: March 15, 2026  
-**API Version**: 1.5.0  
-**Database Schema**: 1.0 (Supabase PostgreSQL)
+## Performance Benchmarks
+
+### v1.0.0 Baselines (Production — Devnet)
+
+| Metric | Target | Achieved |
+|--------|--------|----------|
+| API response time (p50) | < 50ms | 35ms |
+| API response time (p95) | < 200ms | 180ms |
+| API response time (p99) | < 500ms | 420ms |
+| Leaderboard query | < 50ms | 45ms |
+| Wager creation | 100–300ms | 220ms |
+| Database connection | < 10ms | 8ms |
+| Cache hit rate | > 85% | 87% |
+| Uptime | > 99.9% | 99.95% |
+
+---
+
+**Last Updated:** April 2026 — v1.8.0

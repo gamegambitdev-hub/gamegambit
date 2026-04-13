@@ -53,6 +53,9 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 # Required for push notifications
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<your_vapid_public_key>
 
+# OG image URL (used for dynamic per-wager og:image)
+NEXT_PUBLIC_APP_URL=https://gamegambit.gg
+
 # Optional — enables live PUBG username verification
 # Without this, PUBG binding falls back to manual confirmation
 PUBG_API_KEY=<your_pubg_api_key>
@@ -106,14 +109,24 @@ gamegambit/
 │   │   │   └── unauthorized/
 │   │   ├── arena/                     # Wager creation & lobby
 │   │   ├── dashboard/
+│   │   ├── events/                    # Airdrop / campaign page (v1.8.0)
 │   │   ├── faq/
+│   │   ├── feed/                      # Social feed — For You / Friends / Live Now (v1.8.0)
+│   │   ├── invite/
+│   │   │   └── [code]/                # Referral landing page (v1.8.0)
 │   │   ├── leaderboard/
+│   │   ├── messages/                  # DM inbox + realtime chat (v1.8.0)
 │   │   ├── my-wagers/
 │   │   ├── privacy/
 │   │   ├── profile/
 │   │   │   └── [walletAddress]/
 │   │   ├── settings/                  # Player settings page (notifications, moderation)
 │   │   ├── terms/
+│   │   ├── wager/
+│   │   │   └── [id]/
+│   │   │       ├── page.tsx           # Spectator page + SideBetsPanel (v1.8.0)
+│   │   │       ├── layout.tsx         # generateMetadata — dynamic OG title/desc (v1.8.0)
+│   │   │       └── opengraph-image.tsx # Per-wager 1200×630 PNG via next/og (v1.8.0)
 │   │   └── page.tsx                   # Landing page
 │   │
 │   ├── components/
@@ -160,7 +173,11 @@ gamegambit/
 │   │   ├── useWagerChat.ts            # Ready room chat + proposals
 │   │   ├── useWagers.ts               # Wager queries + invokeSecureWager helper
 │   │   ├── useWalletAuth.ts           # Ed25519 session token management
-│   │   └── useWalletBalance.ts
+│   │   ├── useWalletBalance.ts
+│   │   ├── useFriends.ts              # sendRequest, accept/decline/remove, friendsList (v1.8.0)
+│   │   ├── useDirectMessages.ts       # DM channel queries + realtime (v1.8.0)
+│   │   ├── useFeed.ts                 # Feed posts + reactions (v1.8.0)
+│   │   └── useSideBets.ts             # Place/counter/accept/cancel side bets (v1.8.0)
 │   │
 │   ├── contexts/
 │   │   ├── GameEventContext.tsx       # Global Realtime listener — keeps wager cache fresh
@@ -190,6 +207,7 @@ gamegambit/
 ├── supabase/functions/
 │   ├── secure-wager/    # All wager lifecycle actions (18 actions — see table below)
 │   ├── secure-player/   # Player create/update/bindGame
+│   ├── secure-bet/      # Spectator side bets: place/counter/accept/cancel/resolveForWager (v1.8.0)
 │   ├── admin-action/    # Admin dispute resolution (forceResolve, forceRefund, markDisputed, banPlayer, etc.)
 │   ├── resolve-wager/   # Low-level on-chain settlement (called by admin-action + Lichess webhook)
 │   ├── check-chess-games/ # Cron-driven: polls active chess wagers every 60s, auto-resolves finished games
@@ -740,4 +758,4 @@ Application-level rate limits are enforced in edge functions. `notifyChat` is ca
 
 ---
 
-**Last Updated**: April 3, 2026 — v1.7.0
+**Last Updated**: April 2026 — v1.8.0
