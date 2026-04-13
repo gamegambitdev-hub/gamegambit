@@ -19,9 +19,13 @@ import {
     useMyReactions,
     useToggleReaction,
     useSpectatorCount,
+    useFollowingFeedWagers,
     REACTIONS,
     type ReactionType,
 } from '@/hooks/useFeed'
+import { useFollows } from '@/hooks/useFollows'
+import { useFriends } from '@/hooks/useFriends'
+import { useLeaderboard } from '@/hooks/usePlayer'
 import { cn } from '@/lib/utils'
 import { FriendButton } from '@/components/FriendButton'
 import { FollowButton } from '@/components/FollowButton'
@@ -221,11 +225,9 @@ function StreamCard({
                                 <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-gaming text-sm">{truncateAddress(wager.player_a_wallet)}</span>
                                     <FriendButton targetWallet={wager.player_a_wallet} size="sm" />
-                                    <FollowButton targetWallet={wager.player_a_wallet} size="sm" />
                                     <Swords className="h-3 w-3 text-muted-foreground" />
                                     <span className="font-gaming text-sm">{wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}</span>
                                     {wager.player_b_wallet && <FriendButton targetWallet={wager.player_b_wallet} size="sm" />}
-                                    {wager.player_b_wallet && <FollowButton targetWallet={wager.player_b_wallet} size="sm" />}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                     <Tv2 className="h-3 w-3 text-primary" />
@@ -343,13 +345,11 @@ function WagerCard({
                                         {truncateAddress(wager.player_a_wallet)}
                                     </span>
                                     <FriendButton targetWallet={wager.player_a_wallet} size="sm" />
-                                    <FollowButton targetWallet={wager.player_a_wallet} size="sm" />
                                     <Swords className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                                     <span className="font-gaming text-xs sm:text-sm truncate max-w-[70px] sm:max-w-none">
                                         {wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}
                                     </span>
                                     {wager.player_b_wallet && <FriendButton targetWallet={wager.player_b_wallet} size="sm" />}
-                                    {wager.player_b_wallet && <FollowButton targetWallet={wager.player_b_wallet} size="sm" />}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
                                     <span>{game.name}</span>
@@ -461,20 +461,29 @@ export function FeedView() {
 
     const { data: allWagers, isLoading } = useRecentWagers(30)
 
+    // Social graph — friends + follows combined into one wallet list
+    const { friendWallets } = useFriends()
+    const { followingList } = useFollows()
+    const socialWallets = [...new Set([...friendWallets, ...followingList])]
+
+    // Friends & Following tab — real filtered query
+    const { data: followingWagers = [], isLoading: followingLoading } = useFollowingFeedWagers(
+        activeTab === 'friends' && myWallet ? socialWallets : []
+    )
+
+    // Leaderboard suggestions for empty following feed
+    const { data: topPlayers = [] } = useLeaderboard('earnings')
+
     // Filter by tab
     const wagers = (() => {
         if (!allWagers) return []
         switch (activeTab) {
             case 'live':
-                return allWagers.filter(w =>
-                    ['joined'].includes(w.status) &&
-                    (w.stream_url || true) // show all live, prioritise streams
-                )
+                return allWagers.filter(w => w.status === 'joined')
             case 'friends':
-                // TODO: filter by friendship once Task 9 is done
-                // For now show a prompt if no wallet, else show all (placeholder)
-                return noWallet ? [] : allWagers
+                return followingWagers as typeof allWagers
             default:
+                // For You — all public wagers, newest first (already ordered by created_at DESC)
                 return allWagers
         }
     })()
@@ -531,8 +540,35 @@ export function FeedView() {
                     </div>
                 )}
 
+                {/* Friends & Following tab — empty state with leaderboard suggestions */}
+                {activeTab === 'friends' && myWallet && !followingLoading && socialWallets.length === 0 && (
+                    <div className="text-center py-12">
+                        <Users className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                        <h3 className="font-gaming text-lg mb-2">Your feed is empty</h3>
+                        <p className="text-sm text-muted-foreground mb-6">
+                            Follow players to see their matches here. Start with the top players:
+                        </p>
+                        {topPlayers.slice(0, 5).length > 0 && (
+                            <div className="space-y-2 max-w-xs mx-auto">
+                                {topPlayers.slice(0, 5).map(player => (
+                                    <Link
+                                        key={player.wallet_address}
+                                        href={`/profile/${player.wallet_address}`}
+                                        className="flex items-center justify-between p-3 rounded-lg border border-border/50 bg-card hover:border-primary/40 transition-colors"
+                                    >
+                                        <span className="font-gaming text-sm">
+                                            {player.username || truncateAddress(player.wallet_address)}
+                                        </span>
+                                        <FollowButton targetWallet={player.wallet_address} size="sm" />
+                                    </Link>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Feed */}
-                {isLoading ? (
+                {(isLoading || (activeTab === 'friends' && followingLoading)) ? (
                     <div className="flex justify-center py-16">
                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     </div>
@@ -546,6 +582,14 @@ export function FeedView() {
                         <Link href="/arena">
                             <Button variant="neon">Enter Arena</Button>
                         </Link>
+                    </div>
+                ) : wagers.length === 0 && activeTab === 'friends' && socialWallets.length > 0 ? (
+                    <div className="text-center py-16">
+                        <Swords className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                        <h3 className="font-gaming text-lg mb-2">No activity yet</h3>
+                        <p className="text-sm text-muted-foreground">
+                            The players you follow haven't wagered recently.
+                        </p>
                     </div>
                 ) : (
                     <AnimatePresence initial={false}>

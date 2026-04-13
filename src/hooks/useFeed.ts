@@ -159,3 +159,23 @@ export function useSpectatorCount(wagerId: string | null) {
 
 // ── Re-export wager hooks the feed needs ─────────────────────────────────────
 export { useRecentWagers }
+// ── Friends & Following feed — wagers from wallets you follow or are friends with ──
+export function useFollowingFeedWagers(wallets: string[]) {
+    return useQuery({
+        queryKey: ['feed-following', wallets],
+        enabled: wallets.length > 0,
+        staleTime: 30_000,
+        queryFn: async () => {
+            const db = getSupabaseClient()
+            const { data, error } = await db
+                .from('wagers')
+                .select('id, match_id, player_a_wallet, player_b_wallet, game, stake_lamports, status, stream_url, winner_wallet, is_public, created_at, updated_at')
+                .in('player_a_wallet', wallets)
+                .eq('is_public', true)
+                .order('created_at', { ascending: false })
+                .limit(50)
+            if (error) throw error
+            return data
+        },
+    })
+}
