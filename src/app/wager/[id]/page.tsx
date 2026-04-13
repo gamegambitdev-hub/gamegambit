@@ -4,22 +4,34 @@ import { use, useEffect, useState } from 'react'
 import { useWagerById } from '@/hooks/useWagers'
 import { usePlayerByWallet } from '@/hooks/usePlayer'
 import { getSupabaseClient } from '@/integrations/supabase/client'
-import { GAMES, formatSol, calculatePlatformFee } from '@/lib/constants'
+import { GAMES, formatSol, calculatePlatformFee, truncateAddress } from '@/lib/constants'
 import { getTxExplorerUrl } from '@/lib/solana-config'
 import { PlayerLink } from '@/components/PlayerLink'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
     Crown, Swords, Trophy, Clock, Copy, Check,
     ExternalLink, ArrowRight, Loader2, AlertCircle,
-    User, Minus, Share2,
+    User, Minus, Share2, Coins, ChevronDown, ChevronUp, Lock,
+    TrendingUp, X,
 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import type { Wager } from '@/hooks/useWagers'
 import { useQueryClient } from '@tanstack/react-query'
+import { useWallet } from '@solana/wallet-adapter-react'
+import {
+    useSideBets,
+    usePlaceSideBet,
+    useCounterSideBet,
+    useAcceptSideBet,
+    useCancelSideBet,
+    type SideBet,
+} from '@/hooks/useSideBets'
+import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -155,6 +167,342 @@ function ShareButton({ wagerId }: { wagerId: string }) {
                 : <><Copy className="h-4 w-4" /> Copy Link</>
             }
         </Button>
+    )
+}
+
+// ─── Side Bets Panel ──────────────────────────────────────────────────────────
+
+function SideBetsPanel({
+    wagerId,
+    playerAWallet,
+    playerBWallet,
+    wagerStatus,
+}: {
+    wagerId: string
+    playerAWallet: string
+    playerBWallet: string | null
+    wagerStatus: string
+}) {
+    const { publicKey } = useWallet()
+    const myWallet = publicKey?.toBase58() ?? null
+
+    const { data: bets = [], isLoading } = useSideBets(wagerId)
+    const placeBet = usePlaceSideBet(wagerId)
+    const counterBet = useCounterSideBet(wagerId)
+    const acceptBet = useAcceptSideBet(wagerId)
+    const cancelBet = useCancelSideBet(wagerId)
+
+    const [expanded, setExpanded] = useState(true)
+    const [placeSide, setPlaceSide] = useState<'player_a' | 'player_b' | null>(null)
+    const [placeAmount, setPlaceAmount] = useState('')
+    const [counterBetId, setCounterBetId] = useState<string | null>(null)
+    const [counterAmount, setCounterAmount] = useState('')
+
+    const bettingClosed = ['voting', 'resolved', 'cancelled'].includes(wagerStatus)
+    const isPlayer = myWallet === playerAWallet || myWallet === playerBWallet
+
+    const openBets = bets.filter(b => b.status === 'open' || b.status === 'countered')
+    const matchedBets = bets.filter(b => b.status === 'matched')
+    const resolvedBets = bets.filter(b => b.status === 'resolved')
+
+    const handlePlace = () => {
+        if (!placeSide || !placeAmount) return
+        const lamports = Math.round(parseFloat(placeAmount) * LAMPORTS_PER_SOL)
+        if (isNaN(lamports) || lamports <= 0) return
+        placeBet.mutate({ backedPlayer: placeSide, amountLamports: lamports }, {
+            onSuccess: () => { setPlaceSide(null); setPlaceAmount('') }
+        })
+    }
+
+    const handleCounter = (betId: string) => {
+        if (!counterAmount) return
+        const lamports = Math.round(parseFloat(counterAmount) * LAMPORTS_PER_SOL)
+        if (isNaN(lamports) || lamports <= 0) return
+        counterBet.mutate({ betId, counterAmountLamports: lamports }, {
+            onSuccess: () => { setCounterBetId(null); setCounterAmount('') }
+        })
+    }
+
+    const handleAccept = (bet: SideBet) => {
+        const amountToSend = bet.counter_amount ?? bet.amount_lamports
+        acceptBet.mutate({ betId: bet.id, amountLamports: amountToSend })
+    }
+
+    const playerALabel = truncateAddress(playerAWallet)
+    const playerBLabel = playerBWallet ? truncateAddress(playerBWallet) : 'TBD'
+
+    return (
+        <Card className="border-primary/20">
+            <CardContent className="p-0">
+                {/* Header */}
+                <button
+                    onClick={() => setExpanded(v => !v)}
+                    className="w-full flex items-center justify-between p-4 hover:bg-muted/20 transition-colors rounded-t-xl"
+                >
+                    <div className="flex items-center gap-2">
+                        <Coins className="h-4 w-4 text-primary" />
+                        <span className="font-gaming text-sm font-semibold">Side Bets</span>
+                        {bets.length > 0 && (
+                            <Badge variant="outline" className="text-xs px-1.5 py-0">
+                                {bets.length}
+                            </Badge>
+                        )}
+                        {bettingClosed && (
+                            <Badge variant="glass" className="text-xs px-1.5 py-0 gap-1">
+                                <Lock className="h-2.5 w-2.5" /> Closed
+                            </Badge>
+                        )}
+                    </div>
+                    {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                </button>
+
+                <AnimatePresence initial={false}>
+                    {expanded && (
+                        <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                        >
+                            <div className="px-4 pb-4 space-y-4">
+
+                                {/* Place Bet Form */}
+                                {!bettingClosed && !isPlayer && myWallet && playerBWallet && (
+                                    <div className="space-y-3 pt-1">
+                                        <p className="text-xs text-muted-foreground">Pick a side to back:</p>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                onClick={() => setPlaceSide(s => s === 'player_a' ? null : 'player_a')}
+                                                className={cn(
+                                                    'p-3 rounded-lg border text-sm font-gaming transition-colors text-left',
+                                                    placeSide === 'player_a'
+                                                        ? 'border-primary bg-primary/10 text-primary'
+                                                        : 'border-border/50 hover:border-border'
+                                                )}
+                                            >
+                                                <TrendingUp className="h-3.5 w-3.5 mb-1" />
+                                                {playerALabel}
+                                            </button>
+                                            <button
+                                                onClick={() => setPlaceSide(s => s === 'player_b' ? null : 'player_b')}
+                                                className={cn(
+                                                    'p-3 rounded-lg border text-sm font-gaming transition-colors text-left',
+                                                    placeSide === 'player_b'
+                                                        ? 'border-accent bg-accent/10 text-accent'
+                                                        : 'border-border/50 hover:border-border'
+                                                )}
+                                            >
+                                                <TrendingUp className="h-3.5 w-3.5 mb-1" />
+                                                {playerBLabel}
+                                            </button>
+                                        </div>
+
+                                        <AnimatePresence>
+                                            {placeSide && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: -6 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    exit={{ opacity: 0, y: -6 }}
+                                                    className="flex gap-2"
+                                                >
+                                                    <Input
+                                                        type="number"
+                                                        min="0.001"
+                                                        step="0.001"
+                                                        placeholder="SOL amount"
+                                                        value={placeAmount}
+                                                        onChange={e => setPlaceAmount(e.target.value)}
+                                                        className="flex-1 h-9 text-sm"
+                                                    />
+                                                    <Button
+                                                        size="sm"
+                                                        variant="neon"
+                                                        onClick={handlePlace}
+                                                        disabled={!placeAmount || placeBet.isPending}
+                                                        className="h-9 px-4"
+                                                    >
+                                                        {placeBet.isPending
+                                                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                            : 'Bet'
+                                                        }
+                                                    </Button>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                )}
+
+                                {/* Login prompt */}
+                                {!myWallet && !bettingClosed && (
+                                    <p className="text-xs text-muted-foreground py-1">
+                                        Connect wallet to place side bets.
+                                    </p>
+                                )}
+
+                                {/* Player can't bet */}
+                                {isPlayer && !bettingClosed && (
+                                    <p className="text-xs text-muted-foreground py-1 flex items-center gap-1.5">
+                                        <Lock className="h-3 w-3" /> Players can't bet on their own match.
+                                    </p>
+                                )}
+
+                                {/* Loading */}
+                                {isLoading && (
+                                    <div className="flex justify-center py-3">
+                                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                    </div>
+                                )}
+
+                                {/* Open / countered bets */}
+                                {openBets.length > 0 && (
+                                    <div className="space-y-2">
+                                        <p className="text-xs text-muted-foreground uppercase tracking-widest">Open Bets</p>
+                                        {openBets.map(bet => {
+                                            const isOwner = bet.bettor_wallet === myWallet
+                                            const canAccept = !isOwner && myWallet && !bettingClosed
+                                            const amountToAccept = bet.counter_amount ?? bet.amount_lamports
+                                            const backedLabel = bet.backed_player === 'player_a' ? playerALabel : playerBLabel
+
+                                            return (
+                                                <div key={bet.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/20 border border-border/30 text-sm">
+                                                    <div className="min-w-0">
+                                                        <span className="text-muted-foreground text-xs">{truncateAddress(bet.bettor_wallet)}</span>
+                                                        <span className="text-muted-foreground text-xs mx-1">→</span>
+                                                        <span className="font-gaming text-xs text-primary">{backedLabel}</span>
+                                                        <div className="font-gaming font-bold mt-0.5">
+                                                            {formatSol(bet.amount_lamports)} SOL
+                                                            {bet.counter_amount && bet.counter_amount !== bet.amount_lamports && (
+                                                                <span className="text-xs text-muted-foreground ml-1">(counter: {formatSol(bet.counter_amount)} SOL)</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-1.5 flex-shrink-0">
+                                                        {isOwner && (
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                                                                onClick={() => cancelBet.mutate({ betId: bet.id })}
+                                                                disabled={cancelBet.isPending}
+                                                            >
+                                                                <X className="h-3 w-3" />
+                                                            </Button>
+                                                        )}
+                                                        {canAccept && (
+                                                            <>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="neon"
+                                                                    className="h-7 px-3 text-xs"
+                                                                    onClick={() => handleAccept(bet)}
+                                                                    disabled={acceptBet.isPending}
+                                                                >
+                                                                    Accept {formatSol(amountToAccept)} SOL
+                                                                </Button>
+                                                                {counterBetId !== bet.id && (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="h-7 px-2 text-xs"
+                                                                        onClick={() => setCounterBetId(bet.id)}
+                                                                    >
+                                                                        Counter
+                                                                    </Button>
+                                                                )}
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* Counter-offer input */}
+                                <AnimatePresence>
+                                    {counterBetId && (
+                                        <motion.div
+                                            initial={{ opacity: 0, height: 0 }}
+                                            animate={{ opacity: 1, height: 'auto' }}
+                                            exit={{ opacity: 0, height: 0 }}
+                                            className="flex gap-2"
+                                        >
+                                            <Input
+                                                type="number"
+                                                min="0.001"
+                                                step="0.001"
+                                                placeholder="Your counter SOL amount"
+                                                value={counterAmount}
+                                                onChange={e => setCounterAmount(e.target.value)}
+                                                className="flex-1 h-9 text-sm"
+                                            />
+                                            <Button
+                                                size="sm"
+                                                variant="neon"
+                                                className="h-9 px-3"
+                                                onClick={() => handleCounter(counterBetId)}
+                                                disabled={!counterAmount || counterBet.isPending}
+                                            >
+                                                {counterBet.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Send'}
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="h-9 px-2"
+                                                onClick={() => { setCounterBetId(null); setCounterAmount('') }}
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </Button>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+
+                                {/* Matched bets */}
+                                {matchedBets.length > 0 && (
+                                    <div className="space-y-2">
+                                        <p className="text-xs text-muted-foreground uppercase tracking-widest">Locked In</p>
+                                        {matchedBets.map(bet => (
+                                            <div key={bet.id} className="flex items-center justify-between p-3 rounded-lg bg-green-500/5 border border-green-500/20 text-xs">
+                                                <div>
+                                                    <span className="font-gaming text-green-400">{truncateAddress(bet.bettor_wallet)}</span>
+                                                    <span className="text-muted-foreground mx-1">vs</span>
+                                                    <span className="font-gaming text-green-400">{bet.backer_wallet ? truncateAddress(bet.backer_wallet) : '?'}</span>
+                                                </div>
+                                                <span className="font-gaming font-bold">
+                                                    {formatSol(bet.amount_lamports + (bet.counter_amount ?? bet.amount_lamports))} SOL pot
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Resolved bets */}
+                                {resolvedBets.length > 0 && (
+                                    <div className="space-y-2">
+                                        <p className="text-xs text-muted-foreground uppercase tracking-widest">Settled</p>
+                                        {resolvedBets.map(bet => (
+                                            <div key={bet.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/10 border border-border/20 text-xs opacity-60">
+                                                <span className="font-gaming">{truncateAddress(bet.bettor_wallet)}</span>
+                                                <span className="text-muted-foreground">Resolved</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Empty state */}
+                                {!isLoading && bets.length === 0 && (
+                                    <p className="text-xs text-muted-foreground text-center py-2">
+                                        {bettingClosed ? 'No side bets were placed.' : 'No bets yet — be the first!'}
+                                    </p>
+                                )}
+
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </CardContent>
+        </Card>
     )
 }
 
@@ -375,15 +723,27 @@ export default function WagerSpectatorPage({ params }: { params: Promise<{ id: s
                     )}
                 </motion.div>
 
+                {/* ── Side Bets Panel ── */}
+                {!isCancelled && (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+                        <SideBetsPanel
+                            wagerId={wager.id}
+                            playerAWallet={wager.player_a_wallet}
+                            playerBWallet={wager.player_b_wallet ?? null}
+                            wagerStatus={wager.status}
+                        />
+                    </motion.div>
+                )}
+
                 {/* ── Lichess Live Board ── */}
                 {isChess && wager.lichess_game_id && (
-                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
                         <LichessEmbed gameId={wager.lichess_game_id} />
                     </motion.div>
                 )}
 
                 {/* ── Match Details ── */}
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
                     <Card className="border-border/40">
                         <CardContent className="p-5 space-y-3 text-sm">
                             <h3 className="font-gaming text-xs uppercase tracking-widest text-muted-foreground mb-3">Match Details</h3>
@@ -449,7 +809,7 @@ export default function WagerSpectatorPage({ params }: { params: Promise<{ id: s
                 <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.25 }}
+                    transition={{ delay: 0.3 }}
                     className="rounded-xl border border-primary/20 bg-primary/5 p-5 text-center space-y-3"
                 >
                     <p className="font-gaming text-base">Want to run your own wager?</p>
