@@ -44,8 +44,8 @@ async function payoutFromPlatform(
     lamports: number
 ): Promise<string> {
     const connection = new Connection(RPC_URL, "confirmed");
-    const privateKeyRaw = Deno.env.get("PLATFORM_WALLET_PRIVATE_KEY");
-    if (!privateKeyRaw) throw new Error("PLATFORM_WALLET_PRIVATE_KEY not set");
+    const privateKeyRaw = Deno.env.get("AUTHORITY_WALLET_SECRET");
+    if (!privateKeyRaw) throw new Error("AUTHORITY_WALLET_SECRET not set");
 
     const secretKey = Uint8Array.from(JSON.parse(privateKeyRaw));
     const platformKeypair = Keypair.fromSecretKey(secretKey);
