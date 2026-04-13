@@ -66,10 +66,12 @@ export function useToggleReaction() {
             wagerId,
             reactionType,
             alreadyReacted,
+            wagerOwnerWallet,
         }: {
             wagerId: string
             reactionType: ReactionType
             alreadyReacted: boolean
+            wagerOwnerWallet?: string | null
         }) => {
             const wallet = publicKey?.toBase58()
             if (!wallet) throw new Error('Wallet not connected')
@@ -88,6 +90,30 @@ export function useToggleReaction() {
                     .from('feed_reactions')
                     .insert({ wager_id: wagerId, wallet, reaction_type: reactionType })
                 if (error) throw error
+
+                // ── Digest notification (max 1 per wager per 10 min) ──────────
+                // Only fire if there's a known owner and they're not the reactor
+                if (wagerOwnerWallet && wagerOwnerWallet !== wallet) {
+                    const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+                    const { count } = await db
+                        .from('notifications')
+                        .select('id', { count: 'exact', head: true })
+                        .eq('player_wallet', wagerOwnerWallet)
+                        .eq('type', 'feed_reaction')
+                        .eq('wager_id', wagerId)
+                        .gte('created_at', tenMinsAgo)
+
+                    if ((count ?? 0) === 0) {
+                        await db.from('notifications').insert({
+                            player_wallet: wagerOwnerWallet,
+                            type: 'feed_reaction',
+                            title: '\ud83d\udd25 People are reacting to your match',
+                            message: 'Your wager is getting attention in the feed',
+                            wager_id: wagerId,
+                            read: false,
+                        })
+                    }
+                }
             }
         },
         onSuccess: () => {

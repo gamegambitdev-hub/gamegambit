@@ -23,6 +23,7 @@ import {
     type ReactionType,
 } from '@/hooks/useFeed'
 import { cn } from '@/lib/utils'
+import { FriendButton } from '@/components/FriendButton'
 import { toast } from 'sonner'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,11 +90,13 @@ function ReactionsBar({
     counts,
     myReacted,
     requiresWallet,
+    wagerOwnerWallet,
 }: {
     wagerId: string
     counts: Record<ReactionType, number>
     myReacted: Set<string>
     requiresWallet: boolean
+    wagerOwnerWallet?: string | null
 }) {
     const { mutate: toggle } = useToggleReaction()
 
@@ -103,7 +106,7 @@ function ReactionsBar({
             return
         }
         const key = `${wagerId}:${type}`
-        toggle({ wagerId, reactionType: type, alreadyReacted: myReacted.has(key) })
+        toggle({ wagerId, reactionType: type, alreadyReacted: myReacted.has(key), wagerOwnerWallet })
     }
 
     return (
@@ -189,7 +192,7 @@ function WinCard({
                                 {' '}in {game.name}
                             </p>
                             <div className="flex items-center gap-3 mt-2">
-                                <ReactionsBar wagerId={wager.id} counts={counts} myReacted={myReacted} requiresWallet={noWallet} />
+                                <ReactionsBar wagerId={wager.id} counts={counts} myReacted={myReacted} requiresWallet={noWallet} wagerOwnerWallet={wager.player_a_wallet} />
                                 <Link href={`/wager/${wager.id}`}>
                                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground">
                                         <Eye className="h-3 w-3 mr-1" /> View
@@ -235,10 +238,12 @@ function StreamCard({
                         <div className="flex items-center gap-2">
                             <span className="text-xl">{game.icon}</span>
                             <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-gaming text-sm">{truncateAddress(wager.player_a_wallet)}</span>
+                                    <FriendButton targetWallet={wager.player_a_wallet} size="sm" />
                                     <Swords className="h-3 w-3 text-muted-foreground" />
                                     <span className="font-gaming text-sm">{wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}</span>
+                                    {wager.player_b_wallet && <FriendButton targetWallet={wager.player_b_wallet} size="sm" />}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                     <Tv2 className="h-3 w-3 text-primary" />
@@ -282,7 +287,7 @@ function StreamCard({
                     </AnimatePresence>
 
                     <div className="flex items-center gap-3">
-                        <ReactionsBar wagerId={wager.id} counts={counts} myReacted={myReacted} requiresWallet={noWallet} />
+                        <ReactionsBar wagerId={wager.id} counts={counts} myReacted={myReacted} requiresWallet={noWallet} wagerOwnerWallet={wager.player_a_wallet} />
                         <Link href={`/wager/${wager.id}`}>
                             <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground">
                                 <Eye className="h-3 w-3 mr-1" /> Spectate
@@ -337,10 +342,12 @@ function WagerCard({
                                     <span className="font-gaming text-xs sm:text-sm truncate max-w-[70px] sm:max-w-none">
                                         {truncateAddress(wager.player_a_wallet)}
                                     </span>
+                                    <FriendButton targetWallet={wager.player_a_wallet} size="sm" />
                                     <Swords className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                                     <span className="font-gaming text-xs sm:text-sm truncate max-w-[70px] sm:max-w-none">
                                         {wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}
                                     </span>
+                                    {wager.player_b_wallet && <FriendButton targetWallet={wager.player_b_wallet} size="sm" />}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
                                     <span>{game.name}</span>
@@ -373,7 +380,7 @@ function WagerCard({
                     </div>
 
                     <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border/30">
-                        <ReactionsBar wagerId={wager.id} counts={counts} myReacted={myReacted} requiresWallet={noWallet} />
+                        <ReactionsBar wagerId={wager.id} counts={counts} myReacted={myReacted} requiresWallet={noWallet} wagerOwnerWallet={wager.player_a_wallet} />
                         <Link href={`/wager/${wager.id}`}>
                             <Button variant="ghost" size="sm" className="h-6 px-2 text-xs text-muted-foreground">
                                 <Eye className="h-3 w-3 mr-1" /> View
