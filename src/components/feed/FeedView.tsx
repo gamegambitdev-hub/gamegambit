@@ -24,6 +24,7 @@ import {
 } from '@/hooks/useFeed'
 import { cn } from '@/lib/utils'
 import { FriendButton } from '@/components/FriendButton'
+import { FollowButton } from '@/components/FollowButton'
 import { getStreamEmbed } from '@/lib/streamEmbed'
 import { toast } from 'sonner'
 
@@ -220,9 +221,11 @@ function StreamCard({
                                 <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-gaming text-sm">{truncateAddress(wager.player_a_wallet)}</span>
                                     <FriendButton targetWallet={wager.player_a_wallet} size="sm" />
+                                    <FollowButton targetWallet={wager.player_a_wallet} size="sm" />
                                     <Swords className="h-3 w-3 text-muted-foreground" />
                                     <span className="font-gaming text-sm">{wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}</span>
                                     {wager.player_b_wallet && <FriendButton targetWallet={wager.player_b_wallet} size="sm" />}
+                                    {wager.player_b_wallet && <FollowButton targetWallet={wager.player_b_wallet} size="sm" />}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                     <Tv2 className="h-3 w-3 text-primary" />
@@ -340,11 +343,13 @@ function WagerCard({
                                         {truncateAddress(wager.player_a_wallet)}
                                     </span>
                                     <FriendButton targetWallet={wager.player_a_wallet} size="sm" />
+                                    <FollowButton targetWallet={wager.player_a_wallet} size="sm" />
                                     <Swords className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                                     <span className="font-gaming text-xs sm:text-sm truncate max-w-[70px] sm:max-w-none">
                                         {wager.player_b_wallet ? truncateAddress(wager.player_b_wallet) : '???'}
                                     </span>
                                     {wager.player_b_wallet && <FriendButton targetWallet={wager.player_b_wallet} size="sm" />}
+                                    {wager.player_b_wallet && <FollowButton targetWallet={wager.player_b_wallet} size="sm" />}
                                 </div>
                                 <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
                                     <span>{game.name}</span>

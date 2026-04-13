@@ -1377,6 +1377,27 @@ export type Database = {
           },
         ]
       }
+      follows: {
+        Row: {
+          id: string
+          follower_wallet: string
+          following_wallet: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          follower_wallet: string
+          following_wallet: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          follower_wallet?: string
+          following_wallet?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

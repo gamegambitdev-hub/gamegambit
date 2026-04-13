@@ -18,6 +18,10 @@ export interface AppNotification {
     | 'chat_message'
     | 'wager_proposal'
     | 'moderation_request'
+    | 'friend_request'
+    | 'friend_accepted'
+    | 'feed_reaction'
+    | 'new_follower'
     title: string
     message: string
     wager_id: string | null

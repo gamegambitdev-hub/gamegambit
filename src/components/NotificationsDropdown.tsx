@@ -3,7 +3,7 @@
 import {
   Bell, Trophy, Swords, Clock, Wallet, CheckCheck,
   ExternalLink, Loader2, MessageSquare, RefreshCw,
-  FileEdit, Scale,
+  FileEdit, Scale, UserPlus, Users, Heart,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -57,6 +57,14 @@ export function NotificationsDropdown() {
         return <Swords className="h-4 w-4 text-orange-400" />;
       case 'moderation_request':
         return <Scale className="h-4 w-4 text-amber-400" />;
+      case 'friend_request':
+        return <UserPlus className="h-4 w-4 text-primary" />;
+      case 'friend_accepted':
+        return <Users className="h-4 w-4 text-green-400" />;
+      case 'feed_reaction':
+        return <Heart className="h-4 w-4 text-pink-400" />;
+      case 'new_follower':
+        return <UserPlus className="h-4 w-4 text-accent" />;
       default:
         return <Bell className="h-4 w-4" />;
     }
@@ -104,6 +112,16 @@ export function NotificationsDropdown() {
       case 'moderation_request':
         // No modal param — ModerationOrchestrator auto-surfaces the panel
         return { route: 'dashboard', modal: '' };
+
+      case 'friend_request':
+      case 'friend_accepted':
+        return { route: 'my-wagers', modal: '' };
+
+      case 'feed_reaction':
+        return { route: 'my-wagers', modal: 'details' };
+
+      case 'new_follower':
+        return { route: 'my-wagers', modal: '' };
 
       default:
         return { route: 'my-wagers', modal: 'details' };
@@ -267,6 +285,14 @@ function getActionLabel(type: AppNotification['type']): string {
       return 'View Dispute →';
     case 'moderation_request':
       return 'Open Panel →';
+    case 'friend_request':
+      return 'View Request →';
+    case 'friend_accepted':
+      return 'View Friend →';
+    case 'feed_reaction':
+      return 'View Wager →';
+    case 'new_follower':
+      return 'View Profile →';
     default:
       return 'View →';
   }
