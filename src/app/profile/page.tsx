@@ -38,6 +38,7 @@ import type { ChangeRequestPayload } from '@/components/GameAccountCard'
 import { getSupabaseClient } from '@/integrations/supabase/client'
 import { useWalletAuth } from '@/hooks/useWalletAuth'
 import Link from 'next/link'
+import { AirdropShareButton } from '@/components/ShareCards'
 
 // ── Lazy-loaded heavy components ──────────────────────────────────────────────
 const GameAccountCard = dynamic(
@@ -828,6 +829,16 @@ function ProfilePageInner() {
                   <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs text-muted-foreground italic">
                     "Oya come wager on GameGambit 🎮⚔️ — bet SOL on Chess, PUBG, CODM and Free Fire. Real money, real stakes, Solana chain. Use my link 👆"
                   </div>
+
+                  {/* Airdrop share card */}
+                  <AirdropShareButton
+                    username={player.username ?? null}
+                    totalWagered={player.total_wagered ?? 0}
+                    wins={player.total_wins ?? 0}
+                    referrals={player.referral_count ?? 0}
+                    inviteCode={player.invite_code}
+                    className="w-full"
+                  />
                 </CardContent>
               </Card>
             </motion.div>

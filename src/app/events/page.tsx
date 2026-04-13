@@ -11,10 +11,10 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import { usePlayer } from '@/hooks/usePlayer'
 import { truncateAddress, formatSol } from '@/lib/constants'
 import Link from 'next/link'
+import { AirdropShareButton } from '@/components/ShareCards'
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 function EventsPageSkeleton() {
@@ -304,7 +304,7 @@ function EventsPageInner() {
                                     />
                                 </div>
 
-                                <Separator className="mb-5 opacity-50" />
+                                <div className="my-5 border-t border-border/50 opacity-50" />
 
                                 <div className="flex flex-wrap gap-3">
                                     <Link href="/arena">
@@ -325,6 +325,14 @@ function EventsPageInner() {
                                             </Button>
                                         </Link>
                                     )}
+                                    <AirdropShareButton
+                                        username={player?.username ?? null}
+                                        totalWagered={player?.total_wagered ?? 0}
+                                        wins={player?.total_wins ?? 0}
+                                        referrals={player?.referral_count ?? 0}
+                                        inviteCode={player?.invite_code ?? null}
+                                        className="text-sm h-8"
+                                    />
                                 </div>
                             </CardContent>
                         </Card>

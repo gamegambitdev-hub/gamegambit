@@ -1159,6 +1159,20 @@ function ArenaInner() {
           setGameResultOpen(false)
           if (gameResultWager) handleViewDetails(gameResultWager)
         }}
+        game={gameResultWager?.game ?? null}
+        opponentWallet={
+          gameResultWager
+            ? gameResultWager.player_a_wallet === walletAddress
+              ? gameResultWager.player_b_wallet
+              : gameResultWager.player_a_wallet
+            : null
+        }
+        opponentUsername={
+          gameResultWager?.winner_wallet === gameResultWager?.player_a_wallet
+            ? winnerPlayerB?.username ?? null
+            : winnerPlayerA?.username ?? null
+        }
+        inviteCode={player?.invite_code ?? null}
       />
 
       {/* Deep-link result: notification tapped while already on arena page */}
