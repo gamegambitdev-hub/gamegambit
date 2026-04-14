@@ -30,6 +30,7 @@ import {
     handleFinalizeVote,
     handleConcedeDispute,
     handleVoteTimeout,
+    handleDeclineChallenge,
 } from "./actions.ts";
 
 const corsHeaders = {
@@ -94,6 +95,7 @@ Deno.serve(async (req) => {
             case 'finalizeVote': return await handleFinalizeVote(supabase, walletAddress, data, respond);
             case 'concedeDispute': return await handleConcedeDispute(supabase, walletAddress, data, respond);
             case 'voteTimeout': return await handleVoteTimeout(supabase, walletAddress, data, respond);
+            case 'declineChallenge': return await handleDeclineChallenge(supabase, walletAddress, data, respond);
             default: return respond({ error: 'Invalid action' }, 400);
         }
 

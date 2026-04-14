@@ -943,6 +943,27 @@ async function createLichessGame(
     return { gameId: challenge.id, urlWhite: challenge.urlWhite, urlBlack: challenge.urlBlack };
 }
 
+// ── declineChallenge ──────────────────────────────────────────────────────────
+
+export async function handleDeclineChallenge(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+    const { wagerId } = data;
+    if (!wagerId) return respond({ error: 'Wager ID required' }, 400);
+    const wager = await getWager(supabase, wagerId as string);
+    if (wager.player_b_wallet !== walletAddress) return respond({ error: 'Only the challenged player can decline' }, 403);
+    if (wager.status !== 'created') return respond({ error: 'Challenge can only be declined before it is accepted' }, 400);
+    const { error } = await supabase.from('wagers').delete().eq('id', wagerId);
+    if (error) return respond({ error: 'Failed to decline challenge' }, 500);
+    const declinerName = await getDisplayName(supabase, walletAddress);
+    await insertNotifications(supabase, [{
+        player_wallet: wager.player_a_wallet as string,
+        type: 'wager_declined',
+        title: 'Challenge Declined',
+        message: `${declinerName} declined your challenge.`,
+        wager_id: wagerId as string,
+    }]);
+    return respond({ success: true });
+}
+
 async function tryCreateLichessGame(
     supabase: Supabase, wagerId: string, wager: Record<string, unknown>,
 ): Promise<{ lichess_game_id?: string; lichess_url_white?: string; lichess_url_black?: string }> {

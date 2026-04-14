@@ -523,3 +523,16 @@ export function useFinalizeVote() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
   });
 }
+export function useDeclineChallenge() {
+  const queryClient = useQueryClient();
+  const { getSessionToken } = useWalletAuth();
+
+  return useMutation({
+    mutationFn: async ({ wagerId }: { wagerId: string }) => {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) throw new Error('Wallet verification required.');
+      return invokeSecureWager<{ success: boolean }>({ action: 'declineChallenge', wagerId }, sessionToken);
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+  });
+}
