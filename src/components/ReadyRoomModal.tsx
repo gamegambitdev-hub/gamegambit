@@ -1,5 +1,5 @@
 /**
- * ReadyRoomModal.tsx (v9)
+ * ReadyRoomModal.tsx (v11)
  *
  * Fix: removed top-level useWagerChat call that was creating a duplicate
  * Supabase realtime channel (wager-chat:${wagerId}) alongside the one
@@ -226,11 +226,47 @@ export function ReadyRoomModal({
   const runDepositFlow = useCallback(async () => {
     const w = wagerRef.current;
     if (!w || txState === 'signing') return;
+
+    // ── ENTRY DIAGNOSTIC ──────────────────────────────────────────────────────
+    // Log the wager snapshot we are about to act on. If stake_sol is tiny
+    // (< 0.001) here, the bug is in how `wager` prop is passed/cached upstream
+    // — look for the [GameEvent] ⚠️ RESCUED log in GameEventContext for the
+    // frame where stake_lamports was zeroed out by a partial Realtime payload.
+    console.log('[ReadyRoom] runDepositFlow triggered', {
+      wagerId: w.id,
+      matchId: w.match_id,
+      stake_lamports: w.stake_lamports,
+      stake_sol: w.stake_lamports / 1_000_000_000,
+      status: w.status,
+      isPlayerA,
+      isPlayerB,
+      txState,
+      depositConfirmedRef: depositConfirmedRef.current,
+    });
+
+    if (!w.stake_lamports || w.stake_lamports < 1_000) {
+      // Catch the corrupt-value case right here with a user-friendly message
+      // instead of sending 0.000008 SOL to the chain.
+      console.error('[ReadyRoom] ❌ CORRUPTED stake_lamports detected before deposit:', w.stake_lamports);
+      setTxState('error');
+      setErrorMessage(
+        `Stake amount looks wrong (${w.stake_lamports / 1_000_000_000} SOL). ` +
+        `This is a data sync issue — please close the Ready Room and reopen it. ` +
+        `Your funds are safe and nothing has been sent on-chain.`
+      );
+      return;
+    }
+
     setErrorMessage(null);
     setTxState('signing');
     try {
       if (!depositConfirmedRef.current) {
         if (isPlayerA) {
+          console.log('[ReadyRoom] PlayerA about to createWager', {
+            wagerId: w.id,
+            stake_lamports: w.stake_lamports,
+            stake_sol: w.stake_lamports / 1_000_000_000,
+          });
           await createWagerOnChain.mutateAsync({
             matchId: w.match_id,
             stakeLamports: w.stake_lamports,
@@ -250,17 +286,44 @@ export function ReadyRoomModal({
           const [wagerPda] = deriveWagerPda(playerAPubkey, BigInt(w.match_id));
           while (true) {
             const pdaBalance = await connection.getBalance(wagerPda);
+            const elapsedMs = Date.now() - pollStart;
+            console.log('[ReadyRoom] PlayerB polling PDA balance —', {
+              pdaBalance,
+              pdaBalance_sol: pdaBalance / 1_000_000_000,
+              required: w.stake_lamports,
+              required_sol: w.stake_lamports / 1_000_000_000,
+              elapsedMs,
+              wagerRef_stake_lamports: wagerRef.current?.stake_lamports,
+            });
             if (pdaBalance >= w.stake_lamports) break;
-            if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+            if (elapsedMs > POLL_TIMEOUT_MS) {
               throw new Error('Timed out waiting for challenger to deposit. Please retry.');
             }
             await new Promise(res => setTimeout(res, POLL_INTERVAL_MS));
           }
+          // Re-read from wagerRef in case a Realtime update landed during the poll.
+          // IMPORTANT: only take identity fields (wallet, matchId, wagerId) from freshW.
+          // stake_lamports must come from the original snapshot `w` unless freshW has a
+          // valid value — a partial Realtime UPDATE (e.g. ready_player_b changing) can
+          // zero out stake_lamports in the cache, causing a dust deposit of ~0.00008 SOL.
+          const freshW = wagerRef.current!;
+          const stakeToUse =
+            freshW.stake_lamports && freshW.stake_lamports >= 1_000
+              ? freshW.stake_lamports
+              : w.stake_lamports;
+
+          console.log('[ReadyRoom] PlayerB about to joinWager', {
+            wagerId: freshW.id,
+            freshW_stake_lamports: freshW.stake_lamports,
+            original_stake_lamports: w.stake_lamports,
+            stakeToUse,
+            stakeToUse_sol: stakeToUse / 1_000_000_000,
+          });
           await joinWagerOnChain.mutateAsync({
-            playerAWallet: w.player_a_wallet,
-            matchId: w.match_id,
-            stakeLamports: w.stake_lamports,
-            wagerId: w.id,
+            playerAWallet: freshW.player_a_wallet,
+            matchId: freshW.match_id,
+            stakeLamports: stakeToUse,
+            wagerId: freshW.id,
           });
         }
         depositConfirmedRef.current = true;

@@ -234,10 +234,15 @@ export function useWagerById(wagerId: string | null) {
       return data as Wager;
     },
     enabled: !!wagerId,
-    // refetchInterval removed: GameEventContext writes directly into
-    // ['wagers', wagerId] on every Realtime event, making 2s polling
-    // redundant — it was generating ~5 queries/second with 10 concurrent
-    // users each having a modal open.
+    // staleTime: 0 — always re-fetch from DB when the modal mounts or the
+    // wagerId changes. This guarantees stake_lamports is correct even if
+    // GameEventContext hasn't written a Realtime event yet (race on first open).
+    staleTime: 0,
+    // refetchInterval: poll every 8s as a backstop for missed Realtime events.
+    // GameEventContext Realtime updates are the primary mechanism — this is
+    // just insurance. 8s is low enough to catch a missed event quickly but
+    // won't generate the thundering-herd that 2s polling did (5 req/s × users).
+    refetchInterval: 8_000,
   });
 }
 
@@ -503,6 +508,7 @@ export function useRetractVote() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
   });
 }
+
 // Called by VotingModal after the 15s retractable window expires.
 // Resolves the wager on-chain. Server guards against double-fire.
 export function useFinalizeVote() {
@@ -523,6 +529,7 @@ export function useFinalizeVote() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
   });
 }
+
 export function useDeclineChallenge() {
   const queryClient = useQueryClient();
   const { getSessionToken } = useWalletAuth();

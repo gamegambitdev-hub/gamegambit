@@ -205,11 +205,17 @@ export function WinShareCard({
 
     useEffect(() => {
         if (!open) return
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        drawWinCard(ctx, game, amountSol, opponentUsername, winnerUsername, inviteCode)
+        // Defer draw until after the Radix Dialog portal has mounted into the DOM.
+        // Without this, canvasRef.current is null when the effect fires because
+        // DialogContent renders via a portal that is injected asynchronously.
+        const raf = requestAnimationFrame(() => {
+            const canvas = canvasRef.current
+            if (!canvas) return
+            const ctx = canvas.getContext('2d')
+            if (!ctx) return
+            drawWinCard(ctx, game, amountSol, opponentUsername, winnerUsername, inviteCode)
+        })
+        return () => cancelAnimationFrame(raf)
     }, [open, game, amountSol, opponentUsername, winnerUsername, inviteCode])
 
     const getBlob = useCallback((): Promise<Blob | null> => {
@@ -412,11 +418,17 @@ export function AirdropShareCard({
 
     useEffect(() => {
         if (!open) return
-        const canvas = canvasRef.current
-        if (!canvas) return
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        drawAirdropCard(ctx, username, totalWagered, wins, referrals, inviteCode)
+        // Defer draw until after the Radix Dialog portal has mounted into the DOM.
+        // Without this, canvasRef.current is null when the effect fires because
+        // DialogContent renders via a portal that is injected asynchronously.
+        const raf = requestAnimationFrame(() => {
+            const canvas = canvasRef.current
+            if (!canvas) return
+            const ctx = canvas.getContext('2d')
+            if (!ctx) return
+            drawAirdropCard(ctx, username, totalWagered, wins, referrals, inviteCode)
+        })
+        return () => cancelAnimationFrame(raf)
     }, [open, username, totalWagered, wins, referrals, inviteCode])
 
     const getBlob = useCallback((): Promise<Blob | null> => {

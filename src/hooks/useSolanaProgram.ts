@@ -1,10 +1,34 @@
 /**
  * useSolanaProgram.ts
  *
- * Mobile fix:
+ * Phase 1 fix: recordOnChainCreate and recordOnChainJoin now throw on failure
+ * instead of silently console.warn-ing. If the DB flag (deposit_player_a /
+ * deposit_player_b) is never set, Player B's poll in ReadyRoomModal will wait
+ * indefinitely rather than proceeding with a wrong or missing deposit.
+ *
+ * Mobile fix (carried forward):
  *  - Always use sendTransaction — Mobile Wallet Adapter handles opening Phantom
  *    and signing internally. Calling signTransaction separately breaks it.
  *  - signTransaction has been removed from sendAndConfirmViaAdapter entirely.
+ *
+ * Instruction fix:
+ *  - create_wager now only encodes matchId + stakeAmount (2 args).
+ *    The old hook was also encoding lichessGameId (string) and requiresModerator
+ *    (bool), which corrupted the stake_lamports field the contract reads —
+ *    it was reading the string length prefix as the lamport amount (~8), so
+ *    Phantom showed 0.000008 SOL instead of 1 SOL.
+ *    lichessGameId / requiresModerator are still accepted as params because
+ *    recordOnChainCreate forwards them to the edge function for Supabase.
+ *
+ * DEBUG LOGGING ADDED:
+ *  - Every mutationFn logs its received args immediately on entry so you can
+ *    confirm whether stake_lamports arrives correctly or has already been
+ *    corrupted upstream (e.g. by a partial Supabase Realtime cache write).
+ *  - buildInstructionData logs the BigInt values it encodes into the tx.
+ *  - sendAndConfirmViaAdapter logs the full tx lifecycle.
+ *  - The "STAKE SANITY CHECK" guard throws early with a clear message if
+ *    stake_lamports arrives as 0 or suspiciously small (< 1000 lamports),
+ *    preventing a near-zero deposit from hitting the chain silently.
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -48,6 +72,19 @@ function buildInstructionData(
   discriminator: readonly number[],
   ...args: (bigint | boolean | string | PublicKey)[]
 ): Buffer {
+  // Log what we're encoding so we can verify stake amounts at the tx-build step
+  if (args.length > 0) {
+    console.log('[buildInstructionData] encoding args:', args.map((a) =>
+      typeof a === 'bigint'
+        ? { type: 'bigint', value: a.toString(), asSol: Number(a) / LAMPORTS_PER_SOL }
+        : typeof a === 'boolean'
+          ? { type: 'bool', value: a }
+          : typeof a === 'string'
+            ? { type: 'string', value: a }
+            : { type: 'PublicKey', value: (a as PublicKey).toBase58() }
+    ));
+  }
+
   const parts: Uint8Array[] = [new Uint8Array(discriminator as number[])];
 
   for (const arg of args) {
@@ -121,6 +158,7 @@ async function sendAndConfirmViaAdapter(
   connection: any,
 ): Promise<string> {
   const ixs = Array.isArray(instructions) ? instructions : [instructions];
+  console.log('[sendAndConfirmViaAdapter] fetching latest blockhash…');
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
   const tx = new Transaction();
@@ -128,15 +166,21 @@ async function sendAndConfirmViaAdapter(
   tx.recentBlockhash = blockhash;
   tx.feePayer = payer;
 
+  console.log('[sendAndConfirmViaAdapter] sending tx, payer:', payer.toBase58(), 'blockhash:', blockhash);
+
   const signature = await sendTransaction(tx, connection, {
     skipPreflight: true,
     preflightCommitment: 'confirmed',
   });
 
+  console.log('[sendAndConfirmViaAdapter] tx sent, signature:', signature, '— confirming…');
+
   await connection.confirmTransaction(
     { signature, blockhash, lastValidBlockHeight },
     'confirmed'
   );
+
+  console.log('[sendAndConfirmViaAdapter] ✅ confirmed:', signature);
   return signature;
 }
 
@@ -151,9 +195,13 @@ async function ensurePlayerProfileExists(
 
   let existing = null;
   try { existing = await connection.getAccountInfo(profilePda); } catch { /* ok */ }
-  if (existing) return;
+  if (existing) {
+    console.log('[ensurePlayerProfile] profile already exists, skipping init');
+    return;
+  }
 
   toast.info('Creating your on-chain profile (one-time setup)…');
+  console.log('[ensurePlayerProfile] profile not found — creating for', player.toBase58());
 
   const ix = new TransactionInstruction({
     programId: new PublicKey(PROGRAM_ID),
@@ -242,13 +290,38 @@ export function useCreateWagerOnChain() {
       requiresModerator?: boolean;
       wagerId: string;
     }) => {
+      // ── ENTRY LOGGING ──────────────────────────────────────────────────────
+      console.log('[createWager] ▶ mutationFn ENTRY', {
+        wagerId,
+        matchId,
+        stakeLamports,
+        stake_sol: stakeLamports / LAMPORTS_PER_SOL,
+        lichessGameId,
+        requiresModerator,
+        wallet: publicKey?.toBase58() ?? 'NOT CONNECTED',
+      });
+
       if (!publicKey || !sendTransaction) throw new Error('Wallet not connected');
+
+      // ── STAKE SANITY CHECK ─────────────────────────────────────────────────
+      if (!stakeLamports || stakeLamports < 1_000) {
+        const msg = `[createWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). This is almost certainly a corrupted value. Aborting to prevent a dust deposit.`;
+        console.error(msg);
+        throw new Error(
+          `Invalid stake amount (${stakeLamports / LAMPORTS_PER_SOL} SOL). Please close and reopen the Ready Room — this is a data sync issue, not a wallet problem.`
+        );
+      }
 
       const matchIdBigInt = BigInt(matchId);
       const stakeAmount = BigInt(stakeLamports);
 
       const [wagerPda] = deriveWagerPda(publicKey, matchIdBigInt);
       const [playerProfilePda] = derivePlayerProfilePda(publicKey);
+
+      console.log('[createWager] PDAs derived', {
+        wagerPda: wagerPda.toBase58(),
+        playerProfilePda: playerProfilePda.toBase58(),
+      });
 
       let existingPda = null;
       try { existingPda = await connection.getAccountInfo(wagerPda); } catch { /* ok */ }
@@ -261,6 +334,13 @@ export function useCreateWagerOnChain() {
       } else {
         await ensurePlayerProfileExists(publicKey, sendTransaction, connection);
 
+        // ── CRITICAL FIX ───────────────────────────────────────────────────
+        // The new contract's create_wager takes ONLY (match_id: u64, stake_lamports: u64).
+        // Do NOT pass lichessGameId or requiresModerator here — they are not
+        // in the contract and would corrupt the instruction data, causing the
+        // contract to misread the string length prefix as the stake amount
+        // (e.g. 8 bytes → 0.000008 SOL shown in Phantom).
+        // lichessGameId / requiresModerator go to Supabase via recordOnChainCreate below.
         const createIx = new TransactionInstruction({
           programId: new PublicKey(PROGRAM_ID),
           keys: [
@@ -273,39 +353,47 @@ export function useCreateWagerOnChain() {
             INSTRUCTION_DISCRIMINATORS.create_wager,
             matchIdBigInt,
             stakeAmount,
-            lichessGameId,
-            requiresModerator
+            // ← NO lichessGameId, NO requiresModerator
           ),
         });
 
+        console.log('[createWager] sending create_wager tx with stake:', stakeAmount.toString(), 'lamports');
         signature = await sendAndConfirmViaAdapter(
           createIx, publicKey, sendTransaction, connection
         );
       }
 
+      // recordOnChainCreate MUST succeed — it sets deposit_player_a in the DB,
+      // which is the flag Player B polls before firing join_wager. If it fails
+      // we throw so the tx state goes to error rather than silently proceeding
+      // and leaving Player B stuck waiting or joining with a wrong balance.
       const token = await getSessionToken();
-      console.log('[debug] session token:', token ? 'ok' : 'NULL — skipping recordOnChain');
-      if (token) {
-        try {
-          const supabase = getSupabaseClient();
-          const { error } = await supabase.functions.invoke('secure-wager', {
-            body: {
-              action: 'recordOnChainCreate',
-              wagerId,
-              playerAWallet: publicKey.toBase58(),
-              matchId,
-              stakeLamports,
-              wagerPda: wagerPda.toBase58(),
-              txSignature: signature,
-            },
-            headers: { 'X-Session-Token': token },
-          });
-          if (error) console.warn('[createWager] recordOnChainCreate failed:', error.message);
-        } catch (dbErr) {
-          console.warn('[createWager] recordOnChainCreate threw:', dbErr);
-        }
+      console.log('[createWager] session token:', token ? 'ok' : 'NULL');
+      if (!token) {
+        throw new Error('Session expired — please reconnect your wallet and try again.');
       }
 
+      console.log('[createWager] calling recordOnChainCreate', { wagerId, stakeLamports, matchId });
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.functions.invoke('secure-wager', {
+        body: {
+          action: 'recordOnChainCreate',
+          wagerId,
+          playerAWallet: publicKey.toBase58(),
+          matchId,
+          stakeLamports,
+          wagerPda: wagerPda.toBase58(),
+          txSignature: signature,
+        },
+        headers: { 'X-Session-Token': token },
+      });
+
+      if (error) {
+        console.error('[createWager] recordOnChainCreate failed:', error);
+        throw new Error(`Failed to record deposit: ${error.message}`);
+      }
+
+      console.log('[createWager] ✅ complete', { signature, stakeLamports });
       return { signature, wagerPda: wagerPda.toBase58(), matchId, stakeLamports };
     },
     onSuccess: (data) => {
@@ -315,7 +403,7 @@ export function useCreateWagerOnChain() {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
     onError: (error: Error) => {
-      console.error('[createWager]', normalizeSolanaError(error));
+      console.error('[createWager] onError:', normalizeSolanaError(error));
     },
   });
 }
@@ -340,7 +428,26 @@ export function useJoinWagerOnChain() {
       stakeLamports: number;
       wagerId: string;
     }) => {
+      // ── ENTRY LOGGING ──────────────────────────────────────────────────────
+      console.log('[joinWager] ▶ mutationFn ENTRY', {
+        wagerId,
+        matchId,
+        stakeLamports,
+        stake_sol: stakeLamports / LAMPORTS_PER_SOL,
+        playerAWallet,
+        wallet: publicKey?.toBase58() ?? 'NOT CONNECTED',
+      });
+
       if (!publicKey || !sendTransaction) throw new Error('Wallet not connected');
+
+      // ── STAKE SANITY CHECK ─────────────────────────────────────────────────
+      if (!stakeLamports || stakeLamports < 1_000) {
+        const msg = `[joinWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). Aborting to prevent a dust deposit.`;
+        console.error(msg);
+        throw new Error(
+          `Invalid stake amount (${stakeLamports / LAMPORTS_PER_SOL} SOL). Please close and reopen the Ready Room — this is a data sync issue, not a wallet problem.`
+        );
+      }
 
       const playerA = new PublicKey(playerAWallet);
       const matchIdBigInt = BigInt(matchId);
@@ -349,8 +456,14 @@ export function useJoinWagerOnChain() {
       const [wagerPda] = deriveWagerPda(playerA, matchIdBigInt);
       const [playerBProfilePda] = derivePlayerProfilePda(publicKey);
 
+      console.log('[joinWager] PDAs derived', {
+        wagerPda: wagerPda.toBase58(),
+        playerBProfilePda: playerBProfilePda.toBase58(),
+      });
+
       let pdaBalance = 0;
       try { pdaBalance = await connection.getBalance(wagerPda); } catch { /* ok */ }
+      console.log('[joinWager] current PDA balance:', pdaBalance, 'lamports —', pdaBalance / LAMPORTS_PER_SOL, 'SOL');
 
       let signature: string;
 
@@ -371,6 +484,8 @@ export function useJoinWagerOnChain() {
           data: buildInstructionData(INSTRUCTION_DISCRIMINATORS.join_wager, stakeAmount),
         });
 
+        console.log('[joinWager] sending join_wager tx with stake:', stakeAmount.toString(), 'lamports');
+
         try {
           signature = await sendAndConfirmViaAdapter(
             joinIx, publicKey, sendTransaction, connection
@@ -378,6 +493,7 @@ export function useJoinWagerOnChain() {
         } catch (err: unknown) {
           const normalized = normalizeSolanaError(err);
           if (normalized === 'already_deposited') {
+            console.log('[joinWager] already_deposited error — treating as success');
             signature = 'already_deposited';
           } else {
             throw err;
@@ -385,28 +501,34 @@ export function useJoinWagerOnChain() {
         }
       }
 
+      // recordOnChainJoin MUST succeed — it sets deposit_player_b and transitions
+      // the wager to 'voting'. Throwing here surfaces the error to the user
+      // rather than silently leaving the wager in a broken state.
       const token = await getSessionToken();
-      console.log('[debug] session token:', token ? 'ok' : 'NULL — skipping recordOnChain');
-
-      if (token) {
-        try {
-          const supabase = getSupabaseClient();
-          const { error } = await supabase.functions.invoke('secure-wager', {
-            body: {
-              action: 'recordOnChainJoin',
-              wagerId,
-              playerBWallet: publicKey.toBase58(),
-              stakeLamports,
-              txSignature: signature,
-            },
-            headers: { 'X-Session-Token': token },
-          });
-          if (error) console.warn('[joinWager] recordOnChainJoin failed:', error.message);
-        } catch (dbErr) {
-          console.warn('[joinWager] recordOnChainJoin threw:', dbErr);
-        }
+      console.log('[joinWager] session token:', token ? 'ok' : 'NULL');
+      if (!token) {
+        throw new Error('Session expired — please reconnect your wallet and try again.');
       }
 
+      console.log('[joinWager] calling recordOnChainJoin', { wagerId, stakeLamports });
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.functions.invoke('secure-wager', {
+        body: {
+          action: 'recordOnChainJoin',
+          wagerId,
+          playerBWallet: publicKey.toBase58(),
+          stakeLamports,
+          txSignature: signature,
+        },
+        headers: { 'X-Session-Token': token },
+      });
+
+      if (error) {
+        console.error('[joinWager] recordOnChainJoin failed:', error);
+        throw new Error(`Failed to record deposit: ${error.message}`);
+      }
+
+      console.log('[joinWager] ✅ complete', { signature, wagerId });
       return { signature, wagerId };
     },
     onSuccess: () => {
@@ -416,12 +538,15 @@ export function useJoinWagerOnChain() {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
     onError: (error: Error) => {
-      console.error('[joinWager]', normalizeSolanaError(error));
+      console.error('[joinWager] onError:', normalizeSolanaError(error));
     },
   });
 }
 
 // ── 4. Submit vote ────────────────────────────────────────────────────────────
+// NOTE: The new contract has no submit_vote instruction — voting is handled
+// entirely off-chain via Supabase (useSubmitGameVote in useWagers.ts).
+// This hook is kept only as a fallback stub. Do NOT call it from VotingModal.
 
 export function useSubmitVoteOnChain() {
   const { publicKey, sendTransaction } = useWallet();
@@ -471,6 +596,8 @@ export function useSubmitVoteOnChain() {
 }
 
 // ── 5. Retract vote ───────────────────────────────────────────────────────────
+// NOTE: Same as submit_vote — no on-chain retract in the new contract.
+// Retraction is handled via useRetractVote in useWagers.ts (Supabase).
 
 export function useRetractVoteOnChain() {
   const { publicKey, sendTransaction } = useWallet();
