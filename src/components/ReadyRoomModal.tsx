@@ -23,7 +23,9 @@ import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WagerChat } from '@/components/WagerChat';
-import { useCreateWagerOnChain, useJoinWagerOnChain, normalizeSolanaError } from '@/hooks/useSolanaProgram';
+import { useCreateWagerOnChain, useJoinWagerOnChain, normalizeSolanaError, deriveWagerPda } from '@/hooks/useSolanaProgram';
+import { useConnection } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
 import { toast } from 'sonner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -120,6 +122,7 @@ export function ReadyRoomModal({
   const hasTriggeredTx = useRef(false);
   const depositConfirmedRef = useRef(false);
 
+  const { connection } = useConnection();
   const createWagerOnChain = useCreateWagerOnChain();
   const joinWagerOnChain = useJoinWagerOnChain();
   const cancelWagerMutation = useCancelWager();
@@ -243,7 +246,11 @@ export function ReadyRoomModal({
           const POLL_INTERVAL_MS = 2000;
           const POLL_TIMEOUT_MS = 120_000; // 2 min max wait
           const pollStart = Date.now();
-          while (!(wagerRef.current as any)?.deposit_player_a) {
+          const playerAPubkey = new PublicKey(w.player_a_wallet);
+          const [wagerPda] = deriveWagerPda(playerAPubkey, BigInt(w.match_id));
+          while (true) {
+            const pdaBalance = await connection.getBalance(wagerPda);
+            if (pdaBalance >= w.stake_lamports) break;
             if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
               throw new Error('Timed out waiting for challenger to deposit. Please retry.');
             }
@@ -584,7 +591,7 @@ export function ReadyRoomModal({
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   <p className="text-sm text-muted-foreground">Waiting for on-chain confirmation…</p>
                   <p className="text-xs text-muted-foreground">
-                    {isPlayerB && !(wagerRef.current as any)?.deposit_player_a
+                    {isPlayerB
                       ? `Waiting for ${playerA?.username ?? (wager.player_a_wallet.slice(0, 6) + '…')} to deposit their stake first…`
                       : 'Your SOL is being deposited into the escrow contract.'
                     }
