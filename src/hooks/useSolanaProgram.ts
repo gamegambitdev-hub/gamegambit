@@ -54,6 +54,7 @@ import {
   TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  ComputeBudgetProgram,
 } from '@solana/web3.js';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWalletAuth } from './useWalletAuth';
@@ -176,7 +177,15 @@ async function sendAndConfirmViaAdapter(
   console.log('[sendAndConfirmViaAdapter] fetching latest blockhash…');
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
+  // Phase 2 fix: prepend ComputeBudget instructions so Phantom's independent
+  // simulation has a priority fee signal — this makes simulation reliable and
+  // ensures Phantom shows the correct SOL amount (1 SOL) rather than falling
+  // back to the bare network fee (~0.00008 SOL) when simulation fails.
+  const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 });
+  const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 50_000 });
+
   const tx = new Transaction();
+  tx.add(priorityFeeIx, computeLimitIx);
   ixs.forEach(ix => tx.add(ix));
   tx.recentBlockhash = blockhash;
   tx.feePayer = payer;

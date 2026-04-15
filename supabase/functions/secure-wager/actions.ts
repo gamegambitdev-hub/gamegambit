@@ -29,13 +29,59 @@ import {
     loadAuthorityKeypair,
     deriveWagerPda,
     buildCloseWagerIx,
-    resolveOnChain,
     sendAndConfirm,
 } from "./solana.ts";
 import { getDisplayName, insertNotifications } from "./notifications.ts";
 
 // deno-lint-ignore no-explicit-any
 declare const EdgeRuntime: { waitUntil(promise: Promise<any>): void };
+
+// ── dispatchResolveOnChain ────────────────────────────────────────────────────
+// Delegates on-chain resolution to the resolve-wager edge function instead of
+// calling resolveOnChain() inline. This avoids the HTTP 546 CPU time limit:
+// resolve-wager has its own isolated CPU budget and imports @solana/web3.js at
+// the top level (no cold-start penalty). Always fire inside EdgeRuntime.waitUntil().
+
+async function dispatchResolveOnChain(
+    wager: Record<string, unknown>,
+    winnerWallet: string | null,
+    resultType: 'playerA' | 'playerB' | 'draw',
+    moderatorWallet?: string,
+): Promise<void> {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+    const action = resultType === 'draw' ? 'refund_draw' : 'resolve_wager';
+
+    const body: Record<string, unknown> = {
+        action,
+        wagerId: wager.id,
+        matchId: wager.match_id,
+        playerAWallet: wager.player_a_wallet,
+        playerBWallet: wager.player_b_wallet,
+        stakeLamports: wager.stake_lamports,
+    };
+
+    if (resultType !== 'draw') {
+        body.winnerWallet = winnerWallet;
+        if (moderatorWallet) body.moderatorWallet = moderatorWallet;
+    }
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify(body),
+    });
+
+    const result = await res.json();
+    if (!result.success) {
+        throw new Error(`resolve-wager returned failure: ${JSON.stringify(result)}`);
+    }
+    console.log(`[actions] dispatchResolveOnChain success: txSig=${result.txSignature}`);
+}
 
 // Inline fee helper — calculatePlatformFee is not exported from solana.ts
 function calculatePlatformFee(stakeLamports: number): number {
@@ -446,14 +492,13 @@ export async function handleCheckGameComplete(supabase: Supabase, _walletAddress
             ]);
         }
 
-        // FIX: resolveOnChain can take 5–30 s waiting for devnet tx confirmation,
-        // which exceeds the Supabase Edge Runtime CPU budget and causes a
-        // "CPU Time exceeded" shutdown. Wrap in EdgeRuntime.waitUntil() so the
-        // HTTP response returns immediately while the tx settles in the background.
+        // FIX: Dispatch to resolve-wager edge function instead of calling resolveOnChain()
+        // inline. resolve-wager has its own CPU budget and no cold-start penalty,
+        // so it never hits the HTTP 546 CPU time limit that plagued the inline approach.
         EdgeRuntime.waitUntil(
-            resolveOnChain(supabase, wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw')
-                .then((txSig) => console.log(`[actions] checkGameComplete resolveOnChain settled: ${txSig ?? 'null'}`))
-                .catch((err: unknown) => console.error('[actions] checkGameComplete resolveOnChain background error:', err instanceof Error ? err.message : String(err)))
+            dispatchResolveOnChain(wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw')
+                .then(() => console.log('[actions] checkGameComplete dispatchResolveOnChain settled'))
+                .catch((err: unknown) => console.error('[actions] checkGameComplete dispatchResolveOnChain error:', err instanceof Error ? err.message : String(err)))
         );
 
         return respond({
@@ -849,11 +894,11 @@ export async function handleConcedeDispute(supabase: Supabase, walletAddress: st
         });
     } catch { /* non-critical */ }
 
-    // FIX: use waitUntil so CPU time budget is not blown waiting for tx confirmation
+    // FIX: Dispatch to resolve-wager edge function instead of calling resolveOnChain() inline.
     EdgeRuntime.waitUntil(
-        resolveOnChain(supabase, wager, winnerWallet, resultType)
-            .then((txSig) => console.log(`[actions] concedeDispute resolveOnChain settled: ${txSig ?? 'null'}`))
-            .catch((err: unknown) => console.error('[actions] concedeDispute resolveOnChain background error:', err instanceof Error ? err.message : String(err)))
+        dispatchResolveOnChain(wager, winnerWallet, resultType)
+            .then(() => console.log('[actions] concedeDispute dispatchResolveOnChain settled'))
+            .catch((err: unknown) => console.error('[actions] concedeDispute dispatchResolveOnChain error:', err instanceof Error ? err.message : String(err)))
     );
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
@@ -907,11 +952,11 @@ export async function handleFinalizeVote(supabase: Supabase, walletAddress: stri
         ]);
     }
 
-    // FIX: use waitUntil so CPU time budget is not blown waiting for tx confirmation
+    // FIX: Dispatch to resolve-wager edge function instead of calling resolveOnChain() inline.
     EdgeRuntime.waitUntil(
-        resolveOnChain(supabase, wager, winnerWallet, resultType)
-            .then((txSig) => console.log(`[actions] finalizeVote resolveOnChain settled: ${txSig ?? 'null'}`))
-            .catch((err: unknown) => console.error('[actions] finalizeVote resolveOnChain background error:', err instanceof Error ? err.message : String(err)))
+        dispatchResolveOnChain(wager, winnerWallet, resultType)
+            .then(() => console.log('[actions] finalizeVote dispatchResolveOnChain settled'))
+            .catch((err: unknown) => console.error('[actions] finalizeVote dispatchResolveOnChain error:', err instanceof Error ? err.message : String(err)))
     );
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
