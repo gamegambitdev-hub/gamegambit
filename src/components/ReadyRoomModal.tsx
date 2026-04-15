@@ -1,7 +1,30 @@
 /**
- * ReadyRoomModal.tsx (v11)
+ * ReadyRoomModal.tsx (v12)
  *
- * Fix: removed top-level useWagerChat call that was creating a duplicate
+ * Fix (v12): Player B's "wait for Player A" poll now queries the DB
+ * `deposit_player_a` flag instead of polling on-chain PDA balance.
+ *
+ * WHY THE BALANCE POLL WAS BROKEN:
+ *   connection.getBalance(wagerPda) returns rent lamports (~1,400,000)
+ *   the moment create_wager initialises the PDA account — even before the
+ *   stake transfer CPI completes in some edge cases. This made
+ *   `pdaBalance >= w.stake_lamports` true immediately for small devnet stakes
+ *   (e.g. 0.001 SOL < 0.0014 SOL rent), causing Player B to fire join_wager
+ *   before Player A's deposit was actually confirmed. The on-chain join then
+ *   failed because the PDA's stake_lamports field was still 0.
+ *
+ *   Additionally, if `w.stake_lamports` arrived as 0 from a stale Realtime
+ *   cache snapshot, `pdaBalance >= 0` was always true — Player B would fire
+ *   join_wager instantly with a dust stake.
+ *
+ * THE FIX:
+ *   Poll `deposit_player_a` from Supabase (set by the secure-wager edge
+ *   function only after the on-chain tx is confirmed AND the DB is updated).
+ *   This is the single authoritative "Player A is done" signal — no race
+ *   conditions, no rent confusion, no dependence on stake_lamports being
+ *   correct in the Realtime cache.
+ *
+ * Fix (v11): removed top-level useWagerChat call that was creating a duplicate
  * Supabase realtime channel (wager-chat:${wagerId}) alongside the one
  * WagerChat creates internally. Duplicate channels cause one to be silently
  * dropped, breaking realtime message delivery.
@@ -23,9 +46,8 @@ import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WagerChat } from '@/components/WagerChat';
-import { useCreateWagerOnChain, useJoinWagerOnChain, normalizeSolanaError, deriveWagerPda } from '@/hooks/useSolanaProgram';
-import { useConnection } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
+import { useCreateWagerOnChain, useJoinWagerOnChain, normalizeSolanaError } from '@/hooks/useSolanaProgram';
+import { getSupabaseClient } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -122,7 +144,6 @@ export function ReadyRoomModal({
   const hasTriggeredTx = useRef(false);
   const depositConfirmedRef = useRef(false);
 
-  const { connection } = useConnection();
   const createWagerOnChain = useCreateWagerOnChain();
   const joinWagerOnChain = useJoinWagerOnChain();
   const cancelWagerMutation = useCancelWager();
@@ -275,27 +296,42 @@ export function ReadyRoomModal({
             wagerId: w.id,
           });
         } else if (isPlayerB) {
-          // Wait for Player A's deposit to land on-chain before joining.
-          // The join_wager instruction reads stake_lamports from the PDA that
-          // create_wager initialises. If that PDA doesn't exist yet, the program
-          // uses minimum rent (~0.00008 SOL) instead of the agreed amount.
+          // Wait for Player A's deposit to be confirmed before joining.
+          //
+          // We poll the DB `deposit_player_a` flag rather than the on-chain
+          // PDA balance. The secure-wager edge function sets this flag only
+          // after the on-chain tx is confirmed AND Supabase is updated — it
+          // is the single authoritative "Player A is done" signal.
+          //
+          // WHY NOT poll PDA balance:
+          //   connection.getBalance(wagerPda) returns rent lamports (~1,400,000)
+          //   the instant create_wager allocates the account. For small devnet
+          //   stakes (e.g. 0.001 SOL < 0.0014 SOL rent), `balance >= stake`
+          //   was immediately true even before the actual stake transfer landed,
+          //   causing join_wager to fire against an uninitialised PDA and fail.
+          //   If w.stake_lamports was 0 from a stale Realtime snapshot,
+          //   `balance >= 0` was always true — Player B fired instantly.
           const POLL_INTERVAL_MS = 2000;
           const POLL_TIMEOUT_MS = 120_000; // 2 min max wait
           const pollStart = Date.now();
-          const playerAPubkey = new PublicKey(w.player_a_wallet);
-          const [wagerPda] = deriveWagerPda(playerAPubkey, BigInt(w.match_id));
+          console.log('[ReadyRoom] PlayerB waiting for deposit_player_a DB flag…', {
+            wagerId: w.id,
+          });
           while (true) {
-            const pdaBalance = await connection.getBalance(wagerPda);
+            const supabase = getSupabaseClient();
+            const { data: freshWager, error: pollError } = await supabase
+              .from('wagers')
+              .select('deposit_player_a, stake_lamports')
+              .eq('id', w.id)
+              .single();
             const elapsedMs = Date.now() - pollStart;
-            console.log('[ReadyRoom] PlayerB polling PDA balance —', {
-              pdaBalance,
-              pdaBalance_sol: pdaBalance / 1_000_000_000,
-              required: w.stake_lamports,
-              required_sol: w.stake_lamports / 1_000_000_000,
+            console.log('[ReadyRoom] PlayerB deposit poll —', {
+              deposit_player_a: freshWager?.deposit_player_a,
+              stake_lamports: freshWager?.stake_lamports,
               elapsedMs,
-              wagerRef_stake_lamports: wagerRef.current?.stake_lamports,
+              pollError: pollError?.message ?? null,
             });
-            if (pdaBalance >= w.stake_lamports) break;
+            if (freshWager?.deposit_player_a) break;
             if (elapsedMs > POLL_TIMEOUT_MS) {
               throw new Error('Timed out waiting for challenger to deposit. Please retry.');
             }

@@ -334,6 +334,37 @@ export function useCreateWagerOnChain() {
       } else {
         await ensurePlayerProfileExists(publicKey, sendTransaction, connection);
 
+        // ── PROFILE CONFIRMATION POLL ──────────────────────────────────────
+        // ensurePlayerProfileExists uses skipPreflight + confirmTransaction, but
+        // on devnet the RPC read-replica can lag behind the write. If we proceed
+        // immediately, create_wager receives an account that doesn't exist yet
+        // from the validator's perspective → Anchor throws ConstraintSeeds /
+        // AccountNotInitialized → Phantom shows "reverted during simulation".
+        // Poll getAccountInfo with 'confirmed' commitment until the account is
+        // visible, with a short back-off between attempts.
+        {
+          const [profilePda] = derivePlayerProfilePda(publicKey);
+          let profileAccount = null;
+          for (let attempt = 0; attempt < 8; attempt++) {
+            try {
+              profileAccount = await connection.getAccountInfo(profilePda, 'confirmed');
+            } catch { /* ok — retry */ }
+            if (profileAccount) {
+              console.log(`[createWager] profile confirmed on-chain ✓ (attempt ${attempt + 1})`);
+              break;
+            }
+            console.warn(`[createWager] profile not visible yet, waiting… (attempt ${attempt + 1}/8)`);
+            await new Promise(r => setTimeout(r, 1500));
+          }
+          if (!profileAccount) {
+            throw new Error(
+              'Player profile not confirmed on-chain after retries. ' +
+              'Please wait a moment and tap Retry — your funds are safe.'
+            );
+          }
+        }
+        // ── END PROFILE CONFIRMATION POLL ─────────────────────────────────
+
         // ── CRITICAL FIX ───────────────────────────────────────────────────
         // The new contract's create_wager takes ONLY (match_id: u64, stake_lamports: u64).
         // Do NOT pass lichessGameId or requiresModerator here — they are not
@@ -356,6 +387,21 @@ export function useCreateWagerOnChain() {
             // ← NO lichessGameId, NO requiresModerator
           ),
         });
+
+        // ── DIAGNOSTIC: simulate before sending to get real Anchor error ──────
+        {
+          const simTx = new Transaction();
+          simTx.add(createIx);
+          simTx.feePayer = publicKey;
+          simTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          const simResult = await connection.simulateTransaction(simTx);
+          console.log('[createWager] SIMULATION RESULT:', JSON.stringify(simResult.value, null, 2));
+          if (simResult.value.err) {
+            console.error('[createWager] SIMULATION FAILED — err:', JSON.stringify(simResult.value.err));
+            console.error('[createWager] SIMULATION LOGS:', simResult.value.logs);
+          }
+        }
+        // ── END DIAGNOSTIC ────────────────────────────────────────────────────
 
         console.log('[createWager] sending create_wager tx with stake:', stakeAmount.toString(), 'lamports');
         signature = await sendAndConfirmViaAdapter(

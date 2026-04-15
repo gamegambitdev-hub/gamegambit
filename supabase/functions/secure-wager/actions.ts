@@ -16,6 +16,7 @@ import {
     buildCloseWagerIx,
     resolveOnChain,
     calculatePlatformFee,
+    sendAndConfirm,
 } from "./solana.ts";
 import { getDisplayName, insertNotifications } from "./notifications.ts";
 
@@ -461,7 +462,6 @@ export async function handleCancelWager(supabase: Supabase, walletAddress: strin
             const pdaBalance = await connection.getBalance(wagerPda);
             if (pdaBalance > 0) {
                 const ix = await buildCloseWagerIx(wagerPda, authority.publicKey, playerAPubkey, playerBPubkey);
-                const { sendAndConfirm } = await import("./solana.ts");
                 const txSig = await sendAndConfirm(connection, authority, ix);
                 console.log(`[actions] Cancel refund tx: ${txSig}`);
                 await supabase.from('wager_transactions').upsert([
