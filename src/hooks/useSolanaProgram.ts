@@ -6,6 +6,21 @@
  * deposit_player_b) is never set, Player B's poll in ReadyRoomModal will wait
  * indefinitely rather than proceeding with a wrong or missing deposit.
  *
+ * ROOT CAUSE FIX (this version):
+ *  Phantom uses its own internal RPC node to simulate transactions independently
+ *  of the dApp's configured RPC. When initialize_player was sent as a SEPARATE
+ *  prior transaction, Phantom's RPC often hadn't indexed the new player_a_profile
+ *  account yet (devnet RPC lag / different node). So when Phantom simulated
+ *  create_wager it failed with ConstraintSeeds on player_a_profile — showing the
+ *  red "Transaction reverted during simulation" warning — even though the dApp's
+ *  own simulateTransaction call succeeded moments before.
+ *
+ *  The fix: always include initialize_player as the FIRST instruction in the SAME
+ *  transaction as create_wager. The contract uses `init_if_needed` so it's
+ *  idempotent (safe if profile already exists). Phantom now simulates both
+ *  instructions atomically — profile is guaranteed to exist when create_wager runs,
+ *  regardless of Phantom's internal RPC state.
+ *
  * Mobile fix (carried forward):
  *  - Always use sendTransaction — Mobile Wallet Adapter handles opening Phantom
  *    and signing internally. Calling signTransaction separately breaks it.
@@ -332,46 +347,36 @@ export function useCreateWagerOnChain() {
         console.log('[createWager] PDA exists — skipping tx, notifying DB');
         signature = 'already_deposited';
       } else {
-        await ensurePlayerProfileExists(publicKey, sendTransaction, connection);
+        // ── ATOMIC BATCH: initialize_player + create_wager in ONE tx ──────────
+        //
+        // ROOT CAUSE OF PHANTOM "reverted during simulation":
+        // Phantom uses its own internal RPC node to simulate the transaction
+        // independently of the dApp's RPC. When initialize_player is sent as a
+        // SEPARATE prior transaction, Phantom's RPC may not have indexed that
+        // account yet (devnet RPC lag / different node), so when it simulates
+        // create_wager it fails with ConstraintSeeds / AccountNotInitialized on
+        // player_a_profile — and shows the red "reverted" warning.
+        //
+        // FIX: Always include initialize_player as the FIRST instruction in the
+        // SAME transaction as create_wager. The contract uses `init_if_needed`,
+        // so it's a no-op if the profile already exists — completely safe.
+        // Phantom simulates both instructions together as one atomic unit,
+        // so the profile is guaranteed to exist when create_wager runs,
+        // regardless of which RPC node Phantom uses.
 
-        // ── PROFILE CONFIRMATION POLL ──────────────────────────────────────
-        // ensurePlayerProfileExists uses skipPreflight + confirmTransaction, but
-        // on devnet the RPC read-replica can lag behind the write. If we proceed
-        // immediately, create_wager receives an account that doesn't exist yet
-        // from the validator's perspective → Anchor throws ConstraintSeeds /
-        // AccountNotInitialized → Phantom shows "reverted during simulation".
-        // Poll getAccountInfo with 'confirmed' commitment until the account is
-        // visible, with a short back-off between attempts.
-        {
-          const [profilePda] = derivePlayerProfilePda(publicKey);
-          let profileAccount = null;
-          for (let attempt = 0; attempt < 8; attempt++) {
-            try {
-              profileAccount = await connection.getAccountInfo(profilePda, 'confirmed');
-            } catch { /* ok — retry */ }
-            if (profileAccount) {
-              console.log(`[createWager] profile confirmed on-chain ✓ (attempt ${attempt + 1})`);
-              break;
-            }
-            console.warn(`[createWager] profile not visible yet, waiting… (attempt ${attempt + 1}/8)`);
-            await new Promise(r => setTimeout(r, 1500));
-          }
-          if (!profileAccount) {
-            throw new Error(
-              'Player profile not confirmed on-chain after retries. ' +
-              'Please wait a moment and tap Retry — your funds are safe.'
-            );
-          }
-        }
-        // ── END PROFILE CONFIRMATION POLL ─────────────────────────────────
+        const initProfileIx = new TransactionInstruction({
+          programId: new PublicKey(PROGRAM_ID),
+          keys: [
+            { pubkey: playerProfilePda, isSigner: false, isWritable: true },
+            { pubkey: publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          data: Buffer.from(INSTRUCTION_DISCRIMINATORS.initialize_player as number[]),
+        });
 
-        // ── CRITICAL FIX ───────────────────────────────────────────────────
-        // The new contract's create_wager takes ONLY (match_id: u64, stake_lamports: u64).
-        // Do NOT pass lichessGameId or requiresModerator here — they are not
-        // in the contract and would corrupt the instruction data, causing the
-        // contract to misread the string length prefix as the stake amount
-        // (e.g. 8 bytes → 0.000008 SOL shown in Phantom).
-        // lichessGameId / requiresModerator go to Supabase via recordOnChainCreate below.
+        // create_wager takes ONLY (match_id: u64, stake_lamports: u64).
+        // Do NOT pass lichessGameId or requiresModerator — they corrupt instruction
+        // data and cause the contract to misread stake_lamports.
         const createIx = new TransactionInstruction({
           programId: new PublicKey(PROGRAM_ID),
           keys: [
@@ -384,14 +389,13 @@ export function useCreateWagerOnChain() {
             INSTRUCTION_DISCRIMINATORS.create_wager,
             matchIdBigInt,
             stakeAmount,
-            // ← NO lichessGameId, NO requiresModerator
           ),
         });
 
-        // ── DIAGNOSTIC: simulate before sending to get real Anchor error ──────
+        // ── DIAGNOSTIC: simulate before sending to surface real Anchor errors ──
         {
           const simTx = new Transaction();
-          simTx.add(createIx);
+          simTx.add(initProfileIx, createIx);
           simTx.feePayer = publicKey;
           simTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
           const simResult = await connection.simulateTransaction(simTx);
@@ -399,13 +403,16 @@ export function useCreateWagerOnChain() {
           if (simResult.value.err) {
             console.error('[createWager] SIMULATION FAILED — err:', JSON.stringify(simResult.value.err));
             console.error('[createWager] SIMULATION LOGS:', simResult.value.logs);
+            throw new Error(
+              `Transaction simulation failed. Logs: ${(simResult.value.logs ?? []).join(' | ')}`
+            );
           }
         }
         // ── END DIAGNOSTIC ────────────────────────────────────────────────────
 
-        console.log('[createWager] sending create_wager tx with stake:', stakeAmount.toString(), 'lamports');
+        console.log('[createWager] sending batched init_profile + create_wager tx with stake:', stakeAmount.toString(), 'lamports');
         signature = await sendAndConfirmViaAdapter(
-          createIx, publicKey, sendTransaction, connection
+          [initProfileIx, createIx], publicKey, sendTransaction, connection
         );
       }
 

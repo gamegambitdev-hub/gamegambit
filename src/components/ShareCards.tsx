@@ -10,7 +10,7 @@ import { formatSol } from '@/lib/constants'
 
 const W = 1200
 const H = 630
-const BRAND = 'gamegambit.gg'
+const BRAND = 'thegamegambit.vercel.app'
 
 function roundRect(
     ctx: CanvasRenderingContext2D,
@@ -226,7 +226,7 @@ export function WinShareCard({
 
     const handleShareX = useCallback(() => {
         const sol = (amountSol / 1e9).toFixed(4)
-        const invite = inviteCode ? `\ngamegambit.gg/invite/${inviteCode}` : '\ngamegambit.gg'
+        const invite = inviteCode ? `\nthegamegambit.vercel.app/invite/${inviteCode}` : '\nthegamegambit.vercel.app'
         const text = `Beat my opponent for ${sol} SOL playing ${game} on @GameGambit. Who's next? 🏆${invite}`
         window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, '_blank')
     }, [amountSol, game, inviteCode])
@@ -438,7 +438,7 @@ export function AirdropShareCard({
     }, [])
 
     const handleShareX = useCallback(() => {
-        const invite = inviteCode ? `\ngamegambit.gg/invite/${inviteCode}` : '\ngamegambit.gg'
+        const invite = inviteCode ? `\nthegamegambit.vercel.app/invite/${inviteCode}` : '\nthegamegambit.vercel.app'
         const text = `I'm competing in the @GameGambit Airdrop Campaign! 🎮⚡\n${wins} wins · ${referrals} referrals${invite}`
         window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`, '_blank')
     }, [wins, referrals, inviteCode])

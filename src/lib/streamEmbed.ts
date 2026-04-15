@@ -23,7 +23,7 @@ export interface StreamEmbed {
  *
  * @example
  * getStreamEmbed('https://twitch.tv/shroud')
- * // → { embedUrl: 'https://player.twitch.tv/?channel=shroud&parent=gamegambit.gg&autoplay=false', platform: 'Twitch', id: 'shroud' }
+ * // → { embedUrl: 'https://player.twitch.tv/?channel=shroud&parent=thegamegambit.vercel.app&autoplay=false', platform: 'Twitch', id: 'shroud' }
  *
  * getStreamEmbed('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
  * // → { embedUrl: 'https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=0', platform: 'YouTube', id: 'dQw4w9WgXcQ' }

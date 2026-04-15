@@ -38,7 +38,7 @@ export async function generateMetadata(
 ): Promise<Metadata> {
     const { id } = await params
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://gamegambit.gg'
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://thegamegambit.vercel.app'
 
     try {
         const supabase = createClient(

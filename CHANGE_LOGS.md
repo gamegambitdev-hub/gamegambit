@@ -215,7 +215,7 @@ Next.js `ImageResponse` (edge runtime) generates a 1200×630 PNG per wager:
 - Player A vs Player B cards (winner gets crown + gold border on resolved wagers)
 - Each player stakes + total pot cards
 - Status badge
-- `gamegambit.gg` branding footer
+- `thegamegambit.vercel.app` branding footer
 
 **New File — `src/app/wager/[id]/layout.tsx`**
 Server component — `generateMetadata` function provides dynamic per-wager:

@@ -358,7 +358,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
                         padding: '0 56px 32px',
                     }}
                 >
-                    <span style={{ color: '#4b5563', fontSize: 16 }}>gamegambit.gg</span>
+                    <span style={{ color: '#4b5563', fontSize: 16 }}>thegamegambit.vercel.app</span>
                     <span style={{ color: '#4b5563', fontSize: 16 }}>Wager on skill. Win on-chain.</span>
                 </div>
             </div>

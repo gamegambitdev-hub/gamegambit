@@ -25,11 +25,11 @@ const MICRO_THRESHOLD = 500_000_000;    // 0.5 SOL in lamports
 const WHALE_THRESHOLD = 5_000_000_000;  // 5.0 SOL in lamports
 
 function calculatePlatformFee(stakeLamports: number): number {
-  let bps: number;
-  if (stakeLamports < MICRO_THRESHOLD)       bps = 1000;
-  else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
-  else                                        bps = 500;
-  return Math.floor((stakeLamports * 2 * bps) / 10_000);
+    let bps: number;
+    if (stakeLamports < MICRO_THRESHOLD) bps = 1000;
+    else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
+    else bps = 500;
+    return Math.floor((stakeLamports * 2 * bps) / 10_000);
 }
 
 const DISCRIMINATORS = {
@@ -49,6 +49,11 @@ async function getSolana() {
     }
     return _solana;
 }
+
+// Eagerly warm up the Solana module at boot time — same fix as secure-wager/solana.ts.
+// Prevents "event loop error: Cannot evaluate dynamically imported module" (HTTP 546)
+// which fires when the runtime shuts down a handler that triggered a lazy import.
+getSolana().catch(() => { /* warm-up best-effort */ });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

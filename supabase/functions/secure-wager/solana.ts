@@ -35,6 +35,16 @@ export async function getSolana() {
     return _solana;
 }
 
+// Eagerly warm up the Solana module at boot time so it is fully evaluated
+// before any request handler runs. Without this, the dynamic import() resolves
+// lazily inside a handler — and when the Edge Runtime shuts down the function
+// after returning a response, any sub-modules still evaluating are killed,
+// producing: "event loop error: Cannot evaluate dynamically imported module,
+// because JavaScript execution has been terminated." (observed as HTTP 546).
+// Kicking it off here (fire-and-forget is intentional — we don't block boot)
+// means the module is cached in _solana long before resolveOnChain is called.
+getSolana().catch(() => { /* warm-up best-effort */ });
+
 // ── Keypair + PDA ─────────────────────────────────────────────────────────────
 
 export async function loadAuthorityKeypair() {

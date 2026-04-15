@@ -54,7 +54,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<your_vapid_public_key>
 
 # OG image URL (used for dynamic per-wager og:image)
-NEXT_PUBLIC_APP_URL=https://gamegambit.gg
+NEXT_PUBLIC_APP_URL=https://thegamegambit.vercel.app
 
 # Optional — enables live PUBG username verification
 # Without this, PUBG binding falls back to manual confirmation

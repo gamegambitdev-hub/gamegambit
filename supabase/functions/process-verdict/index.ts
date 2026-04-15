@@ -41,29 +41,29 @@ const MODERATOR_FEE_SHARE = 0.30;
 const MOD_FEE_CAP_USD = 10;
 
 function calculatePlatformFee(stakeLamports: number): number {
-  let bps: number;
-  if (stakeLamports < MICRO_THRESHOLD)       bps = 1000;
-  else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
-  else                                        bps = 500;
-  return Math.floor((stakeLamports * 2 * bps) / 10_000);
+    let bps: number;
+    if (stakeLamports < MICRO_THRESHOLD) bps = 1000;
+    else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
+    else bps = 500;
+    return Math.floor((stakeLamports * 2 * bps) / 10_000);
 }
 
 async function getSolPriceUsd(): Promise<number> {
-  try {
-    const r = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
-    );
-    const d = await r.json();
-    return d.solana.usd as number;
-  } catch {
-    return 150;
-  }
+    try {
+        const r = await fetch(
+            'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+        );
+        const d = await r.json();
+        return d.solana.usd as number;
+    } catch {
+        return 150;
+    }
 }
 
 function calculateModFee(platformFeeLamports: number, solPriceUsd: number): number {
-  const feeUsd = (platformFeeLamports / 1_000_000_000) * solPriceUsd;
-  const modUsd = Math.min(feeUsd * MODERATOR_FEE_SHARE, MOD_FEE_CAP_USD);
-  return Math.floor((modUsd / solPriceUsd) * 1_000_000_000);
+    const feeUsd = (platformFeeLamports / 1_000_000_000) * solPriceUsd;
+    const modUsd = Math.min(feeUsd * MODERATOR_FEE_SHARE, MOD_FEE_CAP_USD);
+    return Math.floor((modUsd / solPriceUsd) * 1_000_000_000);
 }
 
 const DISCRIMINATORS = {
@@ -80,6 +80,11 @@ async function getSolana() {
     if (!_solana) _solana = await import("https://esm.sh/@solana/web3.js@1.98.0");
     return _solana;
 }
+
+// Eagerly warm up the Solana module at boot time — same fix as secure-wager/solana.ts.
+// Prevents "event loop error: Cannot evaluate dynamically imported module" (HTTP 546)
+// which fires when the runtime shuts down a handler that triggered a lazy import.
+getSolana().catch(() => { /* warm-up best-effort */ });
 
 async function loadAuthorityKeypair() {
     const { Keypair } = await getSolana();

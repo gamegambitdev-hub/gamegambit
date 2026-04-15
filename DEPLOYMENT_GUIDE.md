@@ -349,7 +349,7 @@ SUPABASE_SERVICE_ROLE_KEY=xxxxx
 NEXT_PUBLIC_SITE_URL=https://yourdomain.com
 
 # OG image base URL (used for dynamic per-wager og:image links — Task 11)
-NEXT_PUBLIC_APP_URL=https://gamegambit.gg — required for Next.js API route session validation
+NEXT_PUBLIC_APP_URL=https://thegamegambit.vercel.app — required for Next.js API route session validation
 # Must be the same JSON byte array as AUTHORITY_WALLET_SECRET in Supabase secrets
 AUTHORITY_WALLET_SECRET=[12,34,56,78,...]
 
