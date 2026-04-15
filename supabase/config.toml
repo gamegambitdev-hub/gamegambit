@@ -1,6 +1,3 @@
-[project]
-project_id = "vqgtwalwvalbephvpxap"
-
 [functions.resolve-wager]
 verify_jwt = false
 
