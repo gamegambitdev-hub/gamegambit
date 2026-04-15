@@ -1,0 +1,35 @@
+[project]
+project_id = "vqgtwalwvalbephvpxap"
+
+[functions.resolve-wager]
+verify_jwt = false
+
+[functions.secure-wager]
+verify_jwt = true
+
+[functions.secure-player]
+verify_jwt = true
+
+[functions.secure-bet]
+verify_jwt = true
+
+[functions.admin-action]
+verify_jwt = true
+
+[functions.assign-moderator]
+verify_jwt = true
+
+[functions.check-chess-games]
+verify_jwt = false
+
+[functions.moderation-timeout]
+verify_jwt = false
+
+[functions.process-concession]
+verify_jwt = false
+
+[functions.process-verdict]
+verify_jwt = false
+
+[functions.verify-wallet]
+verify_jwt = true

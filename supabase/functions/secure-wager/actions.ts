@@ -86,6 +86,7 @@ async function dispatchResolveOnChain(
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${serviceKey}`,
+                'apikey': serviceKey,
             },
             body: JSON.stringify(body),
         });
@@ -537,12 +538,13 @@ export async function handleCheckGameComplete(supabase: Supabase, _walletAddress
             ]);
         }
 
-        console.log(`[actions] checkGameComplete: registering EdgeRuntime.waitUntil wagerId=${wagerId as string}`);
-        EdgeRuntime.waitUntil(
-            dispatchResolveOnChain(wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw', undefined, 'checkGameComplete')
-                .then(() => console.log(`[actions] checkGameComplete dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`))
-                .catch((err: unknown) => console.error(`[actions] checkGameComplete dispatchResolveOnChain ❌ wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err)))
-        );
+        console.log(`[actions] checkGameComplete: awaiting dispatchResolveOnChain wagerId=${wagerId as string}`);
+        try {
+            await dispatchResolveOnChain(wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw', undefined, 'checkGameComplete');
+            console.log(`[actions] checkGameComplete dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`);
+        } catch (err: unknown) {
+            console.error(`[actions] checkGameComplete dispatchResolveOnChain ❌ wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err));
+        }
 
         return respond({
             gameComplete: true, status: game.status, winner: game.winner, resultType,
@@ -597,7 +599,7 @@ export async function handleCancelWager(supabase: Supabase, walletAddress: strin
                 try {
                     const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}`, 'apikey': serviceKey },
                         body: JSON.stringify(body),
                     });
                     const rawText = await res.text();
@@ -834,12 +836,13 @@ export async function handleConcedeDispute(supabase: Supabase, walletAddress: st
         await supabase.from('player_behaviour_log').insert({ player_wallet: walletAddress, event_type: 'dispute_conceded', related_id: wagerId, notes: `Conceded to ${winnerWallet}. Conceded at ${now}.` });
     } catch { /* non-critical */ }
 
-    console.log(`[actions] concedeDispute: registering EdgeRuntime.waitUntil wagerId=${wagerId as string}`);
-    EdgeRuntime.waitUntil(
-        dispatchResolveOnChain(wager, winnerWallet, resultType, undefined, 'concedeDispute')
-            .then(() => console.log(`[actions] concedeDispute dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`))
-            .catch((err: unknown) => console.error(`[actions] concedeDispute dispatchResolveOnChain ❌ wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err)))
-    );
+    console.log(`[actions] concedeDispute: awaiting dispatchResolveOnChain wagerId=${wagerId as string}`);
+    try {
+        await dispatchResolveOnChain(wager, winnerWallet, resultType, undefined, 'concedeDispute');
+        console.log(`[actions] concedeDispute dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`);
+    } catch (err: unknown) {
+        console.error(`[actions] concedeDispute dispatchResolveOnChain ❌ wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err));
+    }
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
     return respond({ wager: final ?? updated });
@@ -903,13 +906,14 @@ export async function handleFinalizeVote(supabase: Supabase, walletAddress: stri
         ]);
     }
 
-    console.log(`[finalizeVote] registering EdgeRuntime.waitUntil for dispatchResolveOnChain wagerId=${wagerId as string}`);
-    EdgeRuntime.waitUntil(
-        dispatchResolveOnChain(wager, winnerWallet, resultType, undefined, 'finalizeVote')
-            .then(() => console.log(`[finalizeVote] dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`))
-            .catch((err: unknown) => console.error(`[finalizeVote] dispatchResolveOnChain ❌ error wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err)))
-    );
-    console.log(`[finalizeVote] EdgeRuntime.waitUntil registered ✅ — now fetching final wager state`);
+    console.log(`[finalizeVote] awaiting dispatchResolveOnChain wagerId=${wagerId as string}`);
+    try {
+        await dispatchResolveOnChain(wager, winnerWallet, resultType, undefined, 'finalizeVote');
+        console.log(`[finalizeVote] dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`);
+    } catch (err: unknown) {
+        console.error(`[finalizeVote] dispatchResolveOnChain ❌ error wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err));
+    }
+    console.log(`[finalizeVote] dispatch done — now fetching final wager state`);
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
     console.log(`[finalizeVote] ✅ DONE responding — final DB status=${final?.status ?? 'unknown'}`);
