@@ -3,6 +3,13 @@
 // All Solana plumbing: keypair loading, PDA derivation, instruction builders,
 // transaction sending, and the resolveOnChain helper used by actions.ts.
 // Nothing in here knows about wager business logic.
+//
+// FIX: buildCloseWagerIx now accepts platformWallet as a 5th param and includes
+// it in the accounts list. The old version only had 4 params — platformWallet
+// was silently dropped when actions.ts called it with 5 args. If the on-chain
+// close_wager instruction requires a platform_wallet account (which it does),
+// the transaction would fail with AccountNotEnoughKeys. This affected cancel
+// refunds and draw refunds triggered from the cancelWager handler in actions.ts.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -12,8 +19,6 @@ export const PLATFORM_WALLET = "3hwPwugeuZ33HWJ3SoJkDN2JT3Be9fH62r19ezFiCgYY";
 // Tiered fee schedule — must stay in sync with:
 //   • resolve-wager/index.ts  calculatePlatformFee()
 //   • the on-chain program's  calculate_platform_fee() in lib.rs
-// PLATFORM_FEE_BPS is kept for backwards-compat imports in actions.ts;
-// always call calculatePlatformFee() for actual fee math.
 export const PLATFORM_FEE_BPS = 1000; // legacy alias — only accurate for stake < 0.5 SOL
 
 const MICRO_THRESHOLD = 500_000_000;   // 0.5 SOL
@@ -92,8 +97,13 @@ export async function buildResolveWagerIx(
     });
 }
 
+// FIX: Added platformWallet as 5th parameter and included it in keys.
+// Previously this function only had 4 params — when actions.ts called it with
+// 5 args (passing platformPubkey), the 5th arg was silently dropped.
+// The on-chain close_wager instruction requires platform_wallet in its accounts
+// list, so omitting it caused AccountNotEnoughKeys errors on cancel/draw refunds.
 export async function buildCloseWagerIx(
-    wagerPda: unknown, authority: unknown, playerA: unknown, playerB: unknown,
+    wagerPda: unknown, authority: unknown, playerA: unknown, playerB: unknown, platformWallet: unknown,
 ) {
     const { TransactionInstruction, SystemProgram, PublicKey } = await getSolana();
     return new TransactionInstruction({
@@ -107,6 +117,8 @@ export async function buildCloseWagerIx(
             { pubkey: playerB as any, isSigner: false, isWritable: true },
             // deno-lint-ignore no-explicit-any
             { pubkey: authority as any, isSigner: true, isWritable: true },
+            // deno-lint-ignore no-explicit-any
+            { pubkey: platformWallet as any, isSigner: false, isWritable: true },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data: new Uint8Array(DISCRIMINATORS.close_wager),
@@ -150,7 +162,8 @@ export async function resolveOnChain(
         if (resultType === 'draw') {
             const playerAPubkey = new PublicKey(wager.player_a_wallet as string);
             const playerBPubkey = new PublicKey(wager.player_b_wallet as string);
-            const ix = await buildCloseWagerIx(wagerPda, authority.publicKey, playerAPubkey, playerBPubkey);
+            const platformPubkey = new PublicKey(PLATFORM_WALLET);
+            const ix = await buildCloseWagerIx(wagerPda, authority.publicKey, playerAPubkey, playerBPubkey, platformPubkey);
             txSig = await sendAndConfirm(connection, authority, ix);
             console.log(`[solana] close_wager (draw) tx: ${txSig}`);
             await supabase.from('wager_transactions').upsert([
@@ -159,7 +172,6 @@ export async function resolveOnChain(
             ], { onConflict: 'tx_signature', ignoreDuplicates: true });
         } else {
             const totalPot = stake * 2;
-            // Use tiered fee — must match calculate_platform_fee() in lib.rs
             const platformFee = calculatePlatformFee(stake);
             const winnerPayout = totalPot - platformFee;
             const winnerPubkey = new PublicKey(winnerWallet!);

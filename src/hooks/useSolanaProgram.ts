@@ -1,49 +1,36 @@
 /**
  * useSolanaProgram.ts
  *
- * Phase 1 fix: recordOnChainCreate and recordOnChainJoin now throw on failure
- * instead of silently console.warn-ing. If the DB flag (deposit_player_a /
- * deposit_player_b) is never set, Player B's poll in ReadyRoomModal will wait
- * indefinitely rather than proceeding with a wrong or missing deposit.
+ * FIXES IN THIS VERSION:
  *
- * ROOT CAUSE FIX (this version):
- *  Phantom uses its own internal RPC node to simulate transactions independently
- *  of the dApp's configured RPC. When initialize_player was sent as a SEPARATE
- *  prior transaction, Phantom's RPC often hadn't indexed the new player_a_profile
- *  account yet (devnet RPC lag / different node). So when Phantom simulated
- *  create_wager it failed with ConstraintSeeds on player_a_profile — showing the
- *  red "Transaction reverted during simulation" warning — even though the dApp's
- *  own simulateTransaction call succeeded moments before.
+ * Fix 1 — Remove skipPreflight: true from sendAndConfirmViaAdapter
+ *   skipPreflight told Phantom to skip its own simulation entirely. Without
+ *   simulation it can't model the SOL transfer and falls back to showing just
+ *   the raw network fee (~0.00001 SOL for Player A). Removed the opts object
+ *   so Phantom simulates normally and shows the real stake amount.
  *
- *  The fix: always include initialize_player as the FIRST instruction in the SAME
- *  transaction as create_wager. The contract uses `init_if_needed` so it's
- *  idempotent (safe if profile already exists). Phantom now simulates both
- *  instructions atomically — profile is guaranteed to exist when create_wager runs,
- *  regardless of Phantom's internal RPC state.
+ * Fix 2 — joinWager now uses conditional batch (same as createWager)
+ *   The old joinWager called ensurePlayerProfileExists as a SEPARATE prior
+ *   transaction, then sent joinIx alone. When Phantom simulated joinIx, it
+ *   needed the profile account to exist on its own RPC node — but devnet RPC
+ *   propagation lag meant it often wasn't indexed yet. Simulation failed →
+ *   Phantom showed only fees (~0.00008 SOL) for Player B.
+ *   Fix: check if profile exists on-chain, then bundle [initProfileIx, joinIx]
+ *   or just [joinIx] atomically. Phantom simulates both instructions together,
+ *   sees the full stake movement, shows the correct amount.
  *
- * Mobile fix (carried forward):
- *  - Always use sendTransaction — Mobile Wallet Adapter handles opening Phantom
- *    and signing internally. Calling signTransaction separately breaks it.
- *  - signTransaction has been removed from sendAndConfirmViaAdapter entirely.
+ * Fix 3 — Raise compute unit limit to 200_000
+ *   50_000 was fine for single instructions but unreliable for batched
+ *   initProfile + join/create on congested devnet slots. Phantom also uses
+ *   this limit to estimate priority fees — too low made the estimate look wrong.
+ *   200_000 is the standard safe default for Anchor programs.
  *
- * Instruction fix:
- *  - create_wager now only encodes matchId + stakeAmount (2 args).
- *    The old hook was also encoding lichessGameId (string) and requiresModerator
- *    (bool), which corrupted the stake_lamports field the contract reads —
- *    it was reading the string length prefix as the lamport amount (~8), so
- *    Phantom showed 0.000008 SOL instead of 1 SOL.
- *    lichessGameId / requiresModerator are still accepted as params because
- *    recordOnChainCreate forwards them to the edge function for Supabase.
- *
- * DEBUG LOGGING ADDED:
- *  - Every mutationFn logs its received args immediately on entry so you can
- *    confirm whether stake_lamports arrives correctly or has already been
- *    corrupted upstream (e.g. by a partial Supabase Realtime cache write).
- *  - buildInstructionData logs the BigInt values it encodes into the tx.
- *  - sendAndConfirmViaAdapter logs the full tx lifecycle.
- *  - The "STAKE SANITY CHECK" guard throws early with a clear message if
- *    stake_lamports arrives as 0 or suspiciously small (< 1000 lamports),
- *    preventing a near-zero deposit from hitting the chain silently.
+ * Carried forward from previous version:
+ *  - createWager conditional batch (only include initProfileIx if profile missing)
+ *  - create_wager encodes only matchId + stakeAmount (no lichessGameId/requiresModerator)
+ *  - recordOnChainCreate/Join throw on failure instead of silent console.warn
+ *  - Stake sanity check guard (throws if stakeLamports < 1000)
+ *  - Full debug logging throughout
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -88,7 +75,6 @@ function buildInstructionData(
   discriminator: readonly number[],
   ...args: (bigint | boolean | string | PublicKey)[]
 ): Buffer {
-  // Log what we're encoding so we can verify stake amounts at the tx-build step
   if (args.length > 0) {
     console.log('[buildInstructionData] encoding args:', args.map((a) =>
       typeof a === 'bigint'
@@ -177,12 +163,11 @@ async function sendAndConfirmViaAdapter(
   console.log('[sendAndConfirmViaAdapter] fetching latest blockhash…');
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
-  // Phase 2 fix: prepend ComputeBudget instructions so Phantom's independent
-  // simulation has a priority fee signal — this makes simulation reliable and
-  // ensures Phantom shows the correct SOL amount (1 SOL) rather than falling
-  // back to the bare network fee (~0.00008 SOL) when simulation fails.
   const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 });
-  const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 50_000 });
+  // FIX 3: raised from 50_000 → 200_000. Batched initProfile + create/join can
+  // exceed 50k on congested devnet slots, and the low limit also makes Phantom's
+  // priority fee estimate look wrong.
+  const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
 
   const tx = new Transaction();
   tx.add(priorityFeeIx, computeLimitIx);
@@ -192,10 +177,11 @@ async function sendAndConfirmViaAdapter(
 
   console.log('[sendAndConfirmViaAdapter] sending tx, payer:', payer.toBase58(), 'blockhash:', blockhash);
 
-  const signature = await sendTransaction(tx, connection, {
-    skipPreflight: true,
-    preflightCommitment: 'confirmed',
-  });
+  // FIX 1: removed skipPreflight: true opts.
+  // With skipPreflight Phantom skips its own simulation and can't model the SOL
+  // transfer — it falls back to showing only the raw network fee (~0.00001 SOL).
+  // Without it, Phantom simulates the full tx and shows the real stake amount.
+  const signature = await sendTransaction(tx, connection);
 
   console.log('[sendAndConfirmViaAdapter] tx sent, signature:', signature, '— confirming…');
 
@@ -206,44 +192,6 @@ async function sendAndConfirmViaAdapter(
 
   console.log('[sendAndConfirmViaAdapter] ✅ confirmed:', signature);
   return signature;
-}
-
-// ── Init player profile — separate tx, never batched ─────────────────────────
-
-async function ensurePlayerProfileExists(
-  player: PublicKey,
-  sendTransaction: (tx: Transaction, connection: any, opts?: any) => Promise<string>,
-  connection: any,
-): Promise<void> {
-  const [profilePda] = derivePlayerProfilePda(player);
-
-  let existing = null;
-  try { existing = await connection.getAccountInfo(profilePda); } catch { /* ok */ }
-  if (existing) {
-    console.log('[ensurePlayerProfile] profile already exists, skipping init');
-    return;
-  }
-
-  toast.info('Creating your on-chain profile (one-time setup)…');
-  console.log('[ensurePlayerProfile] profile not found — creating for', player.toBase58());
-
-  const ix = new TransactionInstruction({
-    programId: new PublicKey(PROGRAM_ID),
-    keys: [
-      { pubkey: profilePda, isSigner: false, isWritable: true },
-      { pubkey: player, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data: Buffer.from(INSTRUCTION_DISCRIMINATORS.initialize_player as number[]),
-  });
-
-  try {
-    await sendAndConfirmViaAdapter(ix, player, sendTransaction, connection);
-    toast.success('Profile created!');
-  } catch (err: unknown) {
-    const normalized = normalizeSolanaError(err);
-    if (!normalized.includes('already')) throw err;
-  }
 }
 
 // ── 1. Initialize player profile ──────────────────────────────────────────────
@@ -314,7 +262,6 @@ export function useCreateWagerOnChain() {
       requiresModerator?: boolean;
       wagerId: string;
     }) => {
-      // ── ENTRY LOGGING ──────────────────────────────────────────────────────
       console.log('[createWager] ▶ mutationFn ENTRY', {
         wagerId,
         matchId,
@@ -327,9 +274,8 @@ export function useCreateWagerOnChain() {
 
       if (!publicKey || !sendTransaction) throw new Error('Wallet not connected');
 
-      // ── STAKE SANITY CHECK ─────────────────────────────────────────────────
       if (!stakeLamports || stakeLamports < 1_000) {
-        const msg = `[createWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). This is almost certainly a corrupted value. Aborting to prevent a dust deposit.`;
+        const msg = `[createWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). Aborting.`;
         console.error(msg);
         throw new Error(
           `Invalid stake amount (${stakeLamports / LAMPORTS_PER_SOL} SOL). Please close and reopen the Ready Room — this is a data sync issue, not a wallet problem.`
@@ -356,23 +302,10 @@ export function useCreateWagerOnChain() {
         console.log('[createWager] PDA exists — skipping tx, notifying DB');
         signature = 'already_deposited';
       } else {
-        // ── CONDITIONAL BATCH: only include initialize_player if profile doesn't exist ──
-        //
-        // ROOT CAUSE OF PHANTOM "reverted during simulation" + wrong fee display:
-        // The previous approach always bundled initialize_player + create_wager in
-        // one tx, assuming init_if_needed made it a safe no-op when profile exists.
-        // But Phantom runs its own independent simulation on its own RPC node.
-        // When the profile account already exists, Phantom's sim sees initialize_player
-        // trying to re-init an existing account and throws — causing the red "reverted"
-        // banner. Because Phantom's sim failed, it can't model the SOL movement, so it
-        // only shows the network fee (0.00008 SOL) instead of the actual 1 SOL stake.
-        // The dApp's own simulation passed fine (different RPC node, correct state).
-        //
-        // FIX: Check if the profile account exists on-chain before building the tx.
-        // Only include initialize_player if it doesn't. When profile already exists,
-        // Phantom simulates a single clean create_wager ix and correctly shows the
-        // full stake amount. New users still get both instructions atomically.
-
+        // Conditional batch: only include initProfileIx if profile doesn't exist yet.
+        // If profile exists and we blindly include initProfileIx, Phantom's independent
+        // simulation sees it trying to re-init an existing account → red "reverted"
+        // banner → Phantom can't model SOL movement → shows only network fee.
         let profileExists = false;
         try {
           const profileInfo = await connection.getAccountInfo(playerProfilePda);
@@ -390,8 +323,8 @@ export function useCreateWagerOnChain() {
         });
 
         // create_wager takes ONLY (match_id: u64, stake_lamports: u64).
-        // Do NOT pass lichessGameId or requiresModerator — they corrupt instruction
-        // data and cause the contract to misread stake_lamports.
+        // Do NOT pass lichessGameId or requiresModerator — they corrupt the
+        // instruction data and cause the contract to misread stake_lamports.
         const createIx = new TransactionInstruction({
           programId: new PublicKey(PROGRAM_ID),
           keys: [
@@ -409,7 +342,7 @@ export function useCreateWagerOnChain() {
 
         const instructions = profileExists ? [createIx] : [initProfileIx, createIx];
 
-        // ── DIAGNOSTIC: simulate before sending to surface real Anchor errors ──
+        // Simulate before sending to surface real Anchor errors early
         {
           const simTx = new Transaction();
           simTx.add(...instructions);
@@ -425,7 +358,6 @@ export function useCreateWagerOnChain() {
             );
           }
         }
-        // ── END DIAGNOSTIC ────────────────────────────────────────────────────
 
         console.log(
           profileExists
@@ -438,10 +370,6 @@ export function useCreateWagerOnChain() {
         );
       }
 
-      // recordOnChainCreate MUST succeed — it sets deposit_player_a in the DB,
-      // which is the flag Player B polls before firing join_wager. If it fails
-      // we throw so the tx state goes to error rather than silently proceeding
-      // and leaving Player B stuck waiting or joining with a wrong balance.
       const token = await getSessionToken();
       console.log('[createWager] session token:', token ? 'ok' : 'NULL');
       if (!token) {
@@ -503,7 +431,6 @@ export function useJoinWagerOnChain() {
       stakeLamports: number;
       wagerId: string;
     }) => {
-      // ── ENTRY LOGGING ──────────────────────────────────────────────────────
       console.log('[joinWager] ▶ mutationFn ENTRY', {
         wagerId,
         matchId,
@@ -515,9 +442,8 @@ export function useJoinWagerOnChain() {
 
       if (!publicKey || !sendTransaction) throw new Error('Wallet not connected');
 
-      // ── STAKE SANITY CHECK ─────────────────────────────────────────────────
       if (!stakeLamports || stakeLamports < 1_000) {
-        const msg = `[joinWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). Aborting to prevent a dust deposit.`;
+        const msg = `[joinWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). Aborting.`;
         console.error(msg);
         throw new Error(
           `Invalid stake amount (${stakeLamports / LAMPORTS_PER_SOL} SOL). Please close and reopen the Ready Room — this is a data sync issue, not a wallet problem.`
@@ -546,7 +472,37 @@ export function useJoinWagerOnChain() {
         console.log('[joinWager] PDA already fully funded — skipping tx, notifying DB');
         signature = 'already_deposited';
       } else {
-        await ensurePlayerProfileExists(publicKey, sendTransaction, connection);
+        // FIX 2: Conditional batch — same pattern as createWager.
+        //
+        // Old approach: ensurePlayerProfileExists sent initProfileIx as a SEPARATE
+        // prior transaction, then joinIx was sent alone. When Phantom simulated
+        // joinIx by itself, it needed the profile account to already exist on its
+        // own RPC node. Due to devnet RPC propagation lag, the freshly-created
+        // profile often wasn't indexed on Phantom's node yet — simulation failed,
+        // and Phantom showed only the bare network fee (~0.00008 SOL) for Player B.
+        //
+        // New approach: check if the profile exists, then atomically bundle
+        // [initProfileIx, joinIx] or just [joinIx]. Phantom simulates both
+        // instructions in the same tx — profile is guaranteed to exist when
+        // join_wager runs, and Phantom correctly shows the full stake amount.
+
+        let profileExists = false;
+        try {
+          const profileInfo = await connection.getAccountInfo(playerBProfilePda);
+          profileExists = profileInfo !== null;
+        } catch { /* ok — assume doesn't exist */ }
+
+        console.log('[joinWager] Player B profile exists:', profileExists);
+
+        const initProfileIx = new TransactionInstruction({
+          programId: new PublicKey(PROGRAM_ID),
+          keys: [
+            { pubkey: playerBProfilePda, isSigner: false, isWritable: true },
+            { pubkey: publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          data: Buffer.from(INSTRUCTION_DISCRIMINATORS.initialize_player as number[]),
+        });
 
         const joinIx = new TransactionInstruction({
           programId: new PublicKey(PROGRAM_ID),
@@ -559,11 +515,35 @@ export function useJoinWagerOnChain() {
           data: buildInstructionData(INSTRUCTION_DISCRIMINATORS.join_wager, stakeAmount),
         });
 
-        console.log('[joinWager] sending join_wager tx with stake:', stakeAmount.toString(), 'lamports');
+        const instructions = profileExists ? [joinIx] : [initProfileIx, joinIx];
+
+        // Simulate before sending to surface real Anchor errors early
+        {
+          const simTx = new Transaction();
+          simTx.add(...instructions);
+          simTx.feePayer = publicKey;
+          simTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          const simResult = await connection.simulateTransaction(simTx);
+          console.log('[joinWager] SIMULATION RESULT:', JSON.stringify(simResult.value, null, 2));
+          if (simResult.value.err) {
+            console.error('[joinWager] SIMULATION FAILED — err:', JSON.stringify(simResult.value.err));
+            console.error('[joinWager] SIMULATION LOGS:', simResult.value.logs);
+            throw new Error(
+              `Transaction simulation failed. Logs: ${(simResult.value.logs ?? []).join(' | ')}`
+            );
+          }
+        }
+
+        console.log(
+          profileExists
+            ? '[joinWager] sending join_wager only (profile exists), stake:'
+            : '[joinWager] sending batched init_profile + join_wager, stake:',
+          stakeAmount.toString(), 'lamports'
+        );
 
         try {
           signature = await sendAndConfirmViaAdapter(
-            joinIx, publicKey, sendTransaction, connection
+            instructions, publicKey, sendTransaction, connection
           );
         } catch (err: unknown) {
           const normalized = normalizeSolanaError(err);
@@ -576,9 +556,6 @@ export function useJoinWagerOnChain() {
         }
       }
 
-      // recordOnChainJoin MUST succeed — it sets deposit_player_b and transitions
-      // the wager to 'voting'. Throwing here surfaces the error to the user
-      // rather than silently leaving the wager in a broken state.
       const token = await getSessionToken();
       console.log('[joinWager] session token:', token ? 'ok' : 'NULL');
       if (!token) {

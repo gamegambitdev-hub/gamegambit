@@ -67,25 +67,56 @@ async function dispatchResolveOnChain(
         if (moderatorWallet) body.moderatorWallet = moderatorWallet;
     }
 
-    const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${serviceKey}`,
-        },
-        body: JSON.stringify(body),
-    });
-
-    const result = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status} non-JSON response` }));
-    if (!result.success) {
-        throw new Error(`resolve-wager returned failure: ${JSON.stringify(result)}`);
+    // deno-lint-ignore no-explicit-any
+    let result: Record<string, any> = { success: false, error: 'unknown' };
+    try {
+        const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${serviceKey}`,
+            },
+            body: JSON.stringify(body),
+        });
+        result = await res.json().catch(() => ({ success: false, error: `HTTP ${res.status} non-JSON response` }));
+    } catch (fetchErr: unknown) {
+        result = { success: false, error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr) };
     }
-    console.log(`[actions] dispatchResolveOnChain success: txSig=${result.txSignature}`);
+
+    if (!result.success) {
+        const errMsg = `resolve-wager returned failure: ${JSON.stringify(result)}`;
+        console.error(`[actions] dispatchResolveOnChain FAILED for wager ${wager.id as string}: ${errMsg}`);
+        // Log to wager_transactions so admin dashboard shows the failure — DO NOT silently swallow
+        try {
+            const supabase = createClient(supabaseUrl, serviceKey);
+            await supabase.from('wager_transactions').insert({
+                wager_id: wager.id,
+                tx_type: 'error_payout_failed',
+                wallet_address: (winnerWallet ?? wager.player_a_wallet) as string,
+                amount_lamports: 0,
+                status: 'failed',
+                error_message: errMsg,
+                created_at: new Date().toISOString(),
+            });
+        } catch (logErr: unknown) {
+            console.error('[actions] failed to log payout error to DB:', logErr instanceof Error ? logErr.message : String(logErr));
+        }
+        throw new Error(errMsg);
+    }
+    console.log(`[actions] dispatchResolveOnChain success: txSig=${result.txSignature as string}`);
 }
 
-// Inline fee helper — calculatePlatformFee is not exported from solana.ts
+// Inline fee helper — must stay in sync with:
+//   • resolve-wager/index.ts  calculatePlatformFee()
+//   • the on-chain program's  calculate_platform_fee() in lib.rs
+const MICRO_THRESHOLD = 500_000_000;   // 0.5 SOL
+const WHALE_THRESHOLD = 5_000_000_000; // 5.0 SOL
 function calculatePlatformFee(stakeLamports: number): number {
-    return Math.floor(stakeLamports * 2 * 1000 / 10_000); // PLATFORM_FEE_BPS = 1000
+    let bps: number;
+    if (stakeLamports < MICRO_THRESHOLD) bps = 1000; // 10%
+    else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;  // 7%
+    else bps = 500;  // 5%
+    return Math.floor(stakeLamports * 2 * bps / 10_000);
 }
 
 type Supabase = ReturnType<typeof createClient>;
