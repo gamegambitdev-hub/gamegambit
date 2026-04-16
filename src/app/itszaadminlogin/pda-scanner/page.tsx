@@ -2,7 +2,7 @@
 
 // src/app/itszaadminlogin/pda-scanner/page.tsx
 //
-// Bulk on-chain PDA scanner.
+// Bulk on-chain PDA scanner + batch recovery.
 // Loads all wagers with at least one deposit from the DB, derives their PDAs,
 // batch-checks them on Solana, and shows each one's verdict.
 //
@@ -14,17 +14,19 @@
 //   🔵 PENDING_DEPOSIT — Player B hasn't deposited yet.
 //   ❌ RPC_ERROR       — Couldn't reach Solana RPC for this PDA.
 
-import { Suspense, useState, useCallback, useMemo } from 'react';
+import { Suspense, useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     ScanSearch, Loader2, AlertTriangle, Copy, Check,
     ExternalLink, RefreshCcw, ChevronDown, ChevronUp,
-    Download, Filter, X, TrendingUp, Coins, CheckCircle2,
-    Circle, WifiOff, Clock,
+    Download, Filter, X, CheckCircle2,
+    Circle, WifiOff, Zap, Square, CheckSquare, Play,
+    Trophy, RotateCcw, StopCircle, Coins,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getExplorerUrl, SOLANA_NETWORK } from '@/lib/solana-config';
+import { useWallet } from '@solana/wallet-adapter-react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -35,6 +37,9 @@ type Verdict =
     | 'NOT_FOUND'
     | 'RPC_ERROR'
     | 'PENDING_DEPOSIT';
+
+type BatchAction = 'forceRefund' | 'forceResolve';
+type RowStatus = 'idle' | 'processing' | 'success' | 'error';
 
 interface ScanResult {
     wager_id: string;
@@ -69,6 +74,12 @@ interface ScanResponse {
     rpc_error_count: number;
     pending_count: number;
     total_stuck_sol: number;
+}
+
+interface BatchResult {
+    wager_id: string;
+    status: RowStatus;
+    error?: string;
 }
 
 // ── Verdict config ─────────────────────────────────────────────────────────────
@@ -216,11 +227,113 @@ function SummaryCard({
     );
 }
 
-// ── Row expand detail ──────────────────────────────────────────────────────────
+// ── Row success flash overlay ──────────────────────────────────────────────────
 
-function ResultRow({ r, idx }: { r: ScanResult; idx: number }) {
+function SuccessFlash({ action }: { action: BatchAction }) {
+    return (
+        <motion.div
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.1 }}
+            transition={{ duration: 0.25 }}
+            className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"
+        >
+            <div className="flex items-center gap-2 bg-emerald-500/90 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg shadow-emerald-500/30">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {action === 'forceRefund' ? 'Refunded ✓' : 'Resolved ✓'}
+            </div>
+        </motion.div>
+    );
+}
+
+// ── Batch progress bar ─────────────────────────────────────────────────────────
+
+function BatchProgressBar({
+    done, total, errors, action, onStop,
+}: {
+    done: number;
+    total: number;
+    errors: number;
+    action: BatchAction;
+    onStop: () => void;
+}) {
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    const finished = done === total;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className={cn(
+                'rounded-2xl p-4 border space-y-3',
+                finished
+                    ? 'bg-emerald-500/10 border-emerald-500/30'
+                    : 'bg-primary/5 border-primary/20',
+            )}
+        >
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    {finished
+                        ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        : <Loader2 className="h-4 w-4 text-primary animate-spin" />}
+                    <span className="text-sm font-semibold text-foreground">
+                        {finished
+                            ? `Batch complete — ${done - errors} succeeded, ${errors} failed`
+                            : `${action === 'forceRefund' ? 'Refunding' : 'Resolving'} ${done} / ${total}…`}
+                    </span>
+                </div>
+                {!finished && (
+                    <button
+                        onClick={onStop}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-red-400 transition-colors border border-border/40 hover:border-red-400/40 px-2.5 py-1 rounded-lg"
+                    >
+                        <StopCircle className="h-3.5 w-3.5" />
+                        Stop
+                    </button>
+                )}
+            </div>
+
+            {/* Progress bar */}
+            <div className="h-2 bg-muted/40 rounded-full overflow-hidden">
+                <motion.div
+                    className={cn('h-full rounded-full', finished ? 'bg-emerald-500' : 'bg-primary')}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${pct}%` }}
+                    transition={{ type: 'spring', damping: 30, stiffness: 200 }}
+                />
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{pct}% complete</span>
+                {errors > 0 && (
+                    <span className="text-red-400 font-semibold">{errors} error{errors !== 1 ? 's' : ''}</span>
+                )}
+            </div>
+        </motion.div>
+    );
+}
+
+// ── Row expand detail (with batch row state awareness) ─────────────────────────
+
+function ResultRow({
+    r, idx, selected, onToggle, rowStatus, currentAction, batchRunning,
+}: {
+    r: ScanResult;
+    idx: number;
+    selected: boolean;
+    onToggle: (id: string) => void;
+    rowStatus: RowStatus;
+    currentAction: BatchAction | null;
+    batchRunning: boolean;
+}) {
     const [expanded, setExpanded] = useState(false);
     const cfg = VERDICT_CONFIG[r.verdict];
+    const isStuck = r.verdict === 'STUCK_FUNDS';
+
+    const isProcessing = rowStatus === 'processing';
+    const isSuccess = rowStatus === 'success';
+    const isError = rowStatus === 'error';
 
     return (
         <>
@@ -228,61 +341,131 @@ function ResultRow({ r, idx }: { r: ScanResult; idx: number }) {
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.012 }}
-                onClick={() => setExpanded(x => !x)}
                 className={cn(
-                    'border-b border-border/20 cursor-pointer transition-colors text-sm',
-                    r.verdict === 'STUCK_FUNDS'
-                        ? 'bg-red-500/5 hover:bg-red-500/10'
-                        : 'hover:bg-muted/30',
+                    'border-b border-border/20 text-sm transition-colors relative',
+                    isSuccess && 'opacity-40',
+                    isProcessing && 'bg-primary/5',
+                    isError && 'bg-red-500/5',
+                    !isSuccess && !isProcessing && (
+                        isStuck
+                            ? 'bg-red-500/5 hover:bg-red-500/10'
+                            : 'hover:bg-muted/30'
+                    ),
                 )}
             >
+                {/* Checkbox — only for STUCK_FUNDS */}
+                <td className="pl-3 pr-1 py-3 w-8" onClick={e => e.stopPropagation()}>
+                    {isStuck && !batchRunning && (
+                        <button
+                            onClick={() => onToggle(r.wager_id)}
+                            className="text-muted-foreground hover:text-primary transition-colors"
+                        >
+                            {selected
+                                ? <CheckSquare className="h-4 w-4 text-primary" />
+                                : <Square className="h-4 w-4" />}
+                        </button>
+                    )}
+                    {isProcessing && (
+                        <Loader2 className="h-4 w-4 text-primary animate-spin ml-0.5" />
+                    )}
+                    {isSuccess && (
+                        <motion.div
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ type: 'spring', damping: 12 }}
+                        >
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        </motion.div>
+                    )}
+                    {isError && (
+                        <AlertTriangle className="h-4 w-4 text-red-400" />
+                    )}
+                </td>
+
                 {/* Match ID */}
-                <td className="px-3 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap">
+                <td
+                    className="px-3 py-3 text-xs font-mono text-muted-foreground whitespace-nowrap cursor-pointer"
+                    onClick={() => !batchRunning && setExpanded(x => !x)}
+                >
                     #{r.match_id}
                 </td>
 
                 {/* Game */}
-                <td className="px-3 py-3 text-xs capitalize">{r.game}</td>
+                <td className="px-3 py-3 text-xs capitalize cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
+                    {r.game}
+                </td>
 
                 {/* DB Status */}
-                <td className="px-3 py-3">
+                <td className="px-3 py-3 cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
                     <span className="text-xs font-medium text-muted-foreground capitalize">{r.status}</span>
                 </td>
 
                 {/* Stake */}
-                <td className="px-3 py-3 text-xs font-mono text-amber-400 whitespace-nowrap">
+                <td className="px-3 py-3 text-xs font-mono text-amber-400 whitespace-nowrap cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
                     {r.stake_sol.toFixed(4)} SOL
                 </td>
 
                 {/* PDA Balance */}
-                <td className="px-3 py-3 text-xs font-mono whitespace-nowrap">
+                <td className="px-3 py-3 text-xs font-mono whitespace-nowrap cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
                     {r.pda_exists
                         ? <span className={r.pda_sol > 0 ? 'text-amber-400' : 'text-muted-foreground'}>{r.pda_sol.toFixed(4)} SOL</span>
                         : <span className="text-muted-foreground/50">—</span>}
                 </td>
 
                 {/* Verdict */}
-                <td className="px-3 py-3">
-                    <VerdictBadge verdict={r.verdict} />
+                <td className="px-3 py-3 cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
+                    {isSuccess && currentAction ? (
+                        <motion.span
+                            initial={{ opacity: 0, scale: 0.8 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-400 whitespace-nowrap"
+                        >
+                            ✓ {currentAction === 'forceRefund' ? 'Refunded' : 'Resolved'}
+                        </motion.span>
+                    ) : isError ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full border border-red-500/40 bg-red-500/15 text-red-400 whitespace-nowrap">
+                            ✗ Failed
+                        </span>
+                    ) : (
+                        <VerdictBadge verdict={r.verdict} />
+                    )}
                 </td>
 
                 {/* Age */}
-                <td className="px-3 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                <td className="px-3 py-3 text-xs text-muted-foreground whitespace-nowrap cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
                     {timeAgo(r.created_at)}
                 </td>
 
                 {/* Expand toggle */}
-                <td className="px-3 py-3 text-right">
-                    {expanded
+                <td className="px-3 py-3 text-right cursor-pointer" onClick={() => !batchRunning && setExpanded(x => !x)}>
+                    {!batchRunning && (expanded
                         ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground inline" />
-                        : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground inline" />}
+                        : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground inline" />)}
                 </td>
             </motion.tr>
 
+            {/* Success shimmer overlay row */}
             <AnimatePresence>
-                {expanded && (
+                {isSuccess && (
                     <tr>
-                        <td colSpan={8} className="p-0">
+                        <td colSpan={9} className="p-0 h-0">
+                            <motion.div
+                                initial={{ scaleX: 0, opacity: 0.8 }}
+                                animate={{ scaleX: 1, opacity: 0 }}
+                                transition={{ duration: 0.6, ease: 'easeOut' }}
+                                style={{ transformOrigin: 'left' }}
+                                className="h-0.5 bg-gradient-to-r from-emerald-500 via-emerald-300 to-transparent"
+                            />
+                        </td>
+                    </tr>
+                )}
+            </AnimatePresence>
+
+            {/* Expand detail */}
+            <AnimatePresence>
+                {expanded && !batchRunning && (
+                    <tr>
+                        <td colSpan={9} className="p-0">
                             <motion.div
                                 initial={{ height: 0, opacity: 0 }}
                                 animate={{ height: 'auto', opacity: 1 }}
@@ -395,9 +578,100 @@ function ResultRow({ r, idx }: { r: ScanResult; idx: number }) {
     );
 }
 
+// ── Batch action panel ─────────────────────────────────────────────────────────
+
+function BatchPanel({
+    selectedIds, allStuck, onSelectAll, onClearAll, onExecute, batchRunning, results,
+}: {
+    selectedIds: Set<string>;
+    allStuck: ScanResult[];
+    onSelectAll: () => void;
+    onClearAll: () => void;
+    onExecute: (action: BatchAction) => void;
+    batchRunning: boolean;
+    results: Map<string, BatchResult>;
+}) {
+    const count = selectedIds.size;
+    const canResolveAll = allStuck
+        .filter(r => selectedIds.has(r.wager_id))
+        .every(r => r.winner_wallet !== null);
+
+    if (batchRunning || count === 0) return null;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            className="glass rounded-2xl p-4 border border-primary/30 bg-primary/5 space-y-3"
+        >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                    <div className="bg-primary/20 rounded-lg p-1.5">
+                        <Zap className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                        <p className="text-sm font-semibold text-foreground">
+                            {count} wager{count !== 1 ? 's' : ''} selected
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                            {allStuck.filter(r => selectedIds.has(r.wager_id)).reduce((s, r) => s + r.pda_sol, 0).toFixed(4)} SOL will be processed
+                        </p>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={onSelectAll}
+                        className="text-xs text-primary hover:underline"
+                    >
+                        Select all {allStuck.length}
+                    </button>
+                    <span className="text-muted-foreground/40">|</span>
+                    <button
+                        onClick={onClearAll}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                        Clear
+                    </button>
+                </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+                {/* Force Refund — always available for stuck */}
+                <button
+                    onClick={() => onExecute('forceRefund')}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400 font-semibold rounded-xl text-sm transition-colors"
+                >
+                    <RotateCcw className="h-4 w-4" />
+                    Batch Refund All
+                </button>
+
+                {/* Force Resolve — only if all selected have a winner_wallet */}
+                <button
+                    onClick={() => onExecute('forceResolve')}
+                    disabled={!canResolveAll}
+                    className="flex items-center gap-2 px-4 py-2 bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary font-semibold rounded-xl text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={!canResolveAll ? 'Some selected wagers have no winner_wallet recorded' : undefined}
+                >
+                    <Trophy className="h-4 w-4" />
+                    Batch Resolve (use recorded winner)
+                </button>
+            </div>
+
+            {!canResolveAll && count > 0 && (
+                <p className="text-xs text-muted-foreground">
+                    ⚠️ Some selected wagers have no <span className="font-mono text-foreground/70">winner_wallet</span> — use Batch Refund or deselect those rows to use Batch Resolve.
+                </p>
+            )}
+        </motion.div>
+    );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 function PdaScannerContent() {
+    const { publicKey } = useWallet();
+
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [scanData, setScanData] = useState<ScanResponse | null>(null);
@@ -408,10 +682,31 @@ function PdaScannerContent() {
     const [sortAsc, setSortAsc] = useState(true);
     const [searchText, setSearchText] = useState('');
 
+    // Batch state
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [batchRunning, setBatchRunning] = useState(false);
+    const [batchAction, setBatchAction] = useState<BatchAction | null>(null);
+    const [rowStatuses, setRowStatuses] = useState<Map<string, BatchResult>>(new Map());
+    const [batchDone, setBatchDone] = useState(0);
+    const [batchTotal, setBatchTotal] = useState(0);
+    const [batchErrors, setBatchErrors] = useState(0);
+    const stopRef = useRef(false);
+
+    // Toast
+    const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+    const showToast = (type: 'success' | 'error', msg: string) => {
+        setToast({ type, msg });
+        setTimeout(() => setToast(null), 4000);
+    };
+
     const runScan = useCallback(async () => {
         setLoading(true);
         setError(null);
         setScanData(null);
+        setSelectedIds(new Set());
+        setRowStatuses(new Map());
+        setBatchDone(0);
+        setBatchTotal(0);
 
         try {
             const params = new URLSearchParams({
@@ -464,6 +759,11 @@ function PdaScannerContent() {
         return rows;
     }, [scanData, verdictFilter, searchText, sortCol, sortAsc]);
 
+    const stuckResults = useMemo(
+        () => displayResults.filter(r => r.verdict === 'STUCK_FUNDS'),
+        [displayResults],
+    );
+
     // ── CSV export ───────────────────────────────────────────────────────────
     const exportCsv = useCallback(() => {
         if (!displayResults.length) return;
@@ -489,6 +789,109 @@ function PdaScannerContent() {
         URL.revokeObjectURL(url);
     }, [displayResults]);
 
+    // ── Batch execution ──────────────────────────────────────────────────────
+    const executeBatch = useCallback(async (action: BatchAction) => {
+        if (!publicKey) {
+            showToast('error', 'Connect your wallet first');
+            return;
+        }
+
+        const targets = stuckResults.filter(r => selectedIds.has(r.wager_id));
+        if (targets.length === 0) return;
+
+        stopRef.current = false;
+        setBatchRunning(true);
+        setBatchAction(action);
+        setBatchDone(0);
+        setBatchTotal(targets.length);
+        setBatchErrors(0);
+
+        const newStatuses = new Map<string, BatchResult>();
+
+        for (let i = 0; i < targets.length; i++) {
+            if (stopRef.current) break;
+
+            const r = targets[i];
+
+            // Mark as processing
+            newStatuses.set(r.wager_id, { wager_id: r.wager_id, status: 'processing' });
+            setRowStatuses(new Map(newStatuses));
+
+            // Small visual delay so the "processing" state is visible
+            await new Promise(res => setTimeout(res, 180));
+
+            try {
+                const body: Record<string, unknown> = {
+                    action,
+                    adminWallet: publicKey.toBase58(),
+                    wagerId: r.wager_id,
+                    notes: `Batch ${action} from PDA scanner`,
+                };
+
+                if (action === 'forceResolve' && r.winner_wallet) {
+                    body.winnerWallet = r.winner_wallet;
+                }
+
+                const res = await fetch('/api/admin/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(body),
+                });
+
+                const result = await res.json();
+
+                if (!result.success) throw new Error(result.error || 'Action failed');
+
+                newStatuses.set(r.wager_id, { wager_id: r.wager_id, status: 'success' });
+                setRowStatuses(new Map(newStatuses));
+                setBatchDone(i + 1);
+
+                // Brief pause between calls to avoid rate-limiting
+                await new Promise(res => setTimeout(res, 300));
+
+            } catch (err: any) {
+                newStatuses.set(r.wager_id, {
+                    wager_id: r.wager_id,
+                    status: 'error',
+                    error: err.message,
+                });
+                setRowStatuses(new Map(newStatuses));
+                setBatchDone(i + 1);
+                setBatchErrors(p => p + 1);
+
+                // Still pause on error
+                await new Promise(res => setTimeout(res, 150));
+            }
+        }
+
+        const finalDone = targets.filter(r => newStatuses.get(r.wager_id)?.status === 'success').length;
+        const finalErrors = targets.filter(r => newStatuses.get(r.wager_id)?.status === 'error').length;
+
+        showToast(
+            finalErrors === 0 ? 'success' : 'error',
+            `Batch complete: ${finalDone} succeeded, ${finalErrors} failed`,
+        );
+
+        setSelectedIds(new Set());
+        setBatchRunning(false);
+    }, [publicKey, selectedIds, stuckResults]);
+
+    // ── Selection helpers ────────────────────────────────────────────────────
+    const toggleRow = useCallback((id: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    }, []);
+
+    const selectAll = useCallback(() => {
+        setSelectedIds(new Set(stuckResults.map(r => r.wager_id)));
+    }, [stuckResults]);
+
+    const clearAll = useCallback(() => setSelectedIds(new Set()), []);
+
     const toggleSort = (col: typeof sortCol) => {
         if (sortCol === col) setSortAsc(x => !x);
         else { setSortCol(col); setSortAsc(true); }
@@ -499,9 +902,34 @@ function PdaScannerContent() {
             ? (sortAsc ? <ChevronUp className="h-3 w-3 inline ml-0.5" /> : <ChevronDown className="h-3 w-3 inline ml-0.5" />)
             : null;
 
+    const allStuckSelected = stuckResults.length > 0 && stuckResults.every(r => selectedIds.has(r.wager_id));
+    const someStuckSelected = stuckResults.some(r => selectedIds.has(r.wager_id));
+
     return (
         <ProtectedRoute requiredRole="admin">
             <div className="space-y-6 max-w-6xl">
+
+                {/* Toast */}
+                <AnimatePresence>
+                    {toast && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -20 }}
+                            className={cn(
+                                'fixed top-20 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border text-sm font-medium',
+                                toast.type === 'success'
+                                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                                    : 'bg-red-500/15 border-red-500/30 text-red-400',
+                            )}
+                        >
+                            {toast.type === 'success'
+                                ? <CheckCircle2 className="h-4 w-4" />
+                                : <AlertTriangle className="h-4 w-4" />}
+                            {toast.msg}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 {/* Header */}
                 <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
@@ -511,7 +939,7 @@ function PdaScannerContent() {
                     <div>
                         <h1 className="text-3xl font-gaming font-bold text-glow">PDA Bulk Scanner</h1>
                         <p className="text-sm text-muted-foreground">
-                            Scan all wager PDAs at once — find stuck funds, verify distributions, and audit on-chain state
+                            Scan all wager PDAs at once — find stuck funds, verify distributions, and batch-recover SOL
                         </p>
                     </div>
                 </motion.div>
@@ -552,7 +980,7 @@ function PdaScannerContent() {
                         {/* Scan button */}
                         <button
                             onClick={runScan}
-                            disabled={loading}
+                            disabled={loading || batchRunning}
                             className="flex items-center gap-2 px-6 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl text-sm transition-colors disabled:opacity-50 self-end"
                         >
                             {loading
@@ -561,7 +989,7 @@ function PdaScannerContent() {
                         </button>
 
                         {/* Export */}
-                        {scanData && displayResults.length > 0 && (
+                        {scanData && displayResults.length > 0 && !batchRunning && (
                             <button
                                 onClick={exportCsv}
                                 className="flex items-center gap-2 px-4 py-2 bg-card border border-border/50 hover:border-primary/40 text-foreground font-medium rounded-xl text-sm transition-colors self-end"
@@ -610,24 +1038,81 @@ function PdaScannerContent() {
                         </div>
 
                         {/* Stuck-funds alert banner */}
-                        {scanData.stuck_count > 0 && (
+                        {scanData.stuck_count > 0 && !batchRunning && rowStatuses.size === 0 && (
                             <div className="bg-red-500/10 border border-red-500/40 rounded-2xl px-4 py-3 flex items-start gap-3">
                                 <AlertTriangle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
-                                <div>
+                                <div className="flex-1">
                                     <p className="text-sm font-semibold text-red-400">
                                         {scanData.stuck_count} wager{scanData.stuck_count !== 1 ? 's' : ''} with stuck funds detected
                                     </p>
                                     <p className="text-xs text-muted-foreground mt-0.5">
-                                        These PDAs still hold SOL even though the wager is resolved or cancelled.
-                                        Total: <span className="text-red-300 font-bold">{scanData.total_stuck_sol.toFixed(6)} SOL</span>.
-                                        Use the On-Chain Inspector link in each row to investigate and manually trigger payouts.
+                                        Total: <span className="text-red-300 font-bold">{scanData.total_stuck_sol.toFixed(6)} SOL</span>.{' '}
+                                        Tick the checkboxes on any <span className="text-red-300">🔴 STUCK_FUNDS</span> rows below, then use the batch actions panel to refund or resolve them.
                                     </p>
                                 </div>
+                                {stuckResults.length > 0 && (
+                                    <button
+                                        onClick={selectAll}
+                                        className="flex-shrink-0 text-xs font-semibold text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-400/50 px-3 py-1.5 rounded-lg transition-colors"
+                                    >
+                                        Select all {stuckResults.length}
+                                    </button>
+                                )}
                             </div>
                         )}
 
+                        {/* Batch progress bar */}
+                        <AnimatePresence>
+                            {batchRunning && batchAction && (
+                                <BatchProgressBar
+                                    done={batchDone}
+                                    total={batchTotal}
+                                    errors={batchErrors}
+                                    action={batchAction}
+                                    onStop={() => { stopRef.current = true; }}
+                                />
+                            )}
+                            {!batchRunning && batchAction && batchTotal > 0 && (
+                                <BatchProgressBar
+                                    done={batchDone}
+                                    total={batchTotal}
+                                    errors={batchErrors}
+                                    action={batchAction}
+                                    onStop={() => { }}
+                                />
+                            )}
+                        </AnimatePresence>
+
+                        {/* Batch action panel */}
+                        <AnimatePresence>
+                            {!batchRunning && (
+                                <BatchPanel
+                                    selectedIds={selectedIds}
+                                    allStuck={stuckResults}
+                                    onSelectAll={selectAll}
+                                    onClearAll={clearAll}
+                                    onExecute={executeBatch}
+                                    batchRunning={batchRunning}
+                                    results={rowStatuses}
+                                />
+                            )}
+                        </AnimatePresence>
+
                         {/* Filter bar */}
                         <div className="flex flex-wrap gap-3 items-center">
+                            {/* Select-all checkbox for stuck rows */}
+                            {stuckResults.length > 0 && !batchRunning && (
+                                <button
+                                    onClick={allStuckSelected ? clearAll : selectAll}
+                                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border/40 hover:border-primary/40 px-2.5 py-1.5 rounded-lg transition-colors"
+                                >
+                                    {allStuckSelected
+                                        ? <CheckSquare className="h-3.5 w-3.5 text-primary" />
+                                        : <Square className="h-3.5 w-3.5" />}
+                                    {allStuckSelected ? 'Deselect all stuck' : `Select all ${stuckResults.length} stuck`}
+                                </button>
+                            )}
+
                             {/* Verdict filter */}
                             <div className="flex items-center gap-1.5 flex-wrap">
                                 <Filter className="h-3.5 w-3.5 text-muted-foreground" />
@@ -665,6 +1150,9 @@ function PdaScannerContent() {
 
                             <span className="text-xs text-muted-foreground ml-auto">
                                 Showing {displayResults.length} of {scanData.scanned} scanned
+                                {selectedIds.size > 0 && (
+                                    <span className="text-primary font-semibold ml-2">· {selectedIds.size} selected</span>
+                                )}
                             </span>
                         </div>
 
@@ -675,6 +1163,22 @@ function PdaScannerContent() {
                                     <table className="w-full">
                                         <thead>
                                             <tr className="border-b border-border/30 bg-muted/20">
+                                                {/* Checkbox header */}
+                                                <th className="pl-3 pr-1 py-3 w-8">
+                                                    {stuckResults.length > 0 && !batchRunning && (
+                                                        <button
+                                                            onClick={allStuckSelected ? clearAll : selectAll}
+                                                            className="text-muted-foreground hover:text-primary transition-colors"
+                                                            title="Toggle all stuck"
+                                                        >
+                                                            {allStuckSelected
+                                                                ? <CheckSquare className="h-4 w-4 text-primary" />
+                                                                : someStuckSelected
+                                                                    ? <CheckSquare className="h-4 w-4 text-primary/50" />
+                                                                    : <Square className="h-4 w-4" />}
+                                                        </button>
+                                                    )}
+                                                </th>
                                                 <th className="px-3 py-3 text-left text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Match</th>
                                                 <th className="px-3 py-3 text-left text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Game</th>
                                                 <th className="px-3 py-3 text-left text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">DB Status</th>
@@ -701,9 +1205,21 @@ function PdaScannerContent() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {displayResults.map((r, i) => (
-                                                <ResultRow key={r.wager_id} r={r} idx={i} />
-                                            ))}
+                                            {displayResults.map((r, i) => {
+                                                const bRes = rowStatuses.get(r.wager_id);
+                                                return (
+                                                    <ResultRow
+                                                        key={r.wager_id}
+                                                        r={r}
+                                                        idx={i}
+                                                        selected={selectedIds.has(r.wager_id)}
+                                                        onToggle={toggleRow}
+                                                        rowStatus={bRes?.status ?? 'idle'}
+                                                        currentAction={batchAction}
+                                                        batchRunning={batchRunning}
+                                                    />
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
