@@ -40,6 +40,11 @@ async function logAdminAction(
     });
 }
 
+// Statuses from which an admin can still force-resolve or force-refund.
+// Includes "resolving"/"cancelling" so that wagers stuck by a prior CPU-timeout
+// crash can be retried without manual DB surgery.
+const RETRYABLE_STATUSES = ["voting", "joined", "disputed", "retractable", "resolving", "cancelling"];
+
 async function forceResolve(
     supabase: ReturnType<typeof getSupabase>,
     wagerId: string, winnerWallet: string, adminWallet: string,
@@ -51,15 +56,19 @@ async function forceResolve(
     if (winnerWallet !== wager.player_a_wallet && winnerWallet !== wager.player_b_wallet)
         throw new Error("Winner must be a participant in this wager");
 
-    if (!["voting", "joined", "disputed", "retractable"].includes(wager.status))
+    if (!RETRYABLE_STATUSES.includes(wager.status))
         throw new Error(`Cannot resolve wager with status: ${wager.status}`);
 
-    // Atomically claim the wager before touching the chain — prevents double-pay if two admins race
+    // If already stuck in "resolving" for a DIFFERENT winner, block the override
+    if (wager.status === "resolving" && wager.winner_wallet && wager.winner_wallet !== winnerWallet)
+        throw new Error("Wager is already resolving for a different winner — cannot override");
+
+    // Atomically claim — prevents double-pay if two admins race
     const { data: updatedWager, error: updateError } = await supabase
         .from("wagers")
         .update({ status: "resolving", winner_wallet: winnerWallet, resolved_at: new Date().toISOString() })
         .eq("id", wagerId)
-        .in("status", ["voting", "joined", "disputed", "retractable"])
+        .in("status", RETRYABLE_STATUSES)
         .select().single();
 
     if (updateError || !updatedWager)
@@ -123,7 +132,7 @@ async function forceResolve(
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[admin-action] forceResolve on-chain failed: ${msg}`);
-            // Roll back so an admin can retry
+            // Roll back to "disputed" so an admin can retry
             await supabase.from("wagers").update({ status: "disputed" }).eq("id", wagerId);
             if (pendingTx?.id) {
                 await supabase.from("wager_transactions").update({ status: "failed" }).eq("id", pendingTx.id);
@@ -132,7 +141,6 @@ async function forceResolve(
         }
     })();
 
-    // Keep the promise alive after the HTTP response is returned
     // @ts-ignore — EdgeRuntime is available in Supabase edge functions
     if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(onChainWork);
 
@@ -151,18 +159,18 @@ async function forceRefund(
     const { data: wager, error } = await supabase.from("wagers").select("*").eq("id", wagerId).single();
     if (error || !wager) throw new Error("Wager not found");
 
-    if (!["voting", "joined", "disputed", "retractable"].includes(wager.status))
+    if (!RETRYABLE_STATUSES.includes(wager.status))
         throw new Error(`Cannot refund wager with status: ${wager.status}`);
 
     if (!wager.player_b_wallet)
         throw new Error("Cannot refund single-player wager — player B hasn't joined yet");
 
-    // Atomically claim the wager — prevents double-refund
+    // Atomically claim — prevents double-refund
     const { data: updatedWager, error: updateError } = await supabase
         .from("wagers")
         .update({ status: "cancelling", resolved_at: new Date().toISOString() })
         .eq("id", wagerId)
-        .in("status", ["voting", "joined", "disputed", "retractable"])
+        .in("status", RETRYABLE_STATUSES)
         .select().single();
 
     if (updateError || !updatedWager)
@@ -218,7 +226,7 @@ async function forceRefund(
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[admin-action] forceRefund on-chain failed: ${msg}`);
-            // Roll back so an admin can retry
+            // Roll back to "disputed" so an admin can retry
             await supabase.from("wagers").update({ status: "disputed" }).eq("id", wagerId);
             if (pendingTxA?.id) await supabase.from("wager_transactions").update({ status: "failed" }).eq("id", pendingTxA.id);
             if (pendingTxB?.id) await supabase.from("wager_transactions").update({ status: "failed" }).eq("id", pendingTxB.id);
