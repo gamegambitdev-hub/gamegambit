@@ -38,7 +38,6 @@ export const metadata: Metadata = {
     type: 'website',
     images: [
       {
-        // ✅ Bug 3 fix — replaced /logo.png (tiny icon) with proper 1200×630 OG banner
         url: '/og-banner.png',
         width: 1200,
         height: 630,
@@ -50,7 +49,6 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Game Gambit | Competitive Gaming Wagers on Solana',
     description: 'Stake SOL. Prove your skills. Win on-chain. Chess, CODM, PUBG, Free Fire.',
-    // ✅ Bug 3 fix — replaced /logo.png with proper 1200×630 OG banner
     images: ['/og-banner.png'],
   },
   formatDetection: {
@@ -69,6 +67,12 @@ export const viewport: Viewport = {
   colorScheme: 'dark',
 }
 
+// ── Shell rendered for every non-admin route ──────────────────────────────────
+// This is a server component so we read the pathname via the children slot trick.
+// We can't use usePathname() here (server component), so we use a client
+// boundary component that reads the pathname and conditionally renders the shell.
+import { PublicShell } from '@/components/layout/PublicShell'
+
 export default function RootLayout({
   children,
 }: {
@@ -78,15 +82,9 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`${inter.variable} ${orbitron.variable} font-sans`}>
         <Providers>
-          <UsernameEnforcer>
-            <div className="min-h-screen bg-background flex flex-col">
-              <Header />
-              <main className="flex-1 pt-16 w-full overflow-x-hidden">
-                {children}
-              </main>
-              <Footer />
-            </div>
-          </UsernameEnforcer>
+          <PublicShell>
+            {children}
+          </PublicShell>
         </Providers>
       </body>
     </html>
