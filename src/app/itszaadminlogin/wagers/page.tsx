@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Dices, Search, Loader2, ChevronLeft, ChevronRight, AlertTriangle,
     CheckCircle2, X, RefreshCcw, Filter, ExternalLink, Copy, Check,
-    Swords, Clock, Trophy, Ban, RotateCcw, Shield, ChevronDown
+    Swords, Clock, Trophy, Ban, RotateCcw, Shield, ChevronDown, Cpu
 } from 'lucide-react';
+import Link from 'next/link';
 import { useAdminWagers, AdminWager } from '@/hooks/admin/useAdminWagers';
 import { useWallet } from '@solana/wallet-adapter-react';
 
@@ -101,9 +102,21 @@ function WagerDrawer({ wager, onClose, onAction, actionLoading }: {
                                 <p className="text-xs font-mono text-muted-foreground">{wager.id.slice(0, 16)}...</p>
                             </div>
                         </div>
-                        <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-                            <X className="h-5 w-5" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {/* On-Chain Inspector shortcut */}
+                            <Link
+                                href={`/itszaadminlogin/on-chain?q=${encodeURIComponent(wager.id)}`}
+                                onClick={onClose}
+                                title="View PDAs & on-chain balance"
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 transition-colors text-xs font-medium"
+                            >
+                                <Cpu className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">On-Chain</span>
+                            </Link>
+                            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -404,11 +417,20 @@ function WagersContent() {
                             <p className="text-sm text-muted-foreground">{total.toLocaleString()} total wagers</p>
                         </div>
                     </div>
-                    <button onClick={refreshWagers} disabled={loading}
-                        className="flex items-center gap-2 px-4 py-2 bg-card border border-border/50 hover:border-primary/40 rounded-xl text-sm text-foreground transition-colors disabled:opacity-50">
-                        <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                        <span className="hidden sm:inline">Refresh</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <Link
+                            href="/itszaadminlogin/on-chain"
+                            className="hidden sm:flex items-center gap-2 px-3 py-2 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 rounded-xl text-xs text-cyan-400 font-medium transition-colors"
+                        >
+                            <Cpu className="h-3.5 w-3.5" />
+                            On-Chain Inspector
+                        </Link>
+                        <button onClick={refreshWagers} disabled={loading}
+                            className="flex items-center gap-2 px-4 py-2 bg-card border border-border/50 hover:border-primary/40 rounded-xl text-sm text-foreground transition-colors disabled:opacity-50">
+                            <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                            <span className="hidden sm:inline">Refresh</span>
+                        </button>
+                    </div>
                 </motion.div>
 
                 {error && (

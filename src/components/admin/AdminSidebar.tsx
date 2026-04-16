@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
     LayoutDashboard, Users, Dices, Scale, AlertTriangle,
     Wallet, Link2, PenLine, Flag, Shield, LogOut,
-    ChevronLeft, ChevronRight, Menu, X, Settings
+    ChevronLeft, ChevronRight, Menu, X, Settings, Cpu
 } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
@@ -25,6 +25,7 @@ const navItems = [
     { label: 'Wagers', href: '/itszaadminlogin/wagers', icon: Dices },
     { label: 'Disputes', href: '/itszaadminlogin/disputes', icon: Scale },
     { label: 'Stuck Wagers', href: '/itszaadminlogin/stuck-wagers', icon: AlertTriangle },
+    { label: 'On-Chain', href: '/itszaadminlogin/on-chain', icon: Cpu },
     { label: 'Wallet', href: '/itszaadminlogin/wallet-bindings', icon: Wallet },
     { label: 'Appeals', href: '/itszaadminlogin/username-appeals', icon: Link2 },
     { label: 'Changes', href: '/itszaadminlogin/username-changes', icon: PenLine },
