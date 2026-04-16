@@ -6,13 +6,10 @@ import {
     PLATFORM_WALLET_STR,
     calculatePlatformFee,
     DISCRIMINATORS,
+    getSolana,
     getAuthority,
     deriveWagerPDA,
     sendAndConfirm,
-    Connection,
-    PublicKey,
-    TransactionInstruction,
-    SystemProgram,
 } from "./solana.ts";
 
 const CORS = {
@@ -85,8 +82,9 @@ async function forceResolve(
     // Fire on-chain work in the background — return 200 immediately
     const onChainWork = (async () => {
         try {
-            const authority = getAuthority();
-            const wagerPDA = deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
+            const { PublicKey, TransactionInstruction, SystemProgram } = await getSolana();
+            const authority = await getAuthority();
+            const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
             const winnerPubkey = new PublicKey(winnerWallet);
             const platformPubkey = new PublicKey(PLATFORM_WALLET_STR);
 
@@ -184,8 +182,9 @@ async function forceRefund(
 
     const onChainWork = (async () => {
         try {
-            const authority = getAuthority();
-            const wagerPDA = deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
+            const { PublicKey, TransactionInstruction, SystemProgram } = await getSolana();
+            const authority = await getAuthority();
+            const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
             const playerAPubkey = new PublicKey(wager.player_a_wallet);
             const playerBPubkey = new PublicKey(wager.player_b_wallet);
             const platformPubkey = new PublicKey(PLATFORM_WALLET_STR);
@@ -304,8 +303,9 @@ async function checkPdaBalance(
         .select("player_a_wallet, match_id, stake_lamports").eq("id", wagerId).single();
     if (error || !wager) throw new Error("Wager not found");
 
+    const { Connection } = await getSolana();
     const connection = new Connection(rpcUrl, "confirmed");
-    const wagerPDA = deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
+    const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
     const balance = await connection.getBalance(wagerPDA);
 
     await logAdminAction(supabase, "check_pda_balance", wagerId, null, adminWallet, null, {

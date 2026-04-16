@@ -1,6 +1,12 @@
 // supabase/functions/admin-action/solana.ts
-
-import * as web3 from "https://esm.sh/@solana/web3.js@1.98.0";
+//
+// FIX: Replaced static top-level `import * as web3 from "https://esm.sh/@solana/web3.js"`
+// with a lazy dynamic import (same pattern as secure-wager/solana.ts and process-verdict).
+//
+// Root cause of CPU timeout: the static import forced Deno to download and parse the
+// entire ~2 MB @solana/web3.js bundle at cold-start, exhausting the CPU budget before
+// the function could handle a single request. The lazy pattern defers that cost to the
+// first actual Solana call, after cold-start is already complete.
 
 export const PROGRAM_ID_STR = "E2Vd3U91kMrgwp8JCXcLSn7bt3NowDmGwoBYsVRhGfMR";
 export const PLATFORM_WALLET_STR = "3hwPwugeuZ33HWJ3SoJkDN2JT3Be9fH62r19ezFiCgYY";
@@ -22,18 +28,21 @@ export const DISCRIMINATORS = {
     close_wager: new Uint8Array([167, 240, 85, 147, 127, 50, 69, 203]),
 };
 
-// ── Re-export what index.ts needs directly ────────────────────────────────────
-export const {
-    Connection,
-    Keypair,
-    PublicKey,
-    Transaction,
-    TransactionInstruction,
-    SystemProgram,
-} = web3;
+// ── Lazy Solana import ────────────────────────────────────────────────────────
+// Matches the pattern used in secure-wager/solana.ts and process-verdict/index.ts.
+// Dynamic import defers bundle parsing to first use, keeping cold-start CPU cheap.
+let _solana: typeof import("https://esm.sh/@solana/web3.js@1.98.0") | null = null;
+
+export async function getSolana() {
+    if (!_solana) {
+        _solana = await import("https://esm.sh/@solana/web3.js@1.98.0");
+    }
+    return _solana;
+}
 
 // ── Keypair ───────────────────────────────────────────────────────────────────
-export function getAuthority() {
+export async function getAuthority() {
+    const { Keypair } = await getSolana();
     const raw = Deno.env.get("AUTHORITY_WALLET_SECRET");
     if (!raw) throw new Error("AUTHORITY_WALLET_SECRET is not set");
     let bytes: number[];
@@ -43,7 +52,8 @@ export function getAuthority() {
 }
 
 // ── PDA derivation ────────────────────────────────────────────────────────────
-export function deriveWagerPDA(playerAWallet: string, matchId: bigint) {
+export async function deriveWagerPDA(playerAWallet: string, matchId: bigint) {
+    const { PublicKey } = await getSolana();
     const matchIdBytes = new Uint8Array(8);
     new DataView(matchIdBytes.buffer).setBigUint64(0, matchId, true);
     const [pda] = PublicKey.findProgramAddressSync(
@@ -53,7 +63,7 @@ export function deriveWagerPDA(playerAWallet: string, matchId: bigint) {
     return pda;
 }
 
-// ── Send + confirm via SDK (no manual polling loop) ───────────────────────────
+// ── Send + confirm ────────────────────────────────────────────────────────────
 export async function sendAndConfirm(
     // deno-lint-ignore no-explicit-any
     authority: any,
@@ -61,6 +71,7 @@ export async function sendAndConfirm(
     instruction: any,
     rpcUrl: string,
 ): Promise<string> {
+    const { Connection, Transaction } = await getSolana();
     const connection = new Connection(rpcUrl, "confirmed");
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
 
@@ -75,8 +86,6 @@ export async function sendAndConfirm(
         preflightCommitment: "confirmed",
     });
 
-    // Use SDK confirmation — delegates to WebSocket subscription internally,
-    // avoiding the CPU-heavy manual polling loop that caused Edge Function timeouts.
     await connection.confirmTransaction(
         { signature, blockhash, lastValidBlockHeight },
         "confirmed",
