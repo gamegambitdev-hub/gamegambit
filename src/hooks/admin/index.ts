@@ -1,4 +1,5 @@
 export { useAdminAuth } from './useAdminAuth';
 export { useAdminProfile } from './useAdminProfile';
 export { useAdminWallet } from './useAdminWallet';
-export { useAdminSession, type AdminSession } from './useAdminSession';
+export { useAdminSession } from './useAdminSession';
+export type { AdminSession } from '@/types/admin';
