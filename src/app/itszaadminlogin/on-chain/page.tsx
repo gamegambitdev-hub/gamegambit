@@ -1,5 +1,13 @@
 'use client';
 
+// src/app/itszaadminlogin/on-chain/page.tsx
+//
+// Force dynamic rendering — this page uses useSearchParams() which requires
+// it to opt out of Next.js static generation, otherwise the build may
+// silently fail to render this route and it won't appear accessible.
+
+export const dynamic = 'force-dynamic';
+
 import { Suspense, useState, useCallback, useEffect } from 'react';
 import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -327,7 +335,7 @@ function OnChainInspectorContent() {
     }, [query]);
 
     // Pre-fill and auto-run from URL param ?q=...
-    // (used when navigating from the Wagers drawer "On-Chain" button)
+    // (used when navigating from the Wagers drawer "On-Chain" button or PDA Scanner)
     useEffect(() => {
         const preload = searchParams.get('q');
         if (preload) {

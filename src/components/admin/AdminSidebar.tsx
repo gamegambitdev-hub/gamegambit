@@ -1,11 +1,13 @@
 'use client'
 
+// src/components/admin/AdminSidebar.tsx
+
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     LayoutDashboard, Users, Dices, Scale, AlertTriangle,
     Wallet, Link2, PenLine, Flag, Shield, LogOut,
-    ChevronLeft, ChevronRight, Menu, X, Settings, Cpu
+    ChevronLeft, ChevronRight, Menu, X, Settings, Cpu, ScanSearch
 } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
@@ -25,7 +27,10 @@ const navItems = [
     { label: 'Wagers', href: '/itszaadminlogin/wagers', icon: Dices },
     { label: 'Disputes', href: '/itszaadminlogin/disputes', icon: Scale },
     { label: 'Stuck Wagers', href: '/itszaadminlogin/stuck-wagers', icon: AlertTriangle },
+    // ── On-Chain section ──────────────────────────────────────────────────────
     { label: 'On-Chain', href: '/itszaadminlogin/on-chain', icon: Cpu },
+    { label: 'PDA Scanner', href: '/itszaadminlogin/pda-scanner', icon: ScanSearch },
+    // ── Admin tools ───────────────────────────────────────────────────────────
     { label: 'Wallet', href: '/itszaadminlogin/wallet-bindings', icon: Wallet },
     { label: 'Appeals', href: '/itszaadminlogin/username-appeals', icon: Link2 },
     { label: 'Changes', href: '/itszaadminlogin/username-changes', icon: PenLine },
@@ -91,51 +96,64 @@ export function AdminSidebar() {
 
             {/* Nav */}
             <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-0.5">
-                {navItems.map((item) => {
+                {navItems.map((item, index) => {
+                    // Insert a subtle divider before "On-Chain" and "Wallet"
+                    const showDivider =
+                        item.href === '/itszaadminlogin/on-chain' ||
+                        item.href === '/itszaadminlogin/wallet-bindings'
+
                     const isActive = pathname === item.href
                     const Icon = item.icon
+
                     return (
-                        <Link
-                            key={item.href}
-                            href={item.href}
-                            onClick={() => setMobileOpen(false)}
-                            title={!expanded && !mobile ? item.label : undefined}
-                            className={cn(
-                                "group relative flex items-center gap-3 rounded-xl transition-all duration-200 font-medium text-sm",
-                                expanded || mobile ? "px-3 py-2.5" : "px-2 py-2.5 justify-center",
-                                isActive
-                                    ? "bg-primary/15 text-primary border border-primary/25 shadow-sm shadow-primary/10"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                        <div key={item.href}>
+                            {showDivider && (
+                                <div className={cn(
+                                    "my-2 border-t border-border/30",
+                                    !expanded && !mobile && "mx-1"
+                                )} />
                             )}
-                        >
-                            {isActive && (
-                                <motion.div
-                                    layoutId="activeNav"
-                                    className="absolute inset-0 rounded-xl bg-primary/10"
-                                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                                />
-                            )}
-                            <Icon className={cn("relative z-10 flex-shrink-0", expanded || mobile ? "h-4 w-4" : "h-5 w-5")} />
-                            <AnimatePresence initial={false}>
-                                {(expanded || mobile) && (
-                                    <motion.span
-                                        initial={{ opacity: 0, width: 0 }}
-                                        animate={{ opacity: 1, width: 'auto' }}
-                                        exit={{ opacity: 0, width: 0 }}
-                                        transition={{ duration: 0.15 }}
-                                        className="relative z-10 overflow-hidden whitespace-nowrap"
-                                    >
-                                        {item.label}
-                                    </motion.span>
+                            <Link
+                                href={item.href}
+                                onClick={() => setMobileOpen(false)}
+                                title={!expanded && !mobile ? item.label : undefined}
+                                className={cn(
+                                    "group relative flex items-center gap-3 rounded-xl transition-all duration-200 font-medium text-sm",
+                                    expanded || mobile ? "px-3 py-2.5" : "px-2 py-2.5 justify-center",
+                                    isActive
+                                        ? "bg-primary/15 text-primary border border-primary/25 shadow-sm shadow-primary/10"
+                                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                                 )}
-                            </AnimatePresence>
-                            {/* Tooltip for collapsed */}
-                            {!expanded && !mobile && (
-                                <div className="absolute left-full ml-2.5 px-2.5 py-1.5 bg-popover border border-border rounded-lg text-xs font-medium text-foreground whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 shadow-lg">
-                                    {item.label}
-                                </div>
-                            )}
-                        </Link>
+                            >
+                                {isActive && (
+                                    <motion.div
+                                        layoutId="activeNav"
+                                        className="absolute inset-0 rounded-xl bg-primary/10"
+                                        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                                    />
+                                )}
+                                <Icon className={cn("relative z-10 flex-shrink-0", expanded || mobile ? "h-4 w-4" : "h-5 w-5")} />
+                                <AnimatePresence initial={false}>
+                                    {(expanded || mobile) && (
+                                        <motion.span
+                                            initial={{ opacity: 0, width: 0 }}
+                                            animate={{ opacity: 1, width: 'auto' }}
+                                            exit={{ opacity: 0, width: 0 }}
+                                            transition={{ duration: 0.15 }}
+                                            className="relative z-10 overflow-hidden whitespace-nowrap"
+                                        >
+                                            {item.label}
+                                        </motion.span>
+                                    )}
+                                </AnimatePresence>
+                                {/* Tooltip for collapsed */}
+                                {!expanded && !mobile && (
+                                    <div className="absolute left-full ml-2.5 px-2.5 py-1.5 bg-popover border border-border rounded-lg text-xs font-medium text-foreground whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 shadow-lg">
+                                        {item.label}
+                                    </div>
+                                )}
+                            </Link>
+                        </div>
                     )
                 })}
             </nav>
