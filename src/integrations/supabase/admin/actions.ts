@@ -6,7 +6,7 @@ const supabase = getSupabaseClient();
  * Call edge function for admin actions
  */
 export async function callAdminAction(
-    action: 'force_resolve' | 'force_refund' | 'mark_disputed' | 'ban_player' | 'flag_player' | 'unban_player' | 'banPlayer' | 'unbanPlayer' | 'flagPlayer' | 'unflagPlayer',
+    action: 'force_resolve' | 'force_refund' | 'mark_disputed' | 'ban_player' | 'flag_player' | 'unban_player' | 'unflag_player' | 'banPlayer' | 'unbanPlayer' | 'flagPlayer' | 'unflagPlayer',
     payload: Record<string, any>,
     adminWallet: string
 ) {
@@ -52,6 +52,10 @@ export async function flagPlayer(playerWallet: string, adminWallet: string, reas
 
 export async function unbanPlayer(playerWallet: string, adminWallet: string) {
     return callAdminAction('unban_player', { playerWallet }, adminWallet);
+}
+
+export async function unflagPlayer(playerWallet: string, adminWallet: string) {
+    return callAdminAction('unflag_player', { playerWallet }, adminWallet);
 }
 
 /**
