@@ -326,6 +326,7 @@ function ArenaInner() {
 
   // ── Modal state ──────────────────────────────────────────────────────────
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [prefilledOpponent, setPrefilledOpponent] = useState<any | null>(null)
   const [quickMatchOpen, setQuickMatchOpen] = useState(false)
   const [selectedWager, setSelectedWager] = useState<Wager | null>(null)
   const [detailsModalOpen, setDetailsModalOpen] = useState(false)
@@ -391,10 +392,23 @@ function ArenaInner() {
   const [deepLinkGameCompleteId, setDeepLinkGameCompleteId] = useState<string | null>(null)
   const [deepLinkVotingId, setDeepLinkVotingId] = useState<string | null>(null)
   const [deepLinkDetailsId, setDeepLinkDetailsId] = useState<string | null>(null)
+  const [deepLinkChallengeWallet, setDeepLinkChallengeWallet] = useState<string | null>(null)
 
   useEffect(() => {
     const wagerId = searchParams.get('wager')
     const modal = searchParams.get('modal')
+    const challengeWallet = searchParams.get('challenge')
+
+    if (challengeWallet) {
+      // Pre-open CreateWagerModal in challenge mode with the given wallet
+      // usePlayerByWallet is called below; we store the wallet so the effect
+      // can fire once the player record loads.
+      setDeepLinkChallengeWallet(challengeWallet)
+      const url = new URL(window.location.href)
+      url.searchParams.delete('challenge')
+      window.history.replaceState({}, '', url.pathname + url.search)
+    }
+
     if (!wagerId || !modal) return
 
     if (modal === 'ready-room') setReadyRoomWagerId(wagerId)
@@ -478,6 +492,7 @@ function ArenaInner() {
   const { data: deepLinkGameCompleteWager } = useWagerById(deepLinkGameCompleteId)
   const { data: deepLinkVotingWager } = useWagerById(deepLinkVotingId)
   const { data: deepLinkDetailsWager } = useWagerById(deepLinkDetailsId)
+  const { data: deepLinkChallengePlayer } = usePlayerByWallet(deepLinkChallengeWallet)
 
   // Only fire the search query when there's actual input
   const { data: searchedPlayers, isLoading: searchLoading } = useSearchPlayers(
@@ -513,6 +528,14 @@ function ArenaInner() {
     setVotingOpen(true)
     setDeepLinkVotingId(null)
   }, [deepLinkVotingWager, deepLinkVotingId, votingOpen])
+
+  // ── Open CreateWagerModal when ?challenge= player data arrives ───────────
+  useEffect(() => {
+    if (!deepLinkChallengePlayer || !deepLinkChallengeWallet) return
+    setPrefilledOpponent(deepLinkChallengePlayer)
+    setCreateModalOpen(true)
+    setDeepLinkChallengeWallet(null)
+  }, [deepLinkChallengePlayer, deepLinkChallengeWallet])
 
   // ── Open WagerDetailsModal when deep-link wager data arrives ─────────────
   useEffect(() => {
@@ -1058,9 +1081,14 @@ function ArenaInner() {
       {/* ── Modals ────────────────────────────────────────────────────────── */}
       <CreateWagerModal
         open={createModalOpen}
-        onOpenChange={setCreateModalOpen}
+        onOpenChange={(open) => {
+          setCreateModalOpen(open)
+          if (!open) setPrefilledOpponent(null)
+        }}
+        prefilledOpponent={prefilledOpponent}
         onSuccess={() => {
           setCreateModalOpen(false)
+          setPrefilledOpponent(null)
           queryClient.invalidateQueries({ queryKey: ['wagers'] })
         }}
       />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,7 @@ interface CreateWagerModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  prefilledOpponent?: Player | null;
 }
 
 const GAME_OPTIONS: { value: GameType; label: string; icon: string; live: boolean }[] = [
@@ -75,7 +76,7 @@ export type SidePreference = 'random' | 'white' | 'black';
 
 type WagerMode = 'open' | 'challenge';
 
-export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerModalProps) {
+export function CreateWagerModal({ open, onOpenChange, onSuccess, prefilledOpponent }: CreateWagerModalProps) {
   const { publicKey } = useWallet();
   const [wagerMode, setWagerMode] = useState<WagerMode>('open');
   const [selectedGame, setSelectedGame] = useState<GameType>('chess');
@@ -88,6 +89,14 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
   const [isRated, setIsRated] = useState(false);
   const [isConnectingLichess, setIsConnectingLichess] = useState(false);
   const [sidePreference, setSidePreference] = useState<SidePreference>('random');
+
+  // When modal opens with a prefilled opponent, switch to challenge mode and pre-select them
+  useEffect(() => {
+    if (open && prefilledOpponent) {
+      setWagerMode('challenge');
+      setSelectedOpponent(prefilledOpponent);
+    }
+  }, [open, prefilledOpponent]);
 
   const createWager = useCreateWager();
   const { data: balance } = useWalletBalance();
