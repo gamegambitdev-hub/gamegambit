@@ -166,10 +166,10 @@ export function NotificationsDropdown() {
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        <Button variant="ghost" size="icon" className="relative overflow-visible">
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-destructive flex items-center justify-center">
+            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-destructive flex items-center justify-center z-10 pointer-events-none">
               <span className="text-[9px] font-bold text-white leading-none">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
@@ -184,16 +184,16 @@ export function NotificationsDropdown() {
         className="w-[min(320px,calc(100vw-12px))] p-0 bg-card border-border"
       >
         {/* Header */}
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-border">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <h3 className="font-gaming text-sm">Notifications</h3>
             {unreadCount > 0 && (
               <button
                 onClick={markAllRead}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1 px-2 rounded-md hover:bg-muted min-h-[32px]"
               >
-                <CheckCheck className="h-3 w-3" />
-                Mark all read
+                <CheckCheck className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="whitespace-nowrap">Mark all read</span>
               </button>
             )}
           </div>
@@ -238,17 +238,17 @@ export function NotificationsDropdown() {
                           )}
                         </div>
                         {(notification.type === 'wager_proposal' || notification.type === 'rematch_challenge') && notification.wager_id && (
-                          <div className="flex gap-2 mt-2" onClick={e => e.stopPropagation()}>
-                            <Button size="sm" variant="outline" className="h-6 text-xs"
+                          <div className="flex gap-2 mt-3" onClick={e => e.stopPropagation()}>
+                            <Button size="sm" variant="outline" className="h-9 px-4 text-xs font-semibold flex-1"
                               onClick={() => handleAccept(notification)}
                             >
-                              Accept
+                              ✓ Accept
                             </Button>
-                            <Button size="sm" variant="ghost" className="h-6 text-xs text-destructive"
+                            <Button size="sm" variant="ghost" className="h-9 px-4 text-xs text-destructive hover:bg-destructive/10 flex-1"
                               disabled={decliningId === notification.id}
                               onClick={() => handleDecline(notification)}
                             >
-                              {decliningId === notification.id ? 'Declining…' : 'Decline'}
+                              {decliningId === notification.id ? 'Declining…' : '✕ Decline'}
                             </Button>
                           </div>
                         )}
