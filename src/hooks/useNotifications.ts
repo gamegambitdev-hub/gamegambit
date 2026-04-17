@@ -117,11 +117,10 @@ export function useNotifications() {
         return () => { supabase.removeChannel(channel) }
     }, [wallet])
 
-    // Subscribe to Web Push once wallet connects
-    useEffect(() => {
-        if (!wallet) return
-        subscribeToPush(wallet).catch(() => { })
-    }, [wallet])
+    // NOTE: Push subscription is NOT auto-called here anymore.
+    // It must be triggered by a real user gesture (the settings toggle).
+    // Mobile browsers silently block Notification.requestPermission()
+    // unless called directly from a tap/click handler.
 
     const markAllRead = useCallback(async () => {
         if (!wallet) return
@@ -156,7 +155,9 @@ export function useNotifications() {
 }
 
 // ── Web Push subscription ─────────────────────────────────────────────────────
-async function subscribeToPush(wallet: string): Promise<void> {
+// Exported so settings/page.tsx can call it directly from a user tap — required
+// by mobile browsers to show the permission prompt.
+export async function subscribeToPush(wallet: string): Promise<void> {
     try {
         if (typeof window === 'undefined') return
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) return

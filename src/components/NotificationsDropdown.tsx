@@ -110,51 +110,33 @@ export function NotificationsDropdown() {
   ): { route: NotificationRoute; modal: string } => {
     switch (type) {
       case 'wager_joined':
-        // Someone joined my wager — go to ready room
         return { route: 'arena', modal: 'ready-room' };
-
       case 'game_started':
-        // "Opponent confirmed game done" OR "Both confirmed — vote now"
-        // Both of these should open the GameCompleteModal so the player can
-        // confirm (or see the countdown before voting opens).
         return { route: 'arena', modal: 'game-complete' };
-
       case 'wager_vote':
-        // "Votes agree", "Time to vote", or "Opponent voted" — open VotingModal
         return { route: 'arena', modal: 'voting' };
-
       case 'wager_won':
       case 'wager_lost':
       case 'wager_draw':
         return { route: 'my-wagers', modal: 'result' };
-
       case 'wager_cancelled':
         return { route: 'my-wagers', modal: 'details' };
-
       case 'rematch_challenge':
         return { route: 'arena', modal: 'details' };
-
       case 'chat_message':
       case 'wager_proposal':
         return { route: 'arena', modal: 'ready-room' };
-
       case 'wager_disputed':
         return { route: 'my-wagers', modal: 'details' };
-
       case 'moderation_request':
-        // No modal param — ModerationOrchestrator auto-surfaces the panel
         return { route: 'dashboard', modal: '' };
-
       case 'friend_request':
       case 'friend_accepted':
         return { route: 'my-wagers', modal: '' };
-
       case 'feed_reaction':
         return { route: 'my-wagers', modal: 'details' };
-
       case 'new_follower':
         return { route: 'my-wagers', modal: '' };
-
       default:
         return { route: 'my-wagers', modal: 'details' };
     }
@@ -195,7 +177,12 @@ export function NotificationsDropdown() {
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80 p-0 bg-card border-border">
+      {/* w-[min(320px,calc(100vw-12px))] prevents overflow on narrow phones */}
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className="w-[min(320px,calc(100vw-12px))] p-0 bg-card border-border"
+      >
         {/* Header */}
         <div className="p-4 border-b border-border">
           <div className="flex items-center justify-between">
@@ -212,8 +199,8 @@ export function NotificationsDropdown() {
           </div>
         </div>
 
-        {/* List */}
-        <div className="max-h-96 overflow-y-auto">
+        {/* List — max-h-[min(384px,70vh)] prevents overflow on short phone screens */}
+        <div className="max-h-[min(384px,70vh)] overflow-y-auto">
           {loading ? (
             <div className="py-12 flex items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />

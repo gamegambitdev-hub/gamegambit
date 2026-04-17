@@ -71,7 +71,8 @@ function LeaderboardRow({ player, rank, sortBy }: { player: Player; rank: number
                   {player.total_wins}W - {player.total_losses}L
                 </div>
               </div>
-              <div className="flex items-center gap-1" onClick={e => { e.preventDefault(); e.stopPropagation() }}>
+              {/* Hidden on mobile — profile page has full controls */}
+              <div className="hidden sm:flex items-center gap-1" onClick={e => { e.preventDefault(); e.stopPropagation() }}>
                 <FriendButton targetWallet={player.wallet_address} size="sm" />
                 <FollowButton targetWallet={player.wallet_address} size="sm" />
               </div>
