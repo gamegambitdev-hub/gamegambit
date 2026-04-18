@@ -76,15 +76,17 @@ function buildInstructionData(
   ...args: (bigint | boolean | string | PublicKey)[]
 ): Buffer {
   if (args.length > 0) {
-    console.log('[buildInstructionData] encoding args:', args.map((a) =>
-      typeof a === 'bigint'
-        ? { type: 'bigint', value: a.toString(), asSol: Number(a) / LAMPORTS_PER_SOL }
-        : typeof a === 'boolean'
-          ? { type: 'bool', value: a }
-          : typeof a === 'string'
-            ? { type: 'string', value: a }
-            : { type: 'PublicKey', value: (a as PublicKey).toBase58() }
-    ));
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[buildInstructionData] encoding args:', args.map((a) =>
+        typeof a === 'bigint'
+          ? { type: 'bigint', value: a.toString(), asSol: Number(a) / LAMPORTS_PER_SOL }
+          : typeof a === 'boolean'
+            ? { type: 'bool', value: a }
+            : typeof a === 'string'
+              ? { type: 'string', value: a }
+              : { type: 'PublicKey', value: (a as PublicKey).toBase58() }
+      ));
+    }
   }
 
   const parts: Uint8Array[] = [new Uint8Array(discriminator as number[])];
@@ -146,7 +148,8 @@ export function normalizeSolanaError(err: unknown): string {
   if (lower.includes('already in use') || lower.includes('already deposited'))
     return 'already_deposited';
 
-  return msg;
+  // ERR-01: catch-all — never expose raw RPC noise to users
+  return 'Transaction failed — please try again.';
 }
 
 // ── Send tx via wallet adapter ────────────────────────────────────────────────
@@ -181,21 +184,23 @@ async function sendAndConfirmViaAdapter(
   connection: any,
 ): Promise<string> {
   const ixs = Array.isArray(instructions) ? instructions : [instructions];
-  console.log('[sendAndConfirmViaAdapter] fetching latest blockhash…');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[sendAndConfirmViaAdapter] fetching latest blockhash…');
+  }
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
   // FIX 4: uses buildFullTransaction so the sent tx matches the pre-simulated one.
   const tx = buildFullTransaction(ixs, payer, blockhash);
 
-  console.log('[sendAndConfirmViaAdapter] sending tx, payer:', payer.toBase58(), 'blockhash:', blockhash);
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[sendAndConfirmViaAdapter] sending tx, payer:', payer.toBase58(), 'blockhash:', blockhash);
+  }
 
-  // FIX 1: removed skipPreflight: true opts.
-  // With skipPreflight Phantom skips its own simulation and can't model the SOL
-  // transfer — it falls back to showing only the raw network fee (~0.00001 SOL).
-  // Without it, Phantom simulates the full tx and shows the real stake amount.
   const signature = await sendTransaction(tx, connection);
 
-  console.log('[sendAndConfirmViaAdapter] tx sent, signature:', signature, '— confirming…');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[sendAndConfirmViaAdapter] tx sent, signature:', signature, '— confirming…');
+  }
 
   await connection.confirmTransaction(
     { signature, blockhash, lastValidBlockHeight },
@@ -421,7 +426,11 @@ export function useCreateWagerOnChain() {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
     onError: (error: Error) => {
-      console.error('[createWager] onError:', normalizeSolanaError(error));
+      const msg = normalizeSolanaError(error);
+      console.error('[createWager] onError:', msg);
+      if (msg !== 'already_deposited') {
+        toast.error('Deposit failed', { description: msg });
+      }
     },
   });
 }
@@ -604,7 +613,11 @@ export function useJoinWagerOnChain() {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
     onError: (error: Error) => {
-      console.error('[joinWager] onError:', normalizeSolanaError(error));
+      const msg = normalizeSolanaError(error);
+      console.error('[joinWager] onError:', msg);
+      if (msg !== 'already_deposited') {
+        toast.error('Deposit failed', { description: msg });
+      }
     },
   });
 }

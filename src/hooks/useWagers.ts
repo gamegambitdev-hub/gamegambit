@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletAuth } from './useWalletAuth';
+import { toast } from 'sonner';
 
 export type WagerStatus = 'created' | 'joined' | 'voting' | 'retractable' | 'disputed' | 'resolved' | 'cancelled';
 export type GameType = 'chess' | 'pubg' | 'codm' | 'free_fire';
@@ -266,6 +267,10 @@ export function useCreateWager() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useCreateWager] error:', error);
+      toast.error('Failed to create wager', { description: error.message });
+    },
   });
 }
 
@@ -281,6 +286,10 @@ export function useJoinWager() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useJoinWager] error:', error);
+      toast.error('Failed to join wager', { description: error.message });
+    },
   });
 }
 
@@ -304,6 +313,10 @@ export function useSubmitVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useSubmitVote] error:', error);
+      toast.error('Failed to submit vote', { description: error.message });
+    },
   });
 }
 
@@ -334,6 +347,10 @@ export function useEditWager() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useEditWager] error:', error);
+      toast.error('Failed to edit wager', { description: error.message });
+    },
   });
 }
 
@@ -348,6 +365,10 @@ export function useDeleteWager() {
       return invokeSecureWager<{ success: boolean }>({ action: 'delete', wagerId }, sessionToken);
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useDeleteWager] error:', error);
+      toast.error('Failed to delete wager', { description: error.message });
+    },
   });
 }
 
@@ -363,6 +384,10 @@ export function useSetReady() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useSetReady] error:', error);
+      toast.error('Failed to update ready status', { description: error.message });
+    },
   });
 }
 
@@ -378,6 +403,10 @@ export function useStartGame() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useStartGame] error:', error);
+      toast.error('Failed to start game', { description: error.message });
+    },
   });
 }
 
@@ -413,6 +442,10 @@ export function useCheckGameComplete() {
 
       return result;
     },
+    onError: (error: Error) => {
+      console.error('[useCheckGameComplete] error:', error);
+      toast.error('Failed to check game status', { description: error.message });
+    },
   });
 }
 
@@ -433,6 +466,10 @@ export function useCancelWager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
+    },
+    onError: (error: Error) => {
+      console.error('[useCancelWager] error:', error);
+      toast.error('Failed to cancel wager', { description: error.message });
     },
   });
 }
@@ -458,6 +495,10 @@ export function useMarkGameComplete() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useMarkGameComplete] error:', error);
+      toast.error('Failed to mark game complete', { description: error.message });
+    },
   });
 }
 
@@ -485,6 +526,10 @@ export function useSubmitGameVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useSubmitGameVote] error:', error);
+      toast.error('Failed to submit vote', { description: error.message });
+    },
   });
 }
 
@@ -506,6 +551,10 @@ export function useRetractVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useRetractVote] error:', error);
+      toast.error('Failed to retract vote', { description: error.message });
+    },
   });
 }
 
@@ -527,6 +576,10 @@ export function useFinalizeVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useFinalizeVote] error:', error);
+      toast.error('Failed to finalize vote', { description: error.message });
+    },
   });
 }
 
@@ -541,5 +594,9 @@ export function useDeclineChallenge() {
       return invokeSecureWager<{ success: boolean }>({ action: 'declineChallenge', wagerId }, sessionToken);
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useDeclineChallenge] error:', error);
+      toast.error('Failed to decline challenge', { description: error.message });
+    },
   });
 }
