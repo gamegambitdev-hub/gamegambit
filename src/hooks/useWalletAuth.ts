@@ -15,8 +15,15 @@ function removeToken() {
 
 function isTokenExpired(token: string): boolean {
   try {
-    const payload = JSON.parse(atob(token.split('.')[0]))
-    return payload.exp < Date.now()
+    // BUG-11: token format is base64(payload).hmacHash — use lastIndexOf to
+    // find the real split point instead of split('.')[0] which grabbed the
+    // wrong segment (the header) and always returned undefined for exp.
+    const dotIndex = token.lastIndexOf('.');
+    if (dotIndex === -1) return true;
+    const payloadStr = atob(token.substring(0, dotIndex));
+    const payload = JSON.parse(payloadStr);
+    if (!payload.exp) return true;
+    return payload.exp < Date.now();
   } catch { return true }
 }
 

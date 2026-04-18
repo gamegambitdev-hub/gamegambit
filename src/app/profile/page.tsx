@@ -128,6 +128,15 @@ function ProfilePageInner() {
   const [copiedAddress, setCopiedAddress] = useState(false)
   const [isConnectingLichess, setIsConnectingLichess] = useState(false)
 
+  useEffect(() => {
+    if (connected && publicKey) {
+      // BUG-03: Pre-warm session token on profile mount so it doesn't go stale
+      // between visits. Silent — no UI feedback needed, just ensures the token
+      // is fresh before any profile action fires.
+      getSessionToken().catch(() => { });
+    }
+  }, [connected, publicKey])
+
   // ── Lichess OAuth return ──────────────────────────────────────────────────
   useEffect(() => {
     const lichessParam = searchParams?.get('lichess')

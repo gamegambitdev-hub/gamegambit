@@ -154,7 +154,9 @@ async function getWager(supabase: Supabase, wagerId: string) {
 export async function handleCreate(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { game, stake_lamports, is_public, stream_url, chess_clock_limit, chess_clock_increment, chess_rated, chess_side_preference } = data;
     if (!game || !['chess', 'codm', 'pubg', 'free_fire'].includes(game as string)) return respond({ error: 'Invalid game type' }, 400);
-    if (!stake_lamports || (stake_lamports as number) <= 0) return respond({ error: 'Invalid stake amount' }, 400);
+    // SEC-06: require stake to be a positive integer (lamports are whole numbers —
+    // fractional lamports would corrupt on-chain accounting)
+    if (!stake_lamports || !Number.isInteger(stake_lamports as number) || (stake_lamports as number) <= 0) return respond({ error: 'Invalid stake amount — must be a positive integer (lamports)' }, 400);
 
     const { data: creator } = await supabase.from('players').select('is_suspended').eq('wallet_address', walletAddress).single();
     if (creator?.is_suspended) return respond({ error: 'Your account is suspended. You cannot create wagers until the suspension expires.' }, 403);
@@ -298,7 +300,7 @@ export async function handleApplyProposal(supabase: Supabase, walletAddress: str
     if (!isParticipant) return respond({ error: 'Not a participant in this wager' }, 403);
     const allowedFields = ['stake_lamports', 'is_public', 'stream_url'];
     if (!allowedFields.includes(field as string)) return respond({ error: `Field '${field}' cannot be changed via proposal` }, 400);
-    if (field === 'stake_lamports' && (typeof newValue !== 'number' || newValue <= 0)) return respond({ error: 'Invalid stake amount' }, 400);
+    if (field === 'stake_lamports' && (typeof newValue !== 'number' || !Number.isInteger(newValue) || newValue <= 0)) return respond({ error: 'Invalid stake amount — must be a positive integer (lamports)' }, 400);
     const { data: updatedWager, error } = await supabase.from('wagers').update({ [field as string]: newValue }).eq('id', wagerId).select().single();
     if (error) { console.error('[actions] apply proposal DB error:', error); return respond({ error: 'Failed to apply proposal' }, 500); }
     return respond({ wager: updatedWager });
@@ -977,4 +979,4 @@ async function tryCreateLichessGame(
         console.error(`[actions] createLichessGame failed for wager ${wagerId}:`, err instanceof Error ? err.message : String(err));
         return {};
     }
-} 
+}

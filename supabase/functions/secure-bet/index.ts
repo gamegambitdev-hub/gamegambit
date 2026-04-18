@@ -1,14 +1,38 @@
 // supabase/functions/secure-bet/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.2";
-import {
-    Connection,
-    Keypair,
-    PublicKey,
-    SystemProgram,
-    Transaction,
-    LAMPORTS_PER_SOL,
-} from "https://esm.sh/@solana/web3.js@1.98.0";
+// NOTE: @solana/web3.js is intentionally NOT imported at the top level.
+// It's a large package that causes CPU Time exceeded on Supabase free tier
+// when loaded on every cold start. It's dynamically imported only inside
+// payoutFromPlatform, which runs only during actual payout operations.
+
+// SEC-07: Import the same validateSessionToken used by secure-wager so both
+// functions validate sessions identically. The old inline DB lookup
+// (querying wallet_sessions table directly) was inconsistent and caused
+// silent 401s for valid sessions that hadn't been written to that table.
+const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+async function validateSessionToken(token: string): Promise<string | null> {
+    try {
+        const dotIndex = token.lastIndexOf('.');
+        if (dotIndex === -1) return null;
+        const payloadB64 = token.substring(0, dotIndex);
+        const hash = token.substring(dotIndex + 1);
+        let payloadStr: string;
+        try { payloadStr = atob(payloadB64); } catch { return null; }
+        let payload: { wallet: string; exp: number };
+        try { payload = JSON.parse(payloadStr); } catch { return null; }
+        if (!payload.wallet || !payload.exp) return null;
+        if (payload.exp < Date.now()) return null;
+        const encoder = new TextEncoder();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(payloadStr + supabaseServiceKey));
+        const computedHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        if (computedHash !== hash) return null;
+        return payload.wallet;
+    } catch {
+        return null;
+    }
+}
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -22,27 +46,17 @@ const RPC_URL =
     Deno.env.get("SOLANA_RPC_URL") ??
     "https://api.devnet.solana.com";
 
-// ── Auth helper ───────────────────────────────────────────────────────────────
-
-async function getWalletFromToken(
-    supabase: ReturnType<typeof createClient>,
-    token: string
-): Promise<string | null> {
-    const { data } = await supabase
-        .from("wallet_sessions")
-        .select("wallet_address")
-        .eq("session_token", token)
-        .gt("expires_at", new Date().toISOString())
-        .single();
-    return data?.wallet_address ?? null;
-}
-
 // ── SOL payout from platform wallet ──────────────────────────────────────────
 
 async function payoutFromPlatform(
     recipientWallet: string,
     lamports: number
 ): Promise<string> {
+    // Dynamic import — keeps @solana/web3.js out of the cold-start bundle.
+    // Only loaded when an actual payout is triggered.
+    const { Connection, Keypair, PublicKey, SystemProgram, Transaction } =
+        await import("https://esm.sh/@solana/web3.js@1.98.0");
+
     const connection = new Connection(RPC_URL, "confirmed");
     const privateKeyRaw = Deno.env.get("AUTHORITY_WALLET_SECRET");
     if (!privateKeyRaw) throw new Error("AUTHORITY_WALLET_SECRET not set");
@@ -82,13 +96,13 @@ serve(async (req) => {
     try {
         const supabase = createClient(
             Deno.env.get("SUPABASE_URL")!,
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+            supabaseServiceKey
         );
 
         const token = req.headers.get("x-session-token");
         if (!token) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
 
-        const callerWallet = await getWalletFromToken(supabase, token);
+        const callerWallet = await validateSessionToken(token);
         if (!callerWallet) return new Response(JSON.stringify({ error: "Invalid or expired session" }), { status: 401, headers: corsHeaders });
 
         const body = await req.json();
