@@ -133,6 +133,9 @@ export function useLichessConnected() {
       return (data as any) ?? null;
     },
     enabled: !!walletAddress,
+    // BUG-02: cache for 60s — Lichess connection status doesn't change frequently
+    // and this query was firing on every render, causing unnecessary DB load.
+    staleTime: 60_000,
   });
 }
 

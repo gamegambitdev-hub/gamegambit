@@ -193,7 +193,7 @@ export async function handleJoin(supabase: Supabase, walletAddress: string, data
     const { wagerId } = data;
     if (!wagerId) return respond({ error: 'Wager ID required' }, 400);
     const wager = await getWager(supabase, wagerId as string);
-    if (wager.status !== 'created') return respond({ error: 'Wager is not available to join' }, 400);
+    if (wager.status !== 'created') return respond({ error: `This wager is no longer available — it has already been ${wager.status === 'joined' ? 'accepted by another player' : wager.status}` }, 400);
     if (wager.player_a_wallet === walletAddress) return respond({ error: 'Cannot join your own wager' }, 400);
 
     const { data: joiner } = await supabase.from('players').select('is_suspended').eq('wallet_address', walletAddress).single();

@@ -736,6 +736,7 @@ function ArenaInner() {
       setDetailsModalOpen(false)
     } catch (err: any) {
       toast.error(err.message || 'Failed to join wager')
+      setDetailsModalOpen(false) // BUG-06: close modal on join error
     }
   }
 
@@ -798,6 +799,7 @@ function ArenaInner() {
           action: 'create',
           game: gameResultWager.game,
           stake_lamports: gameResultWager.stake_lamports,
+          is_public: false, // BUG-19: rematches are always private challenges
         },
         sessionToken,
       )

@@ -1,4 +1,6 @@
-export const PROGRAM_ID = "CPS82nShfYFBdJPLs4kLMYEUrTwvxieqSrkw6VYRopzx";
+// SEC-08: PROGRAM_ID removed — use PROGRAM_ID from '@/lib/solana-config' instead.
+// The value here (CPS82nShfYFBdJPLs4kLMYEUrTwvxieqSrkw6VYRopzx) was stale and
+// pointed to the old contract. solana-config.ts has the current address.
 
 // ── Supported games ───────────────────────────────────────────────────────────
 // live: true  → game is active and wagers can be created
@@ -103,20 +105,20 @@ export const LAMPORTS_PER_SOL = 1_000_000_000;
 // Whale : stake > 5 SOL    →  5% of pot
 
 export const FEE_TIERS = {
-  MICRO: { maxStakeSol: 0.5,     feeBps: 1000 },
-  MID:   { maxStakeSol: 5,       feeBps: 700  },
-  WHALE: { maxStakeSol: Infinity, feeBps: 500  },
+  MICRO: { maxStakeSol: 0.5, feeBps: 1000 },
+  MID: { maxStakeSol: 5, feeBps: 700 },
+  WHALE: { maxStakeSol: Infinity, feeBps: 500 },
 } as const;
 
-export const MOD_FEE_SHARE   = 0.30;   // 30% of platform fee goes to moderator
+export const MOD_FEE_SHARE = 0.30;   // 30% of platform fee goes to moderator
 export const MOD_FEE_CAP_USD = 10;     // moderator never earns more than $10 per verdict
 
 // ── Fee helpers ───────────────────────────────────────────────────────────────
 
 export function getPlatformFeeBps(stakeLamports: number): number {
   const sol = stakeLamports / LAMPORTS_PER_SOL;
-  if (sol < FEE_TIERS.MICRO.maxStakeSol)  return FEE_TIERS.MICRO.feeBps;
-  if (sol <= FEE_TIERS.MID.maxStakeSol)   return FEE_TIERS.MID.feeBps;
+  if (sol < FEE_TIERS.MICRO.maxStakeSol) return FEE_TIERS.MICRO.feeBps;
+  if (sol <= FEE_TIERS.MID.maxStakeSol) return FEE_TIERS.MID.feeBps;
   return FEE_TIERS.WHALE.feeBps;
 }
 
@@ -130,7 +132,7 @@ export function calculatePlatformFee(stakeLamports: number): number {
 export function getFeeTierLabel(stakeLamports: number): string {
   const sol = stakeLamports / LAMPORTS_PER_SOL;
   if (sol < 0.5) return '10% fee';
-  if (sol <= 5)  return '7% fee';
+  if (sol <= 5) return '7% fee';
   return '5% fee';
 }
 

@@ -193,7 +193,7 @@ export function NotificationsDropdown() {
       <DropdownMenuContent
         align="end"
         sideOffset={8}
-        className="w-[calc(100vw-16px)] sm:w-[360px] p-0 bg-card border-border"
+        className="w-[calc(100vw-24px)] sm:w-[380px] max-w-[380px] p-0 bg-card border-border"
       >
         {/* Header — always two rows on mobile so mark-all-read is never squeezed */}
         <div className="px-4 pt-3 pb-3 border-b border-border">
@@ -212,7 +212,7 @@ export function NotificationsDropdown() {
         </div>
 
         {/* List */}
-        <div className="max-h-[min(420px,72vh)] overflow-y-auto">
+        <div className="max-h-[min(480px,65vh)] overflow-y-auto overscroll-contain">
           {loading ? (
             <div className="py-12 flex items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
