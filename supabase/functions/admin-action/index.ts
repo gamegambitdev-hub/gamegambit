@@ -426,6 +426,89 @@ async function addNote(
     return { success: true };
 }
 
+
+// ── recoverStuckPda ───────────────────────────────────────────────────────────
+// Calls resolve-wager directly — bypasses DB status checks.
+// Used for wagers that are already marked resolved/cancelled in DB but have
+// SOL still locked in the on-chain PDA (the root cause was the secret mismatch).
+async function recoverStuckPda(
+    supabase: ReturnType<typeof getSupabase>,
+    wagerId: string, adminWallet: string, notes: string | null,
+) {
+    const { data: wager, error } = await supabase.from("wagers")
+        .select("id, match_id, player_a_wallet, player_b_wallet, winner_wallet, stake_lamports, status")
+        .eq("id", wagerId).single();
+    if (error || !wager) throw new Error("Wager not found");
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const callerSecret = Deno.env.get("RESOLVE_WAGER_CALLER_SECRET") ?? "";
+    if (!callerSecret) throw new Error("RESOLVE_WAGER_CALLER_SECRET not set");
+
+    let payload: Record<string, unknown>;
+    let action: string;
+
+    if (wager.status === "cancelled" || !wager.player_b_wallet) {
+        // Refund path
+        action = "refund_cancelled";
+        payload = {
+            action: "refund_cancelled",
+            wagerId: wager.id,
+            matchId: wager.match_id,
+            playerAWallet: wager.player_a_wallet,
+            playerBWallet: wager.player_b_wallet,
+            stakeLamports: wager.stake_lamports,
+            cancelledBy: adminWallet,
+            reason: notes ?? "admin_manual_recovery",
+        };
+    } else {
+        // Resolve path — winner must be set in DB
+        if (!wager.winner_wallet) throw new Error("Cannot recover: wager has no winner_wallet set. Use forceResolve first to set the winner.");
+        action = "resolve_wager";
+        payload = {
+            action: "resolve_wager",
+            wagerId: wager.id,
+            matchId: wager.match_id,
+            playerAWallet: wager.player_a_wallet,
+            playerBWallet: wager.player_b_wallet,
+            winnerWallet: wager.winner_wallet,
+            stakeLamports: wager.stake_lamports,
+        };
+    }
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "x-caller-secret": callerSecret,
+        },
+        body: JSON.stringify(payload),
+    });
+
+    const result = await res.json();
+
+    await logAdminAction(supabase, `recover_stuck_pda_${action}`, wagerId, null, adminWallet, notes, {
+        result, wager_status: wager.status,
+    });
+
+    if (!result.success) {
+        // PDA already empty is fine — account for it
+        const s = JSON.stringify(result).toLowerCase();
+        if (s.includes("accountdidnotdeserialize") || s.includes("pda balance: 0") || s.includes("no on-chain funds")) {
+            return { success: true, message: "PDA is already empty — no funds were stuck", txSignature: null };
+        }
+        throw new Error(result.error ?? "resolve-wager returned failure");
+    }
+
+    return {
+        success: true,
+        message: result.txSignature
+            ? `PDA recovered successfully`
+            : "PDA was already empty (no funds stuck)",
+        txSignature: result.txSignature ?? null,
+        action,
+    };
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -441,12 +524,27 @@ Deno.serve(async (req) => {
         const body = await req.json();
         const { action, adminWallet, notes } = body;
 
-        const configuredAdminWallet = Deno.env.get("ADMIN_WALLET");
-        if (!configuredAdminWallet)
-            return respond({ error: "ADMIN_WALLET is not set in edge function secrets" }, 500);
+        // Auth: allow either the ADMIN_WALLET env var OR any wallet bound to an admin account
+        if (!adminWallet)
+            return respond({ error: "adminWallet is required" }, 400);
 
-        if (!adminWallet || adminWallet !== configuredAdminWallet)
-            return respond({ error: "Forbidden: wallet does not match ADMIN_WALLET secret" }, 403);
+        const configuredAdminWallet = Deno.env.get("ADMIN_WALLET");
+        const supabaseForAuth = getSupabase();
+
+        // Check if the wallet matches the env var OR is bound to an active admin
+        let isAuthorized = !!(configuredAdminWallet && adminWallet === configuredAdminWallet);
+        if (!isAuthorized) {
+            const { data: binding } = await supabaseForAuth
+                .from("admin_wallet_bindings")
+                .select("wallet_address")
+                .eq("wallet_address", adminWallet)
+                .eq("is_active", true)
+                .maybeSingle();
+            isAuthorized = !!binding;
+        }
+
+        if (!isAuthorized)
+            return respond({ error: "Forbidden: wallet is not an authorized admin wallet" }, 403);
 
         const rpcUrl = Deno.env.get("SOLANA_RPC_URL") || "https://api.devnet.solana.com";
         const supabase = getSupabase();
@@ -479,6 +577,9 @@ Deno.serve(async (req) => {
                 break;
             case "addNote":
                 result = await addNote(supabase, body.wagerId ?? null, body.playerWallet ?? null, body.note, adminWallet);
+                break;
+            case "recoverStuckPda":
+                result = await recoverStuckPda(supabase, body.wagerId, adminWallet, notes ?? null);
                 break;
             default:
                 return respond({ error: `Unknown action: ${action}` }, 400);

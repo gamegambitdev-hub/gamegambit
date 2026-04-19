@@ -227,19 +227,38 @@ function StuckWagerDrawer({
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Resolve This Wager</p>
 
                         {resolveStep === null && !refundStep && (
-                            <div className="flex gap-2">
+                            <div className="flex flex-col gap-2">
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setResolveStep('pick')}
+                                        className="flex-1 flex items-center justify-center gap-2 bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary font-semibold py-2.5 px-4 rounded-xl transition-colors text-sm"
+                                    >
+                                        <Trophy className="h-4 w-4" />Force Resolve
+                                    </button>
+                                    <button
+                                        onClick={() => setRefundStep(true)}
+                                        className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400 font-semibold py-2.5 px-4 rounded-xl transition-colors text-sm"
+                                    >
+                                        <RotateCcw className="h-4 w-4" />Force Refund
+                                    </button>
+                                </div>
                                 <button
-                                    onClick={() => setResolveStep('pick')}
-                                    className="flex-1 flex items-center justify-center gap-2 bg-primary/20 hover:bg-primary/30 border border-primary/30 text-primary font-semibold py-2.5 px-4 rounded-xl transition-colors text-sm"
+                                    onClick={async () => {
+                                        await onAction('recoverStuckPda', wager.id, { notes: 'Admin PDA recovery from stuck wagers panel' });
+                                        onClose();
+                                    }}
+                                    disabled={actionLoading === wager.id}
+                                    className="w-full flex items-center justify-center gap-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-400 font-semibold py-2.5 px-4 rounded-xl transition-colors text-sm disabled:opacity-50"
                                 >
-                                    <Trophy className="h-4 w-4" />Force Resolve
+                                    {actionLoading === wager.id
+                                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                                        : <CheckCircle2 className="h-4 w-4" />}
+                                    Recover Stuck PDA
                                 </button>
-                                <button
-                                    onClick={() => setRefundStep(true)}
-                                    className="flex-1 flex items-center justify-center gap-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400 font-semibold py-2.5 px-4 rounded-xl transition-colors text-sm"
-                                >
-                                    <RotateCcw className="h-4 w-4" />Force Refund
-                                </button>
+                                <p className="text-xs text-muted-foreground text-center">
+                                    Use &ldquo;Recover Stuck PDA&rdquo; if the game resolved but SOL is still locked on-chain.
+                                    Use &ldquo;Force Resolve/Refund&rdquo; for wagers still in disputed/voting state.
+                                </p>
                             </div>
                         )}
 

@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
             unflagPlayer: 'unflagPlayer',
             checkPdaBalance: 'checkPdaBalance',
             addNote: 'addNote',
+            recoverStuckPda: 'recoverStuckPda',
         };
 
         const edgeAction = actionMap[action];
