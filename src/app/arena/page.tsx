@@ -729,6 +729,19 @@ function ArenaInner() {
 
   const handleJoinWager = async (wagerId: string) => {
     if (needsSetup) { toast.error('Please set up your username first'); return }
+
+    // BUG-07: SOL balance pre-check — catch empty wallets before hitting the chain
+    const wagerToJoin = openWagers?.find(w => w.id === wagerId) ?? selectedWager
+    if (wagerToJoin && walletBalance !== undefined) {
+      const stakeSol = wagerToJoin.stake_lamports / 1_000_000_000
+      if (walletBalance < stakeSol) {
+        toast.error('Insufficient SOL balance', {
+          description: `You need at least ${stakeSol.toFixed(4)} SOL to join this wager. Your balance: ${walletBalance.toFixed(4)} SOL`,
+        })
+        return
+      }
+    }
+
     try {
       await joinWager.mutateAsync({ wagerId })
       toast.success('Wager joined! Entering ready room...')

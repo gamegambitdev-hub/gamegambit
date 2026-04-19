@@ -1,11 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useWalletAuth } from './useWalletAuth';
 import { invokeSecureWager, Wager, GameType } from './useWagers';
 import { toast } from 'sonner';
 
 export function useQuickMatch() {
   const { publicKey } = useWallet();
+  const { connection } = useConnection();
   const queryClient = useQueryClient();
   const { getSessionToken } = useWalletAuth();
 
@@ -52,6 +53,25 @@ export function useQuickMatch() {
       // is set correctly on Vercel (the old supabase.functions.invoke call
       // used Authorization: Bearer which the edge function rejected).
       const selectedWager = eligibleWagers[Math.floor(Math.random() * eligibleWagers.length)];
+
+      // BUG-14: SOL balance pre-check before quick match join
+      try {
+        const balanceLamports = await connection.getBalance(publicKey);
+        if (balanceLamports < selectedWager.stake_lamports) {
+          const stakeSol = (selectedWager.stake_lamports / 1_000_000_000).toFixed(4);
+          const balanceSol = (balanceLamports / 1_000_000_000).toFixed(4);
+          throw new Error(
+            `Insufficient SOL balance — you need ${stakeSol} SOL to join this wager but only have ${balanceSol} SOL`
+          );
+        }
+      } catch (balanceErr: unknown) {
+        // Re-throw our own insufficient balance errors; swallow RPC errors
+        // so a temporary RPC failure doesn't block the user from trying
+        if (balanceErr instanceof Error && balanceErr.message.includes('Insufficient SOL')) {
+          throw balanceErr;
+        }
+        console.warn('[useQuickMatch] balance check RPC error — proceeding anyway:', balanceErr);
+      }
 
       const result = await invokeSecureWager<{ wager: Wager }>(
         { action: 'join', wagerId: selectedWager.id },
