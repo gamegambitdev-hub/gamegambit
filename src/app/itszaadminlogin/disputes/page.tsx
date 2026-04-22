@@ -329,7 +329,14 @@ function DisputeCard({ dispute, isExpanded, onToggle, onAction, actionLoading, p
                                                 disabled={confirmText !== 'CONFIRM' || actionLoading === dispute.id}
                                                 className="flex-1 py-2.5 text-sm bg-primary hover:bg-primary/90 text-primary-foreground rounded-xl font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                             >
-                                                {actionLoading === dispute.id ? <Loader2 className="h-4 w-4 animate-spin" /> : '✓ Confirm Resolution'}
+                                                {actionLoading === dispute.id ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <>
+                                                        <Check className="h-4 w-4" />
+                                                        Confirm Resolution
+                                                    </>
+                                                )}
                                             </button>
                                         </div>
                                     </motion.div>
@@ -355,7 +362,14 @@ function DisputeCard({ dispute, isExpanded, onToggle, onAction, actionLoading, p
                                                 disabled={confirmText !== 'CONFIRM' || actionLoading === dispute.id}
                                                 className="flex-1 py-2.5 text-sm bg-slate-500 hover:bg-slate-500/90 text-white rounded-xl font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                             >
-                                                {actionLoading === dispute.id ? <Loader2 className="h-4 w-4 animate-spin" /> : '↩ Confirm Refund'}
+                                                {actionLoading === dispute.id ? (
+                                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <>
+                                                        <RotateCcw className="h-4 w-4" />
+                                                        Confirm Refund
+                                                    </>
+                                                )}
                                             </button>
                                         </div>
                                     </motion.div>

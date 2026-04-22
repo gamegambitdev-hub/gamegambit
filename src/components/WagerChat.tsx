@@ -69,12 +69,18 @@ function ProposalCard({
                     {isMine ? 'Your proposal' : 'Incoming proposal'}
                 </span>
                 <span className={cn(
-                    'text-[10px] font-medium px-1.5 py-0.5 rounded',
+                    'text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1',
                     isAccepted ? 'bg-success/20 text-success' :
                         isRejected ? 'bg-muted text-muted-foreground' :
                             'bg-amber-500/20 text-amber-400'
                 )}>
-                    {isAccepted ? '✓ Accepted' : isRejected ? '✗ Rejected' : 'Pending'}
+                    {isAccepted ? (
+                        <><Check className="h-2.5 w-2.5" /> Accepted</>
+                    ) : isRejected ? (
+                        <><X className="h-2.5 w-2.5" /> Rejected</>
+                    ) : (
+                        'Pending'
+                    )}
                 </span>
             </div>
 

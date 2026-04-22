@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Flag, Search, Loader2, RefreshCcw, AlertTriangle,
     Copy, Check, ChevronRight, ExternalLink, TrendingUp, Users, Shield,
+    Siren, Eye, PartyPopper,
 } from 'lucide-react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 
@@ -61,18 +62,21 @@ function TimeAgo({ date }: { date: string }) {
 
 function RiskBadge({ score }: { score: number }) {
     if (score >= 8) return (
-        <span className="bg-red-500/15 text-red-400 border border-red-500/30 text-xs font-bold px-2.5 py-1 rounded-full">
-            🚨 High Risk
+        <span className="bg-red-500/15 text-red-400 border border-red-500/30 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit">
+            <Siren className="h-3.5 w-3.5" />
+            High Risk
         </span>
     );
     if (score >= 4) return (
-        <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold px-2.5 py-1 rounded-full">
-            ⚠️ Medium Risk
+        <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Medium Risk
         </span>
     );
     return (
-        <span className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-xs font-bold px-2.5 py-1 rounded-full">
-            👁 Low Risk
+        <span className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit">
+            <Eye className="h-3.5 w-3.5" />
+            Low Risk
         </span>
     );
 }
@@ -381,12 +385,15 @@ function BehaviourFlagsContent() {
                             <button
                                 key={f}
                                 onClick={() => setRiskFilter(f)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize border
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize border flex items-center gap-1.5
                                     ${riskFilter === f
                                         ? 'bg-primary/20 border-primary/40 text-primary'
                                         : 'bg-card border-border/40 text-muted-foreground hover:text-foreground hover:border-primary/30'}`}
                             >
-                                {f === 'all' ? 'All' : f === 'high' ? '🚨 High' : f === 'medium' ? '⚠️ Medium' : '👁 Low'}
+                                {f === 'high' && <Siren className="h-3 w-3" />}
+                                {f === 'medium' && <AlertTriangle className="h-3 w-3" />}
+                                {f === 'low' && <Eye className="h-3 w-3" />}
+                                {f === 'all' ? 'All' : f === 'high' ? 'High' : f === 'medium' ? 'Medium' : 'Low'}
                             </button>
                         ))}
                     </div>
@@ -410,8 +417,13 @@ function BehaviourFlagsContent() {
                         <p className="text-lg font-gaming font-bold text-foreground mb-1">
                             {searchTerm || riskFilter !== 'all' ? 'No matches found' : 'No flagged players'}
                         </p>
-                        <p className="text-sm text-muted-foreground">
-                            {searchTerm || riskFilter !== 'all' ? 'Try adjusting your filters' : 'All players are behaving well 🎉'}
+                        <p className="text-sm text-muted-foreground flex items-center justify-center gap-1.5">
+                            {searchTerm || riskFilter !== 'all' ? 'Try adjusting your filters' : (
+                                <>
+                                    All players are behaving well
+                                    <PartyPopper className="h-4 w-4 text-emerald-400" />
+                                </>
+                            )}
                         </p>
                     </motion.div>
                 ) : (

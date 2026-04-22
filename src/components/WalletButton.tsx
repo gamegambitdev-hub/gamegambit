@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { truncateAddress } from '@/lib/constants'
-import { Smartphone, ChevronDown, LogOut, Copy, ExternalLink, Wallet } from 'lucide-react'
+import { Smartphone, ChevronDown, LogOut, Copy, ExternalLink, Wallet, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { useWalletAuth } from '@/hooks/useWalletAuth'
@@ -302,7 +302,9 @@ function MobileWalletModal({
       >
         <div className="flex items-center justify-between">
           <h2 className="font-gaming font-bold text-base">Connect Wallet</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1 transition-colors">
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
         {walletConnectAdapter && (

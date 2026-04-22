@@ -15,7 +15,7 @@ import {
   Check, X, Clock, ExternalLink, Swords,
   Loader2, AlertCircle, ShieldCheck, Ban, Hourglass,
   Monitor, LayoutGrid, Trophy, Scale, Pencil, Info,
-  Shuffle, Dices,
+  Shuffle, Dices, Flag,
 } from 'lucide-react';
 import { Wager, useCancelWager } from '@/hooks/useWagers';
 import { GAMES, formatSol } from '@/lib/constants';
@@ -653,7 +653,7 @@ export function ReadyRoomModal({
 
                   {/* Game Complete CTA */}
                   <button
-                    className="w-full rounded-lg bg-primary text-primary-foreground py-2.5 text-sm font-gaming font-semibold hover:bg-primary/90 transition-colors"
+                    className="w-full rounded-lg bg-primary text-primary-foreground py-2.5 text-sm font-gaming font-semibold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
                     onClick={() => {
                       if (wager && onOpenGameComplete) {
                         onOpenChange(false)
@@ -661,7 +661,8 @@ export function ReadyRoomModal({
                       }
                     }}
                   >
-                    🏁 Game Complete — Vote Now
+                    <Flag className="h-4 w-4" />
+                    Game Complete — Vote Now
                   </button>
                 </motion.div>
               )}

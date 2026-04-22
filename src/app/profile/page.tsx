@@ -16,7 +16,7 @@ const WalletMultiButton = dynamic(
 import {
   User, Trophy, Swords, Clock, Copy, Check, Loader2,
   Wallet, Edit2, Save, Link2, CheckCircle2, Settings,
-  AlertTriangle, ShieldAlert, LogOut as Unlink,
+  AlertTriangle, ShieldAlert, LogOut as Unlink, Gamepad2,
 } from 'lucide-react'
 import { ProfilePageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import { Button } from '@/components/ui/button'
@@ -90,7 +90,7 @@ function ProfilePageInner() {
     const lichessParam = searchParams?.get('lichess')
     const username = searchParams?.get('username')
     if (lichessParam === 'connected' && username) {
-      toast.success(`Lichess connected as @${username}! ✓`)
+      toast.success(`Lichess connected as @${username}!`)
       window.history.replaceState({}, '', '/profile')
     } else if (lichessParam === 'denied') {
       toast.error('Lichess connection cancelled')
@@ -423,7 +423,7 @@ function ProfilePageInner() {
                 <div className="p-3 rounded-lg border border-border bg-muted/10 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="text-2xl">♟️</span>
+                      <Gamepad2 className="h-6 w-6 text-primary" />
                       <div>
                         <p className="font-medium text-sm">Chess (Lichess)</p>
                         {lichessLoading ? (
@@ -465,10 +465,14 @@ function ProfilePageInner() {
                           onClick={handleConnectLichess}
                           disabled={isConnectingLichess}
                         >
-                          {isConnectingLichess
-                            ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Connecting…</>
-                            : '♟ Connect'
-                          }
+                          {isConnectingLichess ? (
+                            <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Connecting…</>
+                          ) : (
+                            <span className="flex items-center gap-1">
+                              <Swords className="h-3 w-3" />
+                              Connect
+                            </span>
+                          )}
                         </Button>
                       )
                     )}
@@ -533,7 +537,7 @@ function ProfilePageInner() {
               <Card variant="gaming" className="mt-6">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <span className="text-xl">♟️</span>
+                    <Swords className="h-5 w-5 text-primary" />
                     Lichess Stats
                     {lichessUserData.online && (
                       <Badge variant="live" className="ml-2">Online</Badge>

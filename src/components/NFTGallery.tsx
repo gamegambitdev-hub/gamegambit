@@ -98,7 +98,12 @@ export function NFTGallery({ walletAddress, showFilters = true }: NFTGalleryProp
                     : 'bg-muted/30 hover:bg-muted/50'
                 }`}
               >
-                <div className="text-2xl mb-1">{TIER_INFO[tier].emoji}</div>
+                <div className="text-2xl mb-1 flex justify-center">
+                  {(() => {
+                    const Icon = TIER_INFO[tier].icon;
+                    return <Icon className={`h-6 w-6 ${TIER_INFO[tier].color}`} />;
+                  })()}
+                </div>
                 <div className={`font-gaming text-lg ${TIER_INFO[tier].color}`}>
                   {tierCounts[tier]}
                 </div>
@@ -148,8 +153,12 @@ export function NFTGallery({ walletAddress, showFilters = true }: NFTGalleryProp
                     />
                   </div>
                   <div className="mt-2 text-center">
-                    <div className={`text-xs font-gaming ${TIER_INFO[nft.tier].color}`}>
-                      {TIER_INFO[nft.tier].emoji} #{nft.match_id}
+                    <div className={`text-xs font-gaming flex items-center justify-center gap-1 ${TIER_INFO[nft.tier].color}`}>
+                      {(() => {
+                        const Icon = TIER_INFO[nft.tier].icon;
+                        return <Icon className="h-3 w-3" />;
+                      })()}
+                      #{nft.match_id}
                     </div>
                     {nft.stake_amount && (
                       <div className="text-xs text-muted-foreground">
@@ -184,7 +193,10 @@ export function NFTGallery({ walletAddress, showFilters = true }: NFTGalleryProp
               </div>
               
               <div className="flex items-center justify-center gap-2">
-                <span className="text-2xl">{TIER_INFO[selectedNFT.tier].emoji}</span>
+                {(() => {
+                  const Icon = TIER_INFO[selectedNFT.tier].icon;
+                  return <Icon className={`h-6 w-6 ${TIER_INFO[selectedNFT.tier].color}`} />;
+                })()}
                 <Badge className={TIER_INFO[selectedNFT.tier].bgColor}>
                   {TIER_INFO[selectedNFT.tier].label} Trophy
                 </Badge>

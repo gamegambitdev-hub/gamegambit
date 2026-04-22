@@ -346,10 +346,12 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                                                     <PlayerLink walletAddress={p.wallet} username={p.player?.username} className="text-xs font-medium" />
                                                 </div>
                                             </div>
-                                            <Badge variant={p.voted ? 'success' : 'secondary'} className="text-[10px]">
-                                                {p.voted
-                                                    ? 'Voted ✓'
-                                                    : (p.isMe ? 'Your turn' : 'Waiting…')}
+                                            <Badge variant={p.voted ? 'success' : 'secondary'} className="text-[10px] flex items-center gap-1">
+                                                {p.voted ? (
+                                                    <>Voted <CheckCircle2 className="h-2.5 w-2.5" /></>
+                                                ) : (
+                                                    p.isMe ? 'Your turn' : 'Waiting…'
+                                                )}
                                             </Badge>
                                         </div>
                                     ))}

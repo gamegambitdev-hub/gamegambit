@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getSupabaseClient } from '@/integrations/supabase/client';
+import { Medal, Gem } from 'lucide-react';
 
 export interface NFT {
   id: string;
@@ -47,10 +48,10 @@ export function getTierFromStake(stakeLamports: number): 'bronze' | 'silver' | '
 
 // Tier display info
 export const TIER_INFO = {
-  bronze: { label: 'Bronze', color: 'text-orange-400', bgColor: 'bg-orange-500/20', emoji: '🥉' },
-  silver: { label: 'Silver', color: 'text-slate-300', bgColor: 'bg-slate-400/20', emoji: '🥈' },
-  gold: { label: 'Gold', color: 'text-yellow-400', bgColor: 'bg-yellow-500/20', emoji: '🥇' },
-  diamond: { label: 'Diamond', color: 'text-cyan-300', bgColor: 'bg-cyan-400/20', emoji: '💎' },
+  bronze: { label: 'Bronze', color: 'text-orange-400', bgColor: 'bg-orange-500/20', icon: Medal },
+  silver: { label: 'Silver', color: 'text-slate-300', bgColor: 'bg-slate-400/20', icon: Medal },
+  gold: { label: 'Gold', color: 'text-yellow-400', bgColor: 'bg-yellow-500/20', icon: Medal },
+  diamond: { label: 'Diamond', color: 'text-cyan-300', bgColor: 'bg-cyan-400/20', icon: Gem },
 } as const;
 
 // Fetch NFTs for a player

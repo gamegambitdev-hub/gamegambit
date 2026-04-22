@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
     CheckCircle2, Clock, Loader2, Swords, Shield, Hourglass, AlertTriangle,
+    ArrowDown,
 } from 'lucide-react'
 import { Wager } from '@/hooks/useWagers'
 import { useMarkGameComplete } from '@/hooks/useGameComplete'
@@ -252,14 +253,19 @@ export function GameCompleteModal({
                                         </div>
                                         <Badge
                                             variant={p.confirmed ? 'success' : 'secondary'}
-                                            className="text-[10px]"
+                                            className="text-[10px] flex items-center gap-1"
                                         >
-                                            {p.confirmed
-                                                ? 'Confirmed ✓'
-                                                : p.isMe
-                                                    ? (localConfirmed || myConfirmed ? 'Confirmed ✓' : 'Tap below ↓')
-                                                    : 'Waiting…'
-                                            }
+                                            {p.confirmed ? (
+                                                <>Confirmed <CheckCircle2 className="h-2.5 w-2.5" /></>
+                                            ) : p.isMe ? (
+                                                localConfirmed || myConfirmed ? (
+                                                    <>Confirmed <CheckCircle2 className="h-2.5 w-2.5" /></>
+                                                ) : (
+                                                    <>Tap below <ArrowDown className="h-2.5 w-2.5" /></>
+                                                )
+                                            ) : (
+                                                'Waiting…'
+                                            )}
                                         </Badge>
                                     </div>
                                 </div>

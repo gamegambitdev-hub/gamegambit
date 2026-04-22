@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic'
 import {
     Bell, BellOff, Shield, ShieldOff, ChevronRight,
     Settings, FileText, Clock, Coins,
+    Swords, CheckCircle, Vote, Scale,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
@@ -27,11 +28,11 @@ const WalletMultiButton = dynamic(
 // ── Notification sub-types — shown when push is ON ───────────────────────────
 
 const NOTIFICATION_TYPES = [
-    { label: 'Wager joined / opponent found', icon: '⚔️' },
-    { label: 'Game complete confirmations', icon: '✅' },
-    { label: 'Voting reminders', icon: '🗳️' },
-    { label: 'Dispute updates', icon: '⚖️' },
-    { label: 'Funds received', icon: '💰' },
+    { label: 'Wager joined / opponent found', icon: Swords },
+    { label: 'Game complete confirmations', icon: CheckCircle },
+    { label: 'Voting reminders', icon: Vote },
+    { label: 'Dispute updates', icon: Scale },
+    { label: 'Funds received', icon: Coins },
 ] as const
 
 // ── Account quick-links ───────────────────────────────────────────────────────
@@ -60,7 +61,9 @@ export default function SettingsPage() {
             <div className="py-8 pb-16">
                 <div className="container px-4 max-w-2xl mx-auto">
                     <div className="flex flex-col items-center justify-center py-20 gap-6">
-                        <div className="text-4xl">⚙️</div>
+                        <div className="bg-primary/10 p-4 rounded-full">
+                            <Settings className="h-10 w-10 text-primary" />
+                        </div>
                         <div className="text-center">
                             <h2 className="text-xl font-gaming font-bold mb-2">Connect Your Wallet</h2>
                             <p className="text-muted-foreground text-sm">Connect your wallet to manage settings.</p>
@@ -180,7 +183,7 @@ export default function SettingsPage() {
                                     </p>
                                     {NOTIFICATION_TYPES.map((n) => (
                                         <div key={n.label} className="flex items-center gap-2 text-xs text-muted-foreground">
-                                            <span className="text-sm">{n.icon}</span>
+                                            <n.icon className="h-3.5 w-3.5 text-primary/70" />
                                             <span>{n.label}</span>
                                         </div>
                                     ))}

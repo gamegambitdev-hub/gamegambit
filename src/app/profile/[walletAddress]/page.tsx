@@ -3,7 +3,7 @@
 import { use } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { User, Trophy, Swords, Clock, Copy, Check } from 'lucide-react'
+import { User, Trophy, Swords, Clock, Copy, Check, Gamepad2 } from 'lucide-react'
 import { ProfilePageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -136,7 +136,7 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
             <Card variant="gaming">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <span className="text-xl">{'🎮'}</span>
+                  <Gamepad2 className="h-5 w-5 text-primary" />
                   Game Accounts
                 </CardTitle>
               </CardHeader>
@@ -165,9 +165,9 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
             {lichessUserData && (
               <Card variant="gaming" className="mt-6">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <span className="text-xl">{'♟️'}</span>
-                    Lichess Stats
+                <CardTitle className="flex items-center gap-2">
+                  <Swords className="h-5 w-5 text-primary" />
+                  Lichess Stats
                     {lichessUserData.online && (
                       <Badge variant="live" className="ml-2">Online</Badge>
                     )}

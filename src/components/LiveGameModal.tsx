@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ExternalLink, Trophy, Loader2, RefreshCw, Clock, Play, Crown, Minus, Dices, Handshake, AlertTriangle, ShieldCheck, Flag, Target, Flame, Gamepad2 } from 'lucide-react';
+import { ExternalLink, Trophy, Loader2, RefreshCw, Clock, Play, Crown, Minus, Dices, Handshake, AlertTriangle, ShieldCheck, Flag, Target, Flame, Gamepad2, Coins } from 'lucide-react';
 import { Wager, useCheckGameComplete } from '@/hooks/useWagers';
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
@@ -273,7 +273,8 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
             {gameFinished && isCurrentPlayerWinner && (
               <Button variant="neon" className="flex-1" onClick={() => { toast.success('Funds have been automatically sent to your wallet!'); onOpenChange(false); }}>
                 <Trophy className="h-4 w-4 mr-2" />
-                Collect Your Reward💰
+                Collect Your Reward
+                <Coins className="h-4 w-4 ml-2" />
               </Button>
             )}
             <Button variant="outline" className={gameFinished && isCurrentPlayerWinner ? 'flex-1' : 'w-full'} onClick={() => onOpenChange(false)}>

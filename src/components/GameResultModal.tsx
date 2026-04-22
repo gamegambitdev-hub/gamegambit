@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Frown, Scale, Sparkles, ArrowRight, ExternalLink,
   LayoutDashboard, Swords, BarChart3, RefreshCw, Home, Loader2,
+  Coins, BicepsFlexed,
 } from 'lucide-react';
 import { formatSol } from '@/lib/constants';
 import { PlayerLink } from '@/components/PlayerLink';
@@ -195,7 +196,8 @@ function VictoryContent({
         {!claimed ? (
           <Button variant="neon" className="w-full" onClick={() => setClaimed(true)}>
             <ArrowRight className="h-4 w-4 mr-2" />
-            Collect Your Reward💰
+            Collect Your Reward
+            <Coins className="h-4 w-4 ml-2" />
           </Button>
         ) : (
           <motion.div
@@ -341,8 +343,9 @@ function DefeatContent({
         transition={{ delay: 0.5 }}
         className="p-3 rounded-xl bg-primary/5 border border-primary/20 mb-4"
       >
-        <p className="text-xs text-muted-foreground">
-          💪 Study the game, level up, and come back stronger. The leaderboard is waiting.
+        <p className="text-xs text-muted-foreground flex items-center justify-center gap-2">
+          <BicepsFlexed className="h-4 w-4 text-primary shrink-0" />
+          <span>Study the game, level up, and come back stronger. The leaderboard is waiting.</span>
         </p>
       </motion.div>
 

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Loader2, AlertCircle, Swords, Search, User, X,
-  Users, UserPlus, Lock, CheckCircle2, Dices,
+  Users, UserPlus, Lock, CheckCircle2, Dices, AlertTriangle,
 } from 'lucide-react';
 import { useCreateWager, GameType } from '@/hooks/useWagers';
 import { useWalletBalance } from '@/hooks/useWalletBalance';
@@ -289,7 +289,10 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                 <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
                   <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
                   <div>
-                    <p className="text-xs font-medium text-success">Lichess verified ✓</p>
+                    <p className="text-xs font-medium text-success flex items-center gap-1">
+                      Lichess verified
+                      <CheckCircle2 className="h-3 w-3" />
+                    </p>
                     <p className="text-xs text-muted-foreground">Playing as @{lichessUsername}</p>
                   </div>
                 </div>
@@ -305,18 +308,19 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                     </div>
                   </div>
                   <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full border-warning/40 hover:border-warning"
-                    onClick={handleConnectLichess}
-                    disabled={isConnectingLichess}
-                  >
-                    {isConnectingLichess
-                      ? <><Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> Connecting…</>
-                      : '♟ Connect Lichess Account'
-                    }
-                  </Button>
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-warning/40 hover:border-warning flex items-center justify-center gap-2"
+                      onClick={handleConnectLichess}
+                      disabled={isConnectingLichess}
+                    >
+                      {isConnectingLichess ? (
+                        <><Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> Connecting…</>
+                      ) : (
+                        <><Swords className="h-4 w-4" /> Connect Lichess Account</>
+                      )}
+                    </Button>
                   <p className="text-[11px] text-muted-foreground text-center">
                     No Lichess account?{' '}
                     <a href="https://lichess.org/signup" target="_blank" rel="noopener noreferrer" className="text-primary underline">
@@ -376,7 +380,10 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                               {cat}
                             </span>
                             {cat === 'Classical' && (
-                              <span className="text-[10px] text-muted-foreground ml-1">⚠ Long games</span>
+                              <span className="text-[10px] text-muted-foreground ml-1 flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                Long games
+                              </span>
                             )}
                           </div>
                           <div className="flex flex-wrap gap-1.5">
@@ -461,10 +468,17 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                       <p className="font-medium">{selectedOpponent.username || 'Anonymous'}</p>
                       <p className="text-xs text-muted-foreground">{truncateAddress(selectedOpponent.wallet_address)}</p>
                       {(selectedOpponent as any).lichess_username ? (
-                        <p className="text-xs text-success">♟ @{(selectedOpponent as any).lichess_username} ✓</p>
+                        <p className="text-xs text-success flex items-center gap-1">
+                          <Swords className="h-3 w-3" />
+                          @{ (selectedOpponent as any).lichess_username }
+                          <CheckCircle2 className="h-3 w-3" />
+                        </p>
                       ) : isChess ? (
-                        <p className="text-xs text-warning">⚠ No Lichess account linked</p>
-                      ) : null}
+                          <p className="text-xs text-warning flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3" />
+                            No Lichess account linked
+                          </p>
+                        ) : null}
                     </div>
                   </div>
                   <Button type="button" variant="ghost" size="icon" onClick={() => setSelectedOpponent(null)}>
@@ -498,7 +512,10 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                               <p className="font-medium">{p.username || 'Anonymous'}</p>
                               <p className="text-xs text-muted-foreground">{truncateAddress(p.wallet_address)}</p>
                               {(p as any).lichess_username && (
-                                <p className="text-xs text-success">♟ @{(p as any).lichess_username}</p>
+                                <p className="text-xs text-success flex items-center gap-1">
+                                  <Swords className="h-3 w-3" />
+                                  @{(p as any).lichess_username}
+                                </p>
                               )}
                             </div>
                           </button>
