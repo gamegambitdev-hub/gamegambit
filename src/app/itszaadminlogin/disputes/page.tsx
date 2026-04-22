@@ -1,12 +1,12 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Scale, Search, AlertTriangle, Loader2, RefreshCcw, CheckCircle2,
     X, Copy, Check, ExternalLink, Clock, ChevronRight, Trophy, RotateCcw,
-    Users, Swords, TrendingUp
+    Users, Swords, TrendingUp, Flag, Target, Flame, Gamepad2, CheckCircle, Hand
 } from 'lucide-react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -29,11 +29,11 @@ interface DisputeWager {
     moderator_decision: string | null;
 }
 
-const GAME_CONFIG: Record<string, { label: string; icon: string }> = {
-    chess: { label: 'Chess', icon: '♟️' },
-    codm: { label: 'CODM', icon: '🎯' },
-    pubg: { label: 'PUBG', icon: '🪖' },
-    free_fire: { label: 'Free Fire', icon: '🔥' },
+const GAME_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
+    chess: { label: 'Chess', icon: <Flag className="w-4 h-4" /> },
+    codm: { label: 'CODM', icon: <Target className="w-4 h-4" /> },
+    pubg: { label: 'PUBG', icon: <Target className="w-4 h-4" /> },
+    free_fire: { label: 'Free Fire', icon: <Flame className="w-4 h-4" /> },
 };
 
 function CopyBtn({ text }: { text: string }) {
@@ -69,10 +69,11 @@ function VoteBlock({ label, voterWallet, votedFor, isCorrect }: {
                 <CopyBtn text={voterWallet} />
             </div>
             {votedFor ? (
-                <div className={`text-xs rounded-lg px-2.5 py-1.5 font-semibold border ${selfVote
+                <div className={`flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-semibold border ${selfVote
                     ? 'bg-primary/10 border-primary/20 text-primary'
                     : 'bg-purple-500/10 border-purple-500/20 text-purple-400'}`}>
-                    Voted: {selfVote ? '🙋 Themselves' : `Opponent (${short(votedFor)})`}
+                    {selfVote ? <Hand className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
+                    <span>Voted: {selfVote ? 'Themselves' : `Opponent (${short(votedFor)})`}</span>
                 </div>
             ) : (
                 <div className="text-xs bg-muted/20 border border-border/30 rounded-lg px-2.5 py-1.5 text-muted-foreground">
@@ -99,7 +100,7 @@ function DisputeCard({ dispute, isExpanded, onToggle, onAction, actionLoading, p
     const short = (w: string) => `${w.slice(0, 8)}...${w.slice(-4)}`;
     const solStake = (dispute.stake_lamports / 1e9).toFixed(4);
     const disputedAt = dispute.dispute_created_at || dispute.created_at;
-    const gameCfg = GAME_CONFIG[dispute.game] || { label: dispute.game, icon: '🎮' };
+    const gameCfg = GAME_CONFIG[dispute.game] || { label: dispute.game, icon: <Gamepad2 className="w-4 h-4" /> };
 
     const resetActions = () => {
         setResolveStep(null); setResolveWinner(null);
@@ -524,7 +525,8 @@ function DisputesContent() {
                             {searchTerm ? 'No matches found' : 'No active disputes'}
                         </p>
                         <p className="text-sm text-muted-foreground">
-                            {searchTerm ? 'Try a different search' : 'All disputes resolved 🎉'}
+                            <CheckCircle className="w-5 h-5 text-muted-foreground mr-2" />
+                            {searchTerm ? 'Try a different search' : 'All disputes resolved'}
                         </p>
                     </motion.div>
                 ) : (

@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-    CheckCircle2, Clock, Loader2, Swords, Shield, Hourglass,
+    CheckCircle2, Clock, Loader2, Swords, Shield, Hourglass, AlertTriangle,
 } from 'lucide-react'
 import { Wager } from '@/hooks/useWagers'
 import { useMarkGameComplete } from '@/hooks/useGameComplete'
@@ -293,7 +293,7 @@ export function GameCompleteModal({
                     {/* Warning */}
                     {!myConfirmed && !localConfirmed && (
                         <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                            <p className="text-xs text-amber-300 font-medium mb-1">⚠️ Only confirm if your game is done</p>
+                            <p className="text-xs text-amber-300 font-medium mb-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Only confirm if your game is done</p>
                             <p className="text-[10px] text-muted-foreground">
                                 Both players must confirm before voting begins. False confirmations may result in a dispute.
                             </p>

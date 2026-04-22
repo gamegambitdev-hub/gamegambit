@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Loader2, Zap, AlertCircle } from 'lucide-react';
+import { Loader2, Zap, AlertCircle, Dices } from 'lucide-react';
 import { GAMES } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { GameType } from '@/hooks/useWagers';
@@ -14,8 +14,8 @@ interface QuickMatchModalProps {
   isPending: boolean;
 }
 
-const GAME_OPTIONS: { value: GameType | 'any'; label: string; icon: string }[] = [
-  { value: 'any', label: 'Any Game', icon: '🎲' },
+const GAME_OPTIONS: { value: GameType | 'any'; label: string; icon: any }[] = [
+  { value: 'any', label: 'Any Game', icon: <Dices className="w-6 h-6" /> },
   { value: 'chess', label: GAMES.CHESS.name, icon: GAMES.CHESS.icon },
   { value: 'codm', label: GAMES.CODM.name, icon: GAMES.CODM.icon },
   { value: 'pubg', label: GAMES.PUBG.name, icon: GAMES.PUBG.icon },

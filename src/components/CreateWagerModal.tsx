@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Loader2, AlertCircle, Swords, Search, User, X,
-  Users, UserPlus, Lock, CheckCircle2,
+  Users, UserPlus, Lock, CheckCircle2, Dices,
 } from 'lucide-react';
 import { useCreateWager, GameType } from '@/hooks/useWagers';
 import { useWalletBalance } from '@/hooks/useWalletBalance';
@@ -436,7 +436,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                         )}
                       >
                         <span className="text-base">
-                          {side === 'random' ? '🎲' : side === 'white' ? '♔' : '♚'}
+                          {side === 'random' ? <Dices className="w-4 h-4" /> : side === 'white' ? '♔' : '♚'}
                         </span>
                         <span className="capitalize text-[11px]">{side}</span>
                       </button>

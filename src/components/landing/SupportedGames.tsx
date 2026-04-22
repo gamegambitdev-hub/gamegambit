@@ -83,11 +83,11 @@ function GameCard({ game, index }: { game: typeof games[number]; index: number }
 
           <CardContent className="relative p-6">
             <div className="flex items-center gap-4 mb-4">
-              <div className={`text-5xl transition-transform duration-300 ${game.live
+              <div className={`transition-transform duration-300 ${game.live
                 ? 'group-hover:scale-110 group-hover:drop-shadow-[0_0_20px_rgba(34,211,238,0.6)]'
                 : 'grayscale group-hover:scale-105 transition-all'
                 }`}>
-                {game.icon}
+                <game.icon className="w-12 h-12" />
               </div>
               <div>
                 <h3 className={`font-bold text-xl transition-colors ${game.live ? 'group-hover:text-cyan-400' : 'text-muted-foreground'

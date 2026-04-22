@@ -296,7 +296,7 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
 
                                 <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
                                     <p className="text-[10px] text-amber-300">
-                                        ⚠️ <span className="font-medium">Vote honestly.</span> False votes increase your dispute risk.
+                                        <AlertTriangle className="w-4 h-4 text-amber-500 mr-1" /> <span className="font-medium">Vote honestly.</span> False votes increase your dispute risk.
                                         {timeLeft !== null && timeLeft < 60000 && <span className="text-red-400 font-medium"> Time running out!</span>}
                                     </p>
                                 </div>

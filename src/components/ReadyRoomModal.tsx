@@ -15,7 +15,7 @@ import {
   Check, X, Clock, ExternalLink, Swords,
   Loader2, AlertCircle, ShieldCheck, Ban, Hourglass,
   Monitor, LayoutGrid, Trophy, Scale, Pencil, Info,
-  Shuffle,
+  Shuffle, Dices,
 } from 'lucide-react';
 import { Wager, useCancelWager } from '@/hooks/useWagers';
 import { GAMES, formatSol } from '@/lib/constants';
@@ -160,7 +160,7 @@ export function ReadyRoomModal({
     ? (urlWhite || lichessGameUrl)
     : (urlBlack || lichessGameUrl);
 
-  const myColor = myColorResult === 'white' ? 'White ♔' : myColorResult === 'black' ? 'Black ♚' : 'Random 🎲';
+  const myColor = myColorResult === 'white' ? 'White ♔' : myColorResult === 'black' ? 'Black ♚' : <span className="flex items-center gap-1">Random <Dices className="w-4 h-4" /></span>;
   const myColorClass = myColorResult === 'white' ? 'text-foreground font-semibold' : myColorResult === 'black' ? 'text-muted-foreground font-semibold' : 'text-primary';
 
   useEffect(() => { setLocalReady(myReady ?? false); }, [myReady]);

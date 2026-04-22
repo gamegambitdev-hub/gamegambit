@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { Trophy, Handshake, ScrollText, Swords, FileX, ArrowDownToLine, ArrowUpRight } from 'lucide-react';
 
 export interface WagerTransaction {
   id: string;
@@ -74,17 +75,17 @@ export function useMyTransactions(limit: number = 50) {
 export function getTransactionTypeInfo(txType: string) {
   switch (txType) {
     case 'escrow_deposit':
-      return { label: 'Escrow Deposit', color: 'text-warning', icon: '⬆️' };
+      return { label: 'Escrow Deposit', color: 'text-warning', icon: ArrowUpRight };
     case 'escrow_release':
-      return { label: 'Escrow Released', color: 'text-muted-foreground', icon: '⬇️' };
+      return { label: 'Escrow Released', color: 'text-muted-foreground', icon: ArrowDownToLine };
     case 'winner_payout':
-      return { label: 'Winner Payout', color: 'text-success', icon: '🏆' };
+      return { label: 'Winner Payout', color: 'text-success', icon: Trophy };
     case 'draw_refund':
-      return { label: 'Draw Refund', color: 'text-primary', icon: '🤝' };
+      return { label: 'Draw Refund', color: 'text-primary', icon: Handshake };
     case 'platform_fee':
-      return { label: 'Platform Fee', color: 'text-muted-foreground', icon: '💎' };
+      return { label: 'Platform Fee', color: 'text-muted-foreground', icon: ScrollText };
     default:
-      return { label: txType, color: 'text-foreground', icon: '📝' };
+      return { label: txType, color: 'text-foreground', icon: ScrollText };
   }
 }
 

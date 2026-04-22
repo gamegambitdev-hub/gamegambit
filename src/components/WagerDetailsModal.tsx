@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Clock, ExternalLink, Swords, Trophy, User, Crown, Minus, Edit } from 'lucide-react';
+import { Clock, ExternalLink, Swords, Trophy, User, Crown, Minus, Edit, Gamepad2, Flag, Flame, Target, Trash2, Handshake } from 'lucide-react';
 import { Wager, useEditWager } from '@/hooks/useWagers';
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
@@ -202,7 +202,7 @@ export function WagerDetailsModal({
                   <>
                     <Crown className={`h-8 w-8 mx-auto mb-2 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`} />
                     <p className="font-gaming text-lg">
-                      {isCurrentPlayerWinner ? '🎉 You Won!' : isCurrentPlayerLoser ? 'You Lost' : `${winnerUsername || truncateAddress(winnerWallet!)} Wins`}
+                      {isCurrentPlayerWinner ? <span className="flex items-center gap-1"><Trophy className="w-4 h-4 text-yellow-400" /> You Won!</span> : isCurrentPlayerLoser ? 'You Lost' : `${winnerUsername || truncateAddress(winnerWallet!)} Wins`}
                     </p>
                     {winnerWallet && (
                       <p className="text-xs text-muted-foreground mt-1">
@@ -387,7 +387,7 @@ export function WagerDetailsModal({
                 </>
               ) : canJoin && wager.status === 'created' ? (
                 <Button variant="neon" className="w-full h-12 text-base" onClick={() => wager && onJoin?.(wager.id)} disabled={isJoining}>
-                  {isJoining ? 'Joining...' : '⚔️ Accept Challenge'}
+                  {isJoining ? 'Joining...' : <span className="flex items-center gap-1"><Swords className="w-4 h-4" /> Accept Challenge</span>}
                 </Button>
               ) : (
                 <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>Close</Button>

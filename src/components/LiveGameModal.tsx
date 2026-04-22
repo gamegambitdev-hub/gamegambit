@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ExternalLink, Trophy, Loader2, RefreshCw, Clock, Play, Crown, Minus } from 'lucide-react';
+import { ExternalLink, Trophy, Loader2, RefreshCw, Clock, Play, Crown, Minus, Dices, Handshake, AlertTriangle, ShieldCheck, Flag, Target, Flame, Gamepad2 } from 'lucide-react';
 import { Wager, useCheckGameComplete } from '@/hooks/useWagers';
 import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
@@ -82,7 +82,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
     setHasShownResult(true);
     if (isCurrentPlayerWinner) {
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-      toast.success('🎉 You won! Funds are being sent to your wallet.');
+      toast.success(<span className="flex items-center gap-1"><Trophy className="w-4 h-4 text-yellow-400" /> You won! Funds are being sent to your wallet.</span>);
     } else if (isDraw) {
       toast.info('Game ended in a draw — stakes will be returned.');
     } else if (isCurrentPlayerLoser) {
@@ -169,7 +169,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
                 <>
                   <Crown className={`h-10 w-10 mx-auto mb-3 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`} />
                   <p className="text-xl font-gaming font-bold">
-                    {isCurrentPlayerWinner ? '🎉 You Won!' : isCurrentPlayerLoser ? 'You Lost' : 'Match Over'}
+                    {isCurrentPlayerWinner ? <span className="flex items-center justify-center gap-1"><Trophy className="w-5 h-5 text-yellow-400" /> You Won!</span> : isCurrentPlayerLoser ? 'You Lost' : 'Match Over'}
                   </p>
                   {resolvedWinnerWallet && (
                     <p className="text-sm text-muted-foreground mt-1">

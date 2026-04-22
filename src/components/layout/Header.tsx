@@ -20,10 +20,10 @@ const NotificationsDropdown = dynamic(
 )
 
 const navItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: '📊', LucideIcon: BarChart2 },
-  { label: 'Arena', href: '/arena', icon: '⚔️', LucideIcon: Swords },
-  { label: 'My Wagers', href: '/my-wagers', icon: '🎲', LucideIcon: Dice5 },
-  { label: 'Leaderboard', href: '/leaderboard', icon: '🏆', LucideIcon: Trophy },
+  { label: 'Dashboard', href: '/dashboard', icon: <BarChart2 className="w-4 h-4" />, LucideIcon: BarChart2 },
+  { label: 'Arena', href: '/arena', icon: <Swords className="w-4 h-4" />, LucideIcon: Swords },
+  { label: 'My Wagers', href: '/my-wagers', icon: <Dice5 className="w-4 h-4" />, LucideIcon: Dice5 },
+  { label: 'Leaderboard', href: '/leaderboard', icon: <Trophy className="w-4 h-4" />, LucideIcon: Trophy },
 ]
 
 export function Header() {
@@ -92,6 +92,7 @@ export function Header() {
                       )}
                     >
                       <span className="text-base">{item.icon}</span>
+                      
                       <span className="hidden lg:inline">{item.label}</span>
                     </Link>
                     {hoveredIcon === item.href && (

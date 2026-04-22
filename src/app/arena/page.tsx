@@ -15,7 +15,7 @@ const WalletMultiButton = dynamic(
 
 import {
   Search, Zap, Filter, Plus, Swords, Clock, Trophy,
-  Wallet, Eye, Pencil, Trash2, Play, X,
+  Wallet, Eye, Pencil, Trash2, Play, X, Handshake, AlertTriangle
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -252,13 +252,13 @@ function LiveMatchCard({
               </div>
               {isResolved ? (
                 <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap">
-                  {wager.winner_wallet ? '🏆 View' : '🤝 Draw'}
+                  {wager.winner_wallet ? <span className="flex items-center"><Trophy className="w-4 h-4 mr-1" /> View</span> : <span className="flex items-center"><Handshake className="w-4 h-4 mr-1" /> Draw</span>}
                 </Badge>
               ) : canEnterReadyRoom ? (
                 <Badge variant="joined" className="cursor-pointer text-xs whitespace-nowrap">Ready Room</Badge>
               ) : isDisputed ? (
                 <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap border-yellow-500/50 text-yellow-400">
-                  ⚠️ Disputed
+                  <span className="flex items-center"><AlertTriangle className="w-4 h-4 mr-1" /> Disputed</span>
                 </Badge>
               ) : isInProgress && isParticipant ? (
                 <Badge variant="voting" className="cursor-pointer flex items-center gap-1 text-xs whitespace-nowrap">

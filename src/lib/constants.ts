@@ -1,3 +1,6 @@
+import { Crown, Target, Shield, Flame } from 'lucide-react';
+import type { ComponentType } from 'react';
+
 export const PROGRAM_ID = "CPS82nShfYFBdJPLs4kLMYEUrTwvxieqSrkw6VYRopzx";
 
 // ── Supported games ───────────────────────────────────────────────────────────
@@ -11,7 +14,7 @@ export const GAMES = {
     id: 'chess' as const,
     name: 'Chess',
     platform: 'Lichess',
-    icon: '♟️',
+    icon: Crown,
     color: 'primary',
     live: true,
     apiVerify: true,    // Lichess OAuth
@@ -22,7 +25,7 @@ export const GAMES = {
     id: 'codm' as const,
     name: 'Call of Duty Mobile',
     platform: 'Call of Duty Mobile',
-    icon: '🎯',
+    icon: Target,
     color: 'destructive',
     live: true,
     apiVerify: false,   // No public API
@@ -33,7 +36,7 @@ export const GAMES = {
     id: 'pubg' as const,
     name: 'PUBG Mobile',
     platform: 'PUBG',
-    icon: '🔫',
+    icon: Shield,
     color: 'accent',
     live: true,
     apiVerify: true,    // PUBG API — verify username exists + get accountId
@@ -44,7 +47,7 @@ export const GAMES = {
     id: 'free_fire' as const,
     name: 'Free Fire',
     platform: 'Garena',
-    icon: '🔥',
+    icon: Flame,
     color: 'secondary',
     live: true,
     apiVerify: false,   // No public API

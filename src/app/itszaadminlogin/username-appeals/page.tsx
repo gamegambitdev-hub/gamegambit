@@ -7,7 +7,7 @@ import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Link2, Search, Loader2, RefreshCcw, CheckCircle2, AlertTriangle,
-    X, Copy, Check, ChevronRight, ExternalLink,
+    X, Copy, Check, ChevronRight, ExternalLink, Target, Flame, Flag, Gamepad2, CheckCircle
 } from 'lucide-react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -29,11 +29,11 @@ interface Appeal {
     created_at: string;
 }
 
-const GAME_CONFIG: Record<string, { label: string; icon: string }> = {
-    chess: { label: 'Chess', icon: '♟️' },
-    codm: { label: 'CODM', icon: '🎯' },
-    pubg: { label: 'PUBG', icon: '🪖' },
-    free_fire: { label: 'Free Fire', icon: '🔥' },
+const GAME_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
+    chess: { label: 'Chess', icon: <Flag className="w-4 h-4" /> },
+    codm: { label: 'CODM', icon: <Target className="w-4 h-4" /> },
+    pubg: { label: 'PUBG', icon: <Target className="w-4 h-4" /> },
+    free_fire: { label: 'Free Fire', icon: <Flame className="w-4 h-4" /> },
 };
 
 const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
@@ -90,7 +90,7 @@ function AppealCard({
     const [notes, setNotes] = useState('');
 
     const short = (w: string) => `${w.slice(0, 8)}...${w.slice(-4)}`;
-    const gameCfg = GAME_CONFIG[appeal.game] || { label: appeal.game, icon: '🎮' };
+    const gameCfg = GAME_CONFIG[appeal.game] || { label: appeal.game, icon: <Gamepad2 className="w-4 h-4" /> };
     const statusCfg = STATUS_CONFIG[appeal.status] || { label: appeal.status, classes: 'bg-muted text-muted-foreground border-border' };
     const isResolved = ['released', 'rejected', 'resolved'].includes(appeal.status);
     const deadlinePassed = new Date(appeal.response_deadline) < new Date();
@@ -309,7 +309,7 @@ function AppealCard({
                                                     {actionLoading === appeal.id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
                                                     ) : (
-                                                        '✓ Confirm Release'
+                                                        <><CheckCircle className="w-4 h-4 mr-2" /> Confirm Release</>
                                                     )}
                                                 </button>
                                             </div>
@@ -353,7 +353,7 @@ function AppealCard({
                                                     {actionLoading === appeal.id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
                                                     ) : (
-                                                        '✗ Confirm Rejection'
+                                                        <><X className="w-4 h-4 mr-2" /> Confirm Rejection</>
                                                     )}
                                                 </button>
                                             </div>
@@ -625,11 +625,12 @@ function UsernameAppealsContent() {
                         <p className="text-lg font-gaming font-bold text-foreground mb-1">
                             {searchTerm ? 'No matches found' : 'No appeals found'}
                         </p>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-muted-foreground flex items-center justify-center">
+                            <CheckCircle className="w-5 h-5 text-muted-foreground mr-2" />
                             {searchTerm
                                 ? 'Try a different search'
                                 : filterStatus === 'active'
-                                    ? 'No pending appeals — all clear ✓'
+                                    ? 'No pending appeals — all clear'
                                     : 'No resolved appeals yet'}
                         </p>
                     </motion.div>
