@@ -191,12 +191,40 @@ export function GameEventProvider({ children }: { children: ReactNode }) {
     // Two filtered channels (one per player slot) + one public INSERT channel.
     // Supabase Realtime doesn't support OR filters in a single subscription,
     // so we use separate channels to avoid loading the entire wagers table.
+    //
+    // ⚠️  BUG FIX (stake_lamports zeroing):
+    // Supabase postgres_changes payloads may be PARTIAL — only changed columns
+    // are guaranteed to be present. Writing `updated` directly into the cache
+    // was overwriting a good `stake_lamports` with 0 / undefined whenever an
+    // unrelated column (e.g. ready_player_b) triggered the event.
+    //
+    // Fix: always MERGE the incoming payload with the existing cached row, and
+    // never let a Realtime event reduce stake_lamports to 0.
     useEffect(() => {
         if (!walletAddress) return
         const supabase = getSupabaseClient()
 
         const handleEvent = (payload: { eventType: string; new: unknown }) => {
             const updated = payload.new as Wager
+
+            // ── DIAGNOSTIC LOGGING ──────────────────────────────────────────
+            // Logs every Realtime wager event so you can see exactly which
+            // field updates arrive and whether stake_lamports is present/correct.
+            console.log('[GameEvent] Realtime wager event', {
+                wagerId: updated.id,
+                eventType: payload.eventType,
+                status: updated.status,
+                stake_lamports: updated.stake_lamports,
+                stake_sol: updated.stake_lamports != null
+                    ? updated.stake_lamports / 1_000_000_000
+                    : 'MISSING',
+                ready_player_a: updated.ready_player_a,
+                ready_player_b: updated.ready_player_b,
+                deposit_player_a: (updated as any).deposit_player_a,
+                deposit_player_b: (updated as any).deposit_player_b,
+                fullPayload: payload.new,
+            })
+
             const isParticipant =
                 updated.player_a_wallet === walletAddress ||
                 updated.player_b_wallet === walletAddress
@@ -212,13 +240,59 @@ export function GameEventProvider({ children }: { children: ReactNode }) {
 
             if (!isParticipant) return
 
-            // Update per-wager cache + my wagers list
-            queryClient.setQueryData(['wagers', updated.id], updated)
+            // ── SAFE MERGE into per-wager cache ──────────────────────────────
+            // Never let a partial Realtime payload zero out critical numeric
+            // fields like stake_lamports. Merge over the existing cached row
+            // so only the fields that actually changed are overwritten.
+            queryClient.setQueryData<Wager>(['wagers', updated.id], (old) => {
+                if (!old) {
+                    // No cached row yet — use the payload as-is
+                    console.log('[GameEvent] No existing cache for', updated.id, '— writing fresh')
+                    return updated
+                }
+
+                const merged: Wager = {
+                    ...old,
+                    ...updated,
+                    // Never let Realtime zero out stake_lamports.
+                    // A legitimate stake change will still be > 0 and will land correctly.
+                    stake_lamports: (updated.stake_lamports != null && updated.stake_lamports > 0)
+                        ? updated.stake_lamports
+                        : old.stake_lamports,
+                }
+
+                // Log when a merge rescue is needed so we can confirm the root cause
+                if (
+                    (updated.stake_lamports == null || updated.stake_lamports === 0) &&
+                    old.stake_lamports > 0
+                ) {
+                    console.warn(
+                        '[GameEvent] ⚠️  RESCUED stake_lamports for wager', updated.id,
+                        '— Realtime payload had stake_lamports =', updated.stake_lamports,
+                        ', kept existing value:', old.stake_lamports,
+                        '(', old.stake_lamports / 1_000_000_000, 'SOL )'
+                    )
+                }
+
+                return merged
+            })
+
+            // ── SAFE MERGE into my-wagers list ───────────────────────────────
             queryClient.setQueryData<Wager[]>(['wagers', 'my', walletAddress], (old) => {
                 if (!old) return [updated]
                 const idx = old.findIndex(w => w.id === updated.id)
                 if (idx === -1) return [updated, ...old]
-                const next = [...old]; next[idx] = updated; return next
+                const existing = old[idx]
+                const merged: Wager = {
+                    ...existing,
+                    ...updated,
+                    stake_lamports: (updated.stake_lamports != null && updated.stake_lamports > 0)
+                        ? updated.stake_lamports
+                        : existing.stake_lamports,
+                }
+                const next = [...old]
+                next[idx] = merged
+                return next
             })
 
             if (updated.status === 'resolved' || updated.status === 'cancelled') {
@@ -234,14 +308,24 @@ export function GameEventProvider({ children }: { children: ReactNode }) {
                 queryClient.setQueryData<Wager[]>(['wagers', 'live'], (old) => {
                     if (!old) return [updated]
                     const exists = old.some(w => w.id === updated.id)
-                    return exists ? old.map(w => w.id === updated.id ? updated : w) : [updated, ...old]
+                    return exists ? old.map(w => w.id === updated.id ? { ...w, ...updated, stake_lamports: (updated.stake_lamports > 0 ? updated.stake_lamports : w.stake_lamports) } : w) : [updated, ...old]
                 })
             } else {
                 queryClient.setQueryData<Wager[]>(['wagers', 'live'], (old) => {
                     if (!old) return old
                     const idx = old.findIndex(w => w.id === updated.id)
                     if (idx === -1) return old
-                    const next = [...old]; next[idx] = updated; return next
+                    const existing = old[idx]
+                    const merged: Wager = {
+                        ...existing,
+                        ...updated,
+                        stake_lamports: (updated.stake_lamports != null && updated.stake_lamports > 0)
+                            ? updated.stake_lamports
+                            : existing.stake_lamports,
+                    }
+                    const next = [...old]
+                    next[idx] = merged
+                    return next
                 })
             }
         }

@@ -2,12 +2,12 @@
 
 // src/app/itszaadminlogin/username-changes/page.tsx
 
-import React, { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     PenLine, Search, Loader2, RefreshCcw, CheckCircle2, AlertTriangle,
-    X, Copy, Check, ChevronRight, Flag, Target, Flame, Gamepad2, CheckCircle
+    X, Copy, Check, ChevronRight,
 } from 'lucide-react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -27,11 +27,11 @@ interface ChangeRequest {
     created_at: string;
 }
 
-const GAME_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
-    chess: { label: 'Chess', icon: <Flag className="w-4 h-4" /> },
-    codm: { label: 'CODM', icon: <Target className="w-4 h-4" /> },
-    pubg: { label: 'PUBG', icon: <Target className="w-4 h-4" /> },
-    free_fire: { label: 'Free Fire', icon: <Flame className="w-4 h-4" /> },
+const GAME_CONFIG: Record<string, { label: string; icon: string }> = {
+    chess: { label: 'Chess', icon: '♟️' },
+    codm: { label: 'CODM', icon: '🎯' },
+    pubg: { label: 'PUBG', icon: '🪖' },
+    free_fire: { label: 'Free Fire', icon: '🔥' },
 };
 
 const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
@@ -93,7 +93,7 @@ function ChangeRequestCard({
     const { publicKey } = useWallet();
 
     const short = (w: string) => `${w.slice(0, 8)}...${w.slice(-4)}`;
-    const gameCfg = GAME_CONFIG[req.game] || { label: req.game, icon: <Gamepad2 className="w-4 h-4" /> };
+    const gameCfg = GAME_CONFIG[req.game] || { label: req.game, icon: '🎮' };
     const statusCfg = STATUS_CONFIG[req.status] || { label: req.status, classes: 'bg-muted text-muted-foreground border-border' };
     const isResolved = req.status !== 'pending';
 
@@ -275,7 +275,7 @@ function ChangeRequestCard({
                                                     {actionLoading === req.id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
                                                     ) : (
-                                                        <><CheckCircle className="w-4 h-4 mr-2" /> Confirm Approval</>
+                                                        '✓ Confirm Approval'
                                                     )}
                                                 </button>
                                             </div>
@@ -320,7 +320,7 @@ function ChangeRequestCard({
                                                     {actionLoading === req.id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
                                                     ) : (
-                                                        <><X className="w-4 h-4 mr-2" /> Confirm Rejection</>
+                                                        '✗ Confirm Rejection'
                                                     )}
                                                 </button>
                                             </div>
@@ -573,12 +573,11 @@ function UsernameChangesContent() {
                         <p className="text-lg font-gaming font-bold text-foreground mb-1">
                             {searchTerm ? 'No matches found' : 'No change requests'}
                         </p>
-                        <p className="text-sm text-muted-foreground flex items-center justify-center">
-                            <CheckCircle className="w-4 h-4 text-muted-foreground mr-2" />
+                        <p className="text-sm text-muted-foreground">
                             {searchTerm
                                 ? 'Try a different search'
                                 : filterStatus === 'pending'
-                                    ? 'No pending requests'
+                                    ? 'No pending requests ✓'
                                     : 'No resolved requests yet'}
                         </p>
                     </motion.div>

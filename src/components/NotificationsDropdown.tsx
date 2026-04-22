@@ -3,7 +3,7 @@
 import {
   Bell, Trophy, Swords, Clock, Wallet, CheckCheck,
   ExternalLink, Loader2, MessageSquare, RefreshCw,
-  FileEdit, Scale,
+  FileEdit, Scale, UserPlus, Users, Heart,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,8 +14,11 @@ import {
 import { cn } from '@/lib/utils';
 import { useNotifications } from '@/hooks/useNotifications';
 import type { AppNotification } from '@/hooks/useNotifications';
+import { useDeclineChallenge } from '@/hooks/useWagers';
+import { useFriends } from '@/hooks/useFriends';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
+import { toast } from 'sonner';
 
 export function NotificationsDropdown() {
   const {
@@ -30,6 +33,37 @@ export function NotificationsDropdown() {
   } = useNotifications();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [decliningId, setDecliningId] = useState<string | null>(null);
+  const declineChallenge = useDeclineChallenge();
+  const { acceptRequest, declineRequest, getFriendship } = useFriends();
+
+  const handleAccept = useCallback(
+    (notification: AppNotification) => {
+      if (!notification.read) markRead(notification.id);
+      setOpen(false);
+      if (!notification.wager_id) return;
+      const params = new URLSearchParams({ wager: notification.wager_id, modal: 'ready-room' });
+      router.push(`/arena?${params.toString()}`);
+    },
+    [markRead, router],
+  );
+
+  const handleDecline = useCallback(
+    async (notification: AppNotification) => {
+      if (!notification.wager_id) return;
+      setDecliningId(notification.id);
+      try {
+        await declineChallenge.mutateAsync({ wagerId: notification.wager_id });
+        markRead(notification.id);
+        toast.success('Challenge declined');
+      } catch {
+        toast.error('Failed to decline challenge');
+      } finally {
+        setDecliningId(null);
+      }
+    },
+    [declineChallenge, markRead],
+  );
 
   const getNotificationIcon = (type: AppNotification['type']) => {
     switch (type) {
@@ -57,54 +91,53 @@ export function NotificationsDropdown() {
         return <Swords className="h-4 w-4 text-orange-400" />;
       case 'moderation_request':
         return <Scale className="h-4 w-4 text-amber-400" />;
+      case 'friend_request':
+        return <UserPlus className="h-4 w-4 text-primary" />;
+      case 'friend_accepted':
+        return <Users className="h-4 w-4 text-green-400" />;
+      case 'feed_reaction':
+        return <Heart className="h-4 w-4 text-pink-400" />;
+      case 'new_follower':
+        return <UserPlus className="h-4 w-4 text-accent" />;
       default:
         return <Bell className="h-4 w-4" />;
     }
   };
 
   // All possible routes a notification can deep-link to
-  type NotificationRoute = 'arena' | 'my-wagers' | 'dashboard';
+  type NotificationRoute = 'arena' | 'my-wagers' | 'dashboard' | 'profile';
 
   const getModalTarget = (
     type: AppNotification['type'],
   ): { route: NotificationRoute; modal: string } => {
     switch (type) {
       case 'wager_joined':
-        // Someone joined my wager — go to ready room
         return { route: 'arena', modal: 'ready-room' };
-
       case 'game_started':
-        // "Opponent confirmed game done" OR "Both confirmed — vote now"
-        // Both of these should open the GameCompleteModal so the player can
-        // confirm (or see the countdown before voting opens).
         return { route: 'arena', modal: 'game-complete' };
-
       case 'wager_vote':
-        // "Votes agree", "Time to vote", or "Opponent voted" — open VotingModal
         return { route: 'arena', modal: 'voting' };
-
       case 'wager_won':
       case 'wager_lost':
       case 'wager_draw':
         return { route: 'my-wagers', modal: 'result' };
-
       case 'wager_cancelled':
         return { route: 'my-wagers', modal: 'details' };
-
       case 'rematch_challenge':
         return { route: 'arena', modal: 'details' };
-
       case 'chat_message':
       case 'wager_proposal':
         return { route: 'arena', modal: 'ready-room' };
-
       case 'wager_disputed':
         return { route: 'my-wagers', modal: 'details' };
-
       case 'moderation_request':
-        // No modal param — ModerationOrchestrator auto-surfaces the panel
         return { route: 'dashboard', modal: '' };
-
+      case 'friend_request':
+      case 'friend_accepted':
+      case 'new_follower':
+        return { route: 'profile', modal: '' };
+      case 'feed_reaction':
+        return { route: 'my-wagers', modal: 'details' };
       default:
         return { route: 'my-wagers', modal: 'details' };
     }
@@ -115,9 +148,20 @@ export function NotificationsDropdown() {
       if (!notification.read) markRead(notification.id);
       setOpen(false);
 
-      if (!notification.wager_id) return;
-
       const { route, modal } = getModalTarget(notification.type);
+
+      // Profile route — navigate to the actor's profile if known, else own profile
+      if (route === 'profile') {
+        if (notification.actor_wallet) {
+          router.push(`/profile/${notification.actor_wallet}`);
+        } else {
+          router.push('/profile');
+        }
+        return;
+      }
+
+      // Wager routes require a wager_id
+      if (!notification.wager_id) return;
 
       if (!modal) {
         router.push(`/${route}`);
@@ -134,10 +178,10 @@ export function NotificationsDropdown() {
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        <Button variant="ghost" size="icon" className="relative overflow-visible">
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-destructive flex items-center justify-center">
+            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-destructive flex items-center justify-center z-10 pointer-events-none">
               <span className="text-[9px] font-bold text-white leading-none">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
@@ -145,25 +189,30 @@ export function NotificationsDropdown() {
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80 p-0 bg-card border-border">
-        {/* Header */}
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center justify-between">
+      {/* On mobile: near full-width; on desktop: 360px capped */}
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className="w-[calc(100vw-24px)] sm:w-[380px] max-w-[380px] p-0 bg-card border-border"
+      >
+        {/* Header — always two rows on mobile so mark-all-read is never squeezed */}
+        <div className="px-4 pt-3 pb-3 border-b border-border">
+          <div className="flex items-center justify-between gap-2">
             <h3 className="font-gaming text-sm">Notifications</h3>
             {unreadCount > 0 && (
               <button
                 onClick={markAllRead}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors py-1.5 px-2.5 rounded-lg bg-primary/10 hover:bg-primary/20 min-h-[32px] flex-shrink-0"
               >
-                <CheckCheck className="h-3 w-3" />
-                Mark all read
+                <CheckCheck className="h-3.5 w-3.5 flex-shrink-0" />
+                <span className="whitespace-nowrap font-medium">Mark all read</span>
               </button>
             )}
           </div>
         </div>
 
         {/* List */}
-        <div className="max-h-96 overflow-y-auto">
+        <div className="max-h-[min(480px,65vh)] overflow-y-auto overscroll-contain">
           {loading ? (
             <div className="py-12 flex items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -200,6 +249,77 @@ export function NotificationsDropdown() {
                             </span>
                           )}
                         </div>
+
+                        {/* Wager proposal / rematch accept+decline buttons */}
+                        {(notification.type === 'wager_proposal' || notification.type === 'rematch_challenge') && notification.wager_id && (
+                          <div className="flex gap-2 mt-3" onClick={e => e.stopPropagation()}>
+                            <Button size="sm" variant="outline" className="h-9 px-4 text-xs font-semibold flex-1 border-primary/40 hover:bg-primary/10"
+                              onClick={() => handleAccept(notification)}
+                            >
+                              ✓ Accept
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-9 px-4 text-xs text-destructive hover:bg-destructive/10 flex-1"
+                              disabled={decliningId === notification.id}
+                              onClick={() => handleDecline(notification)}
+                            >
+                              {decliningId === notification.id ? 'Declining…' : '✕ Decline'}
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Friend request inline accept+decline buttons */}
+                        {notification.type === 'friend_request' && notification.actor_wallet && (() => {
+                          const friendship = getFriendship(notification.actor_wallet!);
+
+                          return (
+                            <div className="flex gap-2 mt-3" onClick={e => e.stopPropagation()}>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-9 px-4 text-xs font-semibold flex-1 border-primary/40 hover:bg-primary/10"
+                                onClick={() => {
+                                  if (!friendship) {
+                                    toast.error('Still loading… try again');
+                                    return;
+                                  }
+
+                                  acceptRequest.mutate(friendship.id, {
+                                    onSuccess: () => {
+                                      toast.success('Friend request accepted!');
+                                      markRead(notification.id);
+                                      setOpen(false);
+                                    },
+                                    onError: () => toast.error('Failed to accept request'),
+                                  });
+                                }}
+                              >
+                                ✓ Accept
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-9 px-4 text-xs text-destructive hover:bg-destructive/10 flex-1"
+                                onClick={() => {
+                                  if (!friendship) {
+                                    toast.error('Still loading… try again');
+                                    return;
+                                  }
+
+                                  declineRequest.mutate(friendship.id, {
+                                    onSuccess: () => {
+                                      toast.success('Request declined');
+                                      markRead(notification.id);
+                                    },
+                                    onError: () => toast.error('Failed to decline'),
+                                  });
+                                }}
+                              >
+                                ✕ Decline
+                              </Button>
+                            </div>
+                          );
+                        })()}
                       </div>
                       {!notification.read && (
                         <div className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-1" />
@@ -267,6 +387,14 @@ function getActionLabel(type: AppNotification['type']): string {
       return 'View Dispute →';
     case 'moderation_request':
       return 'Open Panel →';
+    case 'friend_request':
+      return 'View Request →';
+    case 'friend_accepted':
+      return 'View Friend →';
+    case 'feed_reaction':
+      return 'View Wager →';
+    case 'new_follower':
+      return 'View Profile →';
     default:
       return 'View →';
   }

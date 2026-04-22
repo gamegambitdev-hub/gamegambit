@@ -1,7 +1,30 @@
 /**
- * ReadyRoomModal.tsx (v9)
+ * ReadyRoomModal.tsx (v12)
  *
- * Fix: removed top-level useWagerChat call that was creating a duplicate
+ * Fix (v12): Player B's "wait for Player A" poll now queries the DB
+ * `deposit_player_a` flag instead of polling on-chain PDA balance.
+ *
+ * WHY THE BALANCE POLL WAS BROKEN:
+ *   connection.getBalance(wagerPda) returns rent lamports (~1,400,000)
+ *   the moment create_wager initialises the PDA account — even before the
+ *   stake transfer CPI completes in some edge cases. This made
+ *   `pdaBalance >= w.stake_lamports` true immediately for small devnet stakes
+ *   (e.g. 0.001 SOL < 0.0014 SOL rent), causing Player B to fire join_wager
+ *   before Player A's deposit was actually confirmed. The on-chain join then
+ *   failed because the PDA's stake_lamports field was still 0.
+ *
+ *   Additionally, if `w.stake_lamports` arrived as 0 from a stale Realtime
+ *   cache snapshot, `pdaBalance >= 0` was always true — Player B would fire
+ *   join_wager instantly with a dust stake.
+ *
+ * THE FIX:
+ *   Poll `deposit_player_a` from Supabase (set by the secure-wager edge
+ *   function only after the on-chain tx is confirmed AND the DB is updated).
+ *   This is the single authoritative "Player A is done" signal — no race
+ *   conditions, no rent confusion, no dependence on stake_lamports being
+ *   correct in the Realtime cache.
+ *
+ * Fix (v11): removed top-level useWagerChat call that was creating a duplicate
  * Supabase realtime channel (wager-chat:${wagerId}) alongside the one
  * WagerChat creates internally. Duplicate channels cause one to be silently
  * dropped, breaking realtime message delivery.
@@ -15,15 +38,16 @@ import {
   Check, X, Clock, ExternalLink, Swords,
   Loader2, AlertCircle, ShieldCheck, Ban, Hourglass,
   Monitor, LayoutGrid, Trophy, Scale, Pencil, Info,
-  Shuffle, Dices, Flag,
+  Shuffle, Share2,
 } from 'lucide-react';
 import { Wager, useCancelWager } from '@/hooks/useWagers';
-import { GAMES, formatSol } from '@/lib/constants';
+import { GAMES, formatSol, calculatePlatformFee } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
 import { motion, AnimatePresence } from 'framer-motion';
 import { WagerChat } from '@/components/WagerChat';
 import { useCreateWagerOnChain, useJoinWagerOnChain, normalizeSolanaError } from '@/hooks/useSolanaProgram';
+import { getSupabaseClient } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -84,6 +108,7 @@ export function ReadyRoomModal({
   const [txState, setTxState] = useState<TxState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('details');
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const wagerRef = useRef<Wager | null>(wager);
   useEffect(() => { wagerRef.current = wager; }, [wager]);
@@ -160,7 +185,7 @@ export function ReadyRoomModal({
     ? (urlWhite || lichessGameUrl)
     : (urlBlack || lichessGameUrl);
 
-  const myColor = myColorResult === 'white' ? 'White ♔' : myColorResult === 'black' ? 'Black ♚' : <span className="flex items-center gap-1">Random <Dices className="w-4 h-4" /></span>;
+  const myColor = myColorResult === 'white' ? 'White ♔' : myColorResult === 'black' ? 'Black ♚' : 'Random 🎲';
   const myColorClass = myColorResult === 'white' ? 'text-foreground font-semibold' : myColorResult === 'black' ? 'text-muted-foreground font-semibold' : 'text-primary';
 
   useEffect(() => { setLocalReady(myReady ?? false); }, [myReady]);
@@ -222,11 +247,47 @@ export function ReadyRoomModal({
   const runDepositFlow = useCallback(async () => {
     const w = wagerRef.current;
     if (!w || txState === 'signing') return;
+
+    // ── ENTRY DIAGNOSTIC ──────────────────────────────────────────────────────
+    // Log the wager snapshot we are about to act on. If stake_sol is tiny
+    // (< 0.001) here, the bug is in how `wager` prop is passed/cached upstream
+    // — look for the [GameEvent] ⚠️ RESCUED log in GameEventContext for the
+    // frame where stake_lamports was zeroed out by a partial Realtime payload.
+    console.log('[ReadyRoom] runDepositFlow triggered', {
+      wagerId: w.id,
+      matchId: w.match_id,
+      stake_lamports: w.stake_lamports,
+      stake_sol: w.stake_lamports / 1_000_000_000,
+      status: w.status,
+      isPlayerA,
+      isPlayerB,
+      txState,
+      depositConfirmedRef: depositConfirmedRef.current,
+    });
+
+    if (!w.stake_lamports || w.stake_lamports < 1_000) {
+      // Catch the corrupt-value case right here with a user-friendly message
+      // instead of sending 0.000008 SOL to the chain.
+      console.error('[ReadyRoom] ❌ CORRUPTED stake_lamports detected before deposit:', w.stake_lamports);
+      setTxState('error');
+      setErrorMessage(
+        `Stake amount looks wrong (${w.stake_lamports / 1_000_000_000} SOL). ` +
+        `This is a data sync issue — please close the Ready Room and reopen it. ` +
+        `Your funds are safe and nothing has been sent on-chain.`
+      );
+      return;
+    }
+
     setErrorMessage(null);
     setTxState('signing');
     try {
       if (!depositConfirmedRef.current) {
         if (isPlayerA) {
+          console.log('[ReadyRoom] PlayerA about to createWager', {
+            wagerId: w.id,
+            stake_lamports: w.stake_lamports,
+            stake_sol: w.stake_lamports / 1_000_000_000,
+          });
           await createWagerOnChain.mutateAsync({
             matchId: w.match_id,
             stakeLamports: w.stake_lamports,
@@ -235,24 +296,70 @@ export function ReadyRoomModal({
             wagerId: w.id,
           });
         } else if (isPlayerB) {
-          // Wait for Player A's deposit to land on-chain before joining.
-          // The join_wager instruction reads stake_lamports from the PDA that
-          // create_wager initialises. If that PDA doesn't exist yet, the program
-          // uses minimum rent (~0.00008 SOL) instead of the agreed amount.
+          // Wait for Player A's deposit to be confirmed before joining.
+          //
+          // We poll the DB `deposit_player_a` flag rather than the on-chain
+          // PDA balance. The secure-wager edge function sets this flag only
+          // after the on-chain tx is confirmed AND Supabase is updated — it
+          // is the single authoritative "Player A is done" signal.
+          //
+          // WHY NOT poll PDA balance:
+          //   connection.getBalance(wagerPda) returns rent lamports (~1,400,000)
+          //   the instant create_wager allocates the account. For small devnet
+          //   stakes (e.g. 0.001 SOL < 0.0014 SOL rent), `balance >= stake`
+          //   was immediately true even before the actual stake transfer landed,
+          //   causing join_wager to fire against an uninitialised PDA and fail.
+          //   If w.stake_lamports was 0 from a stale Realtime snapshot,
+          //   `balance >= 0` was always true — Player B fired instantly.
           const POLL_INTERVAL_MS = 2000;
           const POLL_TIMEOUT_MS = 120_000; // 2 min max wait
           const pollStart = Date.now();
-          while (!(wagerRef.current as any)?.deposit_player_a) {
-            if (Date.now() - pollStart > POLL_TIMEOUT_MS) {
+          console.log('[ReadyRoom] PlayerB waiting for deposit_player_a DB flag…', {
+            wagerId: w.id,
+          });
+          while (true) {
+            const supabase = getSupabaseClient();
+            const { data: freshWager, error: pollError } = await supabase
+              .from('wagers')
+              .select('deposit_player_a, stake_lamports')
+              .eq('id', w.id)
+              .single();
+            const elapsedMs = Date.now() - pollStart;
+            console.log('[ReadyRoom] PlayerB deposit poll —', {
+              deposit_player_a: freshWager?.deposit_player_a,
+              stake_lamports: freshWager?.stake_lamports,
+              elapsedMs,
+              pollError: pollError?.message ?? null,
+            });
+            if (freshWager?.deposit_player_a) break;
+            if (elapsedMs > POLL_TIMEOUT_MS) {
               throw new Error('Timed out waiting for challenger to deposit. Please retry.');
             }
             await new Promise(res => setTimeout(res, POLL_INTERVAL_MS));
           }
+          // Re-read from wagerRef in case a Realtime update landed during the poll.
+          // IMPORTANT: only take identity fields (wallet, matchId, wagerId) from freshW.
+          // stake_lamports must come from the original snapshot `w` unless freshW has a
+          // valid value — a partial Realtime UPDATE (e.g. ready_player_b changing) can
+          // zero out stake_lamports in the cache, causing a dust deposit of ~0.00008 SOL.
+          const freshW = wagerRef.current!;
+          const stakeToUse =
+            freshW.stake_lamports && freshW.stake_lamports >= 1_000
+              ? freshW.stake_lamports
+              : w.stake_lamports;
+
+          console.log('[ReadyRoom] PlayerB about to joinWager', {
+            wagerId: freshW.id,
+            freshW_stake_lamports: freshW.stake_lamports,
+            original_stake_lamports: w.stake_lamports,
+            stakeToUse,
+            stakeToUse_sol: stakeToUse / 1_000_000_000,
+          });
           await joinWagerOnChain.mutateAsync({
-            playerAWallet: w.player_a_wallet,
-            matchId: w.match_id,
-            stakeLamports: w.stake_lamports,
-            wagerId: w.id,
+            playerAWallet: freshW.player_a_wallet,
+            matchId: freshW.match_id,
+            stakeLamports: stakeToUse,
+            wagerId: freshW.id,
           });
         }
         depositConfirmedRef.current = true;
@@ -270,6 +377,15 @@ export function ReadyRoomModal({
       setErrorMessage(err instanceof Error ? err.message : String(err));
     }
   }, [isPlayerA, isPlayerB, createWagerOnChain, joinWagerOnChain, txState]);
+
+  const handleShareLink = useCallback(() => {
+    if (!wager) return;
+    const url = `${window.location.origin}/wager/${wager.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  }, [wager]);
 
   const handleRetry = useCallback(() => {
     hasTriggeredTx.current = false;
@@ -310,7 +426,7 @@ export function ReadyRoomModal({
   const winnerPlayer = winnerWallet === wager?.player_a_wallet ? playerA : playerB;
   const winnerUsername = winnerPlayer?.username ?? null;
   const totalPot = (wager?.stake_lamports ?? 0) * 2;
-  const winnerPayout = Math.floor(totalPot * 0.9);
+  const winnerPayout = totalPot - calculatePlatformFee(wager?.stake_lamports ?? 0);
 
   if (!wager) return null;
 
@@ -409,24 +525,36 @@ export function ReadyRoomModal({
                 <Badge variant="joined">Match Found</Badge>
               </div>
             </div>
-            {hasLichessGame && (
-              <div className="flex rounded-lg border border-border overflow-hidden">
-                <button
-                  onClick={() => setActiveTab('board')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'board' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                >
-                  <Monitor className="h-3.5 w-3.5" />
-                  Play
-                </button>
-                <button
-                  onClick={() => setActiveTab('details')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'details' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                  Details
-                </button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {hasLichessGame && (
+                <div className="flex rounded-lg border border-border overflow-hidden">
+                  <button
+                    onClick={() => setActiveTab('board')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'board' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                  >
+                    <Monitor className="h-3.5 w-3.5" />
+                    Play
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('details')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${activeTab === 'details' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    Details
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={handleShareLink}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors border border-border/40"
+                title="Copy spectator link"
+              >
+                {linkCopied
+                  ? <><Check className="h-3.5 w-3.5 text-green-400" /><span className="text-green-400">Copied!</span></>
+                  : <><Share2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Share</span></>
+                }
+              </button>
+            </div>
           </div>
         </DialogHeader>
 
@@ -562,7 +690,7 @@ export function ReadyRoomModal({
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   <p className="text-sm text-muted-foreground">Waiting for on-chain confirmation…</p>
                   <p className="text-xs text-muted-foreground">
-                    {isPlayerB && !(wagerRef.current as any)?.deposit_player_a
+                    {isPlayerB
                       ? `Waiting for ${playerA?.username ?? (wager.player_a_wallet.slice(0, 6) + '…')} to deposit their stake first…`
                       : 'Your SOL is being deposited into the escrow contract.'
                     }
@@ -602,7 +730,7 @@ export function ReadyRoomModal({
                     <p className="text-sm font-medium text-success">Stakes locked in escrow!</p>
                     <p className="text-xs text-muted-foreground text-center px-4">
                       {formatSol(wager.stake_lamports * 2)} SOL secured on-chain. Winner receives{' '}
-                      {formatSol(Math.floor(wager.stake_lamports * 2 * 0.9))} SOL (90%) automatically.
+                      {formatSol(wager.stake_lamports * 2 - calculatePlatformFee(wager.stake_lamports))} SOL automatically.
                     </p>
                   </div>
 
@@ -653,7 +781,7 @@ export function ReadyRoomModal({
 
                   {/* Game Complete CTA */}
                   <button
-                    className="w-full rounded-lg bg-primary text-primary-foreground py-2.5 text-sm font-gaming font-semibold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
+                    className="w-full rounded-lg bg-primary text-primary-foreground py-2.5 text-sm font-gaming font-semibold hover:bg-primary/90 transition-colors"
                     onClick={() => {
                       if (wager && onOpenGameComplete) {
                         onOpenChange(false)
@@ -661,8 +789,7 @@ export function ReadyRoomModal({
                       }
                     }}
                   >
-                    <Flag className="h-4 w-4" />
-                    Game Complete — Vote Now
+                    🏁 Game Complete — Vote Now
                   </button>
                 </motion.div>
               )}

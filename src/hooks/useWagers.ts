@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletAuth } from './useWalletAuth';
+import { toast } from 'sonner';
 
 export type WagerStatus = 'created' | 'joined' | 'voting' | 'retractable' | 'disputed' | 'resolved' | 'cancelled';
 export type GameType = 'chess' | 'pubg' | 'codm' | 'free_fire';
@@ -191,7 +192,7 @@ export function useRecentWagers(limit: number = 10) {
       const { data, error } = await supabase
         .from('wagers')
         // Landing page live feed — minimal fields for the ticker
-        .select('id, match_id, player_a_wallet, player_b_wallet, game, stake_lamports, status, created_at')
+        .select('id, match_id, player_a_wallet, player_b_wallet, game, stake_lamports, status, stream_url, winner_wallet, is_public, created_at, updated_at')
         .order('created_at', { ascending: false })
         .limit(limit);
       if (error) throw error;
@@ -234,10 +235,15 @@ export function useWagerById(wagerId: string | null) {
       return data as Wager;
     },
     enabled: !!wagerId,
-    // refetchInterval removed: GameEventContext writes directly into
-    // ['wagers', wagerId] on every Realtime event, making 2s polling
-    // redundant — it was generating ~5 queries/second with 10 concurrent
-    // users each having a modal open.
+    // staleTime: 0 — always re-fetch from DB when the modal mounts or the
+    // wagerId changes. This guarantees stake_lamports is correct even if
+    // GameEventContext hasn't written a Realtime event yet (race on first open).
+    staleTime: 0,
+    // refetchInterval: poll every 8s as a backstop for missed Realtime events.
+    // GameEventContext Realtime updates are the primary mechanism — this is
+    // just insurance. 8s is low enough to catch a missed event quickly but
+    // won't generate the thundering-herd that 2s polling did (5 req/s × users).
+    refetchInterval: 8_000,
   });
 }
 
@@ -256,11 +262,15 @@ export function useCreateWager() {
       stream_url?: string;
     }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required. Please sign the message to continue.');
+      if (!sessionToken) throw new Error('Wallet verification required — please sign the message in your wallet to continue.');
       const data = await invokeSecureWager<{ wager: Wager }>({ action: 'create', ...wager }, sessionToken);
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useCreateWager] error:', error);
+      toast.error('Failed to create wager', { description: error.message });
+    },
   });
 }
 
@@ -271,11 +281,15 @@ export function useJoinWager() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string; playerBWallet?: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required. Please sign the message to continue.');
+      if (!sessionToken) throw new Error('Wallet verification required — please sign the message in your wallet to continue.');
       const data = await invokeSecureWager<{ wager: Wager }>({ action: 'join', wagerId }, sessionToken);
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useJoinWager] error:', error);
+      toast.error('Failed to join wager', { description: error.message });
+    },
   });
 }
 
@@ -294,11 +308,15 @@ export function useSubmitVote() {
       isPlayerA?: boolean;
     }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required. Please sign the message to continue.');
+      if (!sessionToken) throw new Error('Wallet verification required — please sign the message in your wallet to continue.');
       const data = await invokeSecureWager<{ wager: Wager }>({ action: 'vote', wagerId, votedWinner }, sessionToken);
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useSubmitVote] error:', error);
+      toast.error('Failed to submit vote', { description: error.message });
+    },
   });
 }
 
@@ -321,7 +339,7 @@ export function useEditWager() {
       is_public?: boolean;
     }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>(
         { action: 'edit', wagerId, stake_lamports, lichess_game_id, stream_url, is_public },
         sessionToken
@@ -329,6 +347,10 @@ export function useEditWager() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useEditWager] error:', error);
+      toast.error('Failed to edit wager', { description: error.message });
+    },
   });
 }
 
@@ -339,10 +361,14 @@ export function useDeleteWager() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       return invokeSecureWager<{ success: boolean }>({ action: 'delete', wagerId }, sessionToken);
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useDeleteWager] error:', error);
+      toast.error('Failed to delete wager', { description: error.message });
+    },
   });
 }
 
@@ -353,11 +379,15 @@ export function useSetReady() {
   return useMutation({
     mutationFn: async ({ wagerId, ready }: { wagerId: string; ready: boolean }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>({ action: 'setReady', wagerId, ready }, sessionToken);
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useSetReady] error:', error);
+      toast.error('Failed to update ready status', { description: error.message });
+    },
   });
 }
 
@@ -368,11 +398,15 @@ export function useStartGame() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>({ action: 'startGame', wagerId }, sessionToken);
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useStartGame] error:', error);
+      toast.error('Failed to start game', { description: error.message });
+    },
   });
 }
 
@@ -387,7 +421,7 @@ export function useCheckGameComplete() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
 
       const result = await invokeSecureWager<{
         gameComplete: boolean;
@@ -408,6 +442,10 @@ export function useCheckGameComplete() {
 
       return result;
     },
+    onError: (error: Error) => {
+      console.error('[useCheckGameComplete] error:', error);
+      toast.error('Failed to check game status', { description: error.message });
+    },
   });
 }
 
@@ -418,7 +456,7 @@ export function useCancelWager() {
   return useMutation({
     mutationFn: async ({ wagerId, reason }: { wagerId: string; reason?: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{
         wager: Wager;
         message: string;
@@ -428,6 +466,10 @@ export function useCancelWager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
+    },
+    onError: (error: Error) => {
+      console.error('[useCancelWager] error:', error);
+      toast.error('Failed to cancel wager', { description: error.message });
     },
   });
 }
@@ -445,7 +487,7 @@ export function useMarkGameComplete() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>(
         { action: 'markGameComplete', wagerId },
         sessionToken,
@@ -453,6 +495,10 @@ export function useMarkGameComplete() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useMarkGameComplete] error:', error);
+      toast.error('Failed to mark game complete', { description: error.message });
+    },
   });
 }
 
@@ -472,7 +518,7 @@ export function useSubmitGameVote() {
       votedWinner: string; // player wallet or 'draw'
     }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>(
         { action: 'submitVote', wagerId, votedWinner },
         sessionToken,
@@ -480,6 +526,10 @@ export function useSubmitGameVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useSubmitGameVote] error:', error);
+      toast.error('Failed to submit vote', { description: error.message });
+    },
   });
 }
 
@@ -493,7 +543,7 @@ export function useRetractVote() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>(
         { action: 'retractVote', wagerId },
         sessionToken,
@@ -501,8 +551,13 @@ export function useRetractVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useRetractVote] error:', error);
+      toast.error('Failed to retract vote', { description: error.message });
+    },
   });
 }
+
 // Called by VotingModal after the 15s retractable window expires.
 // Resolves the wager on-chain. Server guards against double-fire.
 export function useFinalizeVote() {
@@ -512,7 +567,7 @@ export function useFinalizeVote() {
   return useMutation({
     mutationFn: async ({ wagerId }: { wagerId: string }) => {
       const sessionToken = await getSessionToken();
-      if (!sessionToken) throw new Error('Wallet verification required.');
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
       const data = await invokeSecureWager<{ wager: Wager }>(
         { action: 'finalizeVote', wagerId },
         sessionToken,
@@ -521,5 +576,27 @@ export function useFinalizeVote() {
       return data.wager;
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useFinalizeVote] error:', error);
+      toast.error('Failed to finalize vote', { description: error.message });
+    },
+  });
+}
+
+export function useDeclineChallenge() {
+  const queryClient = useQueryClient();
+  const { getSessionToken } = useWalletAuth();
+
+  return useMutation({
+    mutationFn: async ({ wagerId }: { wagerId: string }) => {
+      const sessionToken = await getSessionToken();
+      if (!sessionToken) throw new Error('Wallet verification required — please reconnect your wallet and try again.');
+      return invokeSecureWager<{ success: boolean }>({ action: 'declineChallenge', wagerId }, sessionToken);
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['wagers'] }); },
+    onError: (error: Error) => {
+      console.error('[useDeclineChallenge] error:', error);
+      toast.error('Failed to decline challenge', { description: error.message });
+    },
   });
 }

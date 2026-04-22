@@ -10,6 +10,8 @@ import { useLeaderboard, Player } from '@/hooks/usePlayer'
 import { staggerContainer, staggerItem } from '@/components/PageTransition'
 import { LeaderboardRowsSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import Link from 'next/link'
+import { FriendButton } from '@/components/FriendButton'
+import { FollowButton } from '@/components/FollowButton'
 
 const getRankIcon = (rank: number) => {
   switch (rank) {
@@ -68,6 +70,11 @@ function LeaderboardRow({ player, rank, sortBy }: { player: Player; rank: number
                 <div className="text-[10px] sm:text-xs text-muted-foreground">
                   {player.total_wins}W - {player.total_losses}L
                 </div>
+              </div>
+              {/* Hidden on mobile — profile page has full controls */}
+              <div className="hidden sm:flex items-center gap-1" onClick={e => { e.preventDefault(); e.stopPropagation() }}>
+                <FriendButton targetWallet={player.wallet_address} size="sm" />
+                <FollowButton targetWallet={player.wallet_address} size="sm" />
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-6 flex-shrink-0">

@@ -1,7 +1,7 @@
 # GameGambit — Database Schema
 
-**Last Updated:** April 3, 2026
-**Version:** v1.7.0
+**Last Updated:** April 13, 2026
+**Version:** v1.8.0
 **Database:** PostgreSQL (Supabase)
 **Environment:** Production
 
@@ -121,6 +121,11 @@ Role-based access control:
 | `username_change_requests` | Formal requests to rebind a game account | player_wallet, game, old_username, new_username *(v1.5.0)* |
 | `punishment_log` | Immutable punishment audit trail | player_wallet, offense_type, punishment *(v1.5.0)* |
 | `player_behaviour_log` | Soft event log for admin pattern review | player_wallet, event_type *(v1.5.0)* |
+| `feed_reactions` | Emoji reactions on public wager feed entries | wager_id, wallet, reaction_type *(v1.8.0)* |
+| `friendships` | Friend requests and social connections between players | requester_wallet, recipient_wallet, status *(v1.8.0)* |
+| `direct_messages` | DM channel messages between friended players | channel_id, sender_wallet, message *(v1.8.0)* |
+| `spectator_bets` | Side-bets placed by spectators on active wagers | wager_id, bettor_wallet, backed_player, amount_lamports *(v1.8.0)* |
+| `follows` | Asymmetric follow graph — powers feed "Friends & Following" tab. Distinct from `friendships` (mutual/approval-required). | follower_wallet, following_wallet *(v1.8.0)* |
 
 ---
 
@@ -161,6 +166,14 @@ admin_users (1) ─────────────────────�
 nfts    (1) ──────────────────────────────────────────────── (N) achievements [nft_mint_address]
 players (1) ──────────────────────────────────────────────── (N) notifications
 wagers  (1) ──────────────────────────────────────────────── (N) notifications
+
+wagers  (1) ──────────────────────────────────────────────── (N) feed_reactions
+wagers  (1) ──────────────────────────────────────────────── (N) spectator_bets
+players (1) ──────────────────────────────────────────────── (N) feed_reactions [wallet]
+players (1) ──────────────────────────────────────────────── (N) friendships [requester_wallet]
+players (1) ──────────────────────────────────────────────── (N) friendships [recipient_wallet]
+players (1) ──────────────────────────────────────────────── (N) follows [follower_wallet]
+players (1) ──────────────────────────────────────────────── (N) follows [following_wallet]
 ```
 
 > **Note on `admin_logs.wallet_address`:** This column stores a player wallet string for context but does **not** have a FK constraint in the live DB. It is informational only — the player row may not exist if the action was taken before the player was created. `admin_logs.wager_id` does have a FK to `wagers(id)`.
@@ -478,7 +491,7 @@ CREATE INDEX idx_tx_signature ON wager_transactions(tx_signature);
 Per-wager chat and edit proposal messages between the two players.
 Included in `supabase_realtime` publication — both players receive new rows instantly.
 
-> ⚠️ **Type Gap:** `wager_messages` is **not present in the generated `src/integrations/supabase/types.ts`**. The hook `useWagerChat.ts` works around this with an `as any` cast at the query boundary. After any schema change, regenerate types with `supabase gen types typescript`. The `WagerMessage` interface lives in `src/hooks/useWagerChat.ts` and is the authoritative TypeScript type for this table until types are regenerated.
+> ✅ **Type Gap Resolved (v1.8.0):** `wager_messages` is now present in `src/integrations/supabase/types.ts`. The `as any` cast and local `WagerMessage` interface in `useWagerChat.ts` can be removed and replaced with `Tables<'wager_messages'>`.
 
 ```sql
 CREATE TABLE wager_messages (
@@ -754,7 +767,14 @@ CREATE TABLE notifications (
                    'username_appeal',
                    'username_appeal_resolved',
                    'username_appeal_update',
-                   'username_change_request'
+                   'username_change_request',
+                   -- Social (v1.8.0)
+                   'feed_reaction',
+                   'friend_request',
+                   'friend_accepted',
+                   'new_follower'
+                   -- NOTE: 'wager_declined' is emitted by declineChallenge in secure-wager
+                   -- but is not yet handled in useNotifications.ts — pending integration gap
                  )),
   title          TEXT NOT NULL,
   message        TEXT NOT NULL,
@@ -798,6 +818,12 @@ CREATE POLICY "Players can update own notifications"
 - `username_appeal_resolved` — Sent to both parties when an appeal is resolved (release or rejection)
 - `username_appeal_update` — Sent to both parties when holder contests (appeal enters moderator review)
 - `username_change_request` — Sent to the requesting player confirming their change request was received
+- `feed_reaction` — Sent to wager owner when a viewer reacts to their feed post (10-minute digest guard prevents spam)
+- `friend_request` — Sent when another player sends a friend request
+- `friend_accepted` — Sent when a pending friend request is accepted by the recipient
+- `new_follower` — Sent when another player follows your profile
+
+> **Known gap:** `wager_declined` is emitted by `declineChallenge` in `secure-wager` but is not yet handled in `useNotifications.ts` — insert will succeed (type is not in the CHECK) but the notification will not appear in the bell dropdown until the hook is updated.
 
 **Realtime:** Frontend subscribes to `postgres_changes` on `notifications` filtered by `player_wallet`. New rows appear instantly in the bell icon dropdown without refresh.
 
@@ -1023,6 +1049,149 @@ CREATE INDEX IF NOT EXISTS idx_behaviour_log_event_type
 
 ---
 
+---
+
+### 21. **FEED_REACTIONS** *(v1.8.0)*
+
+Emoji reactions on wager feed entries. One reaction type per wallet per wager — upserted on change.
+
+```sql
+CREATE TABLE IF NOT EXISTS feed_reactions (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  wager_id       UUID        NOT NULL REFERENCES wagers(id) ON DELETE CASCADE,
+  wallet         TEXT        NOT NULL,    -- logical FK to players(wallet_address)
+  reaction_type  TEXT        NOT NULL,
+  -- 'fire' | 'skull' | 'goat' | 'eyes'
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (wager_id, wallet)              -- one reaction per player per wager
+);
+
+CREATE INDEX idx_feed_reactions_wager ON feed_reactions (wager_id);
+```
+
+**Notes:**
+- `wallet` has **no DB-level FK constraint** to `players`. Access is enforced by RLS / anon-key auth.
+- The UNIQUE constraint on `(wager_id, wallet)` enables safe `upsert(..., { onConflict: 'wager_id,wallet' })` to change a reaction without creating duplicates.
+- `reaction_type` is constrained in TypeScript as `'fire' | 'skull' | 'goat' | 'eyes'` — no DB CHECK constraint in the initial migration, so invalid values must be rejected at the API layer.
+
+---
+
+### 22. **FRIENDSHIPS** *(v1.8.0)*
+
+Friend requests and social connections between players.
+
+```sql
+CREATE TABLE IF NOT EXISTS friendships (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester_wallet TEXT        NOT NULL,   -- player who sent the request
+  recipient_wallet TEXT        NOT NULL,   -- player who received the request
+  status           TEXT        NOT NULL DEFAULT 'pending',
+  -- 'pending' | 'accepted' | 'blocked'
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (requester_wallet, recipient_wallet)
+);
+
+CREATE INDEX idx_friendships_requester ON friendships (requester_wallet);
+CREATE INDEX idx_friendships_recipient ON friendships (recipient_wallet);
+CREATE INDEX idx_friendships_status    ON friendships (status) WHERE status = 'accepted';
+```
+
+**Notes:**
+- `requester_wallet` and `recipient_wallet` have **no DB-level FK constraints** — confirmed by empty `Relationships` array in `types.ts`. Access enforced by RLS.
+- The UNIQUE constraint on `(requester_wallet, recipient_wallet)` is directional — `(A→B)` and `(B→A)` are separate rows. Query both directions when checking friendship status.
+- `useFriends.ts` queries all three statuses separately: `accepted` for the friends list, `pending` for incoming requests, and all for status lookups.
+
+**Status Flow:**
+1. `pending` — Request sent, awaiting recipient acceptance
+2. `accepted` — Mutual friends; DMs unlocked
+3. `blocked` — Either party blocked the other
+
+---
+
+### 23. **DIRECT_MESSAGES** *(v1.8.0)*
+
+DM messages between friended players, keyed by a shared `channel_id`.
+
+```sql
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id    TEXT        NOT NULL,    -- deterministic key: sorted([walletA, walletB]).join(':')
+  sender_wallet TEXT        NOT NULL,   -- logical FK to players(wallet_address)
+  message       TEXT        NOT NULL,
+  read_at       TIMESTAMPTZ,            -- NULL = unread by recipient
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_dm_channel    ON direct_messages (channel_id, created_at ASC);
+CREATE INDEX idx_dm_sender     ON direct_messages (sender_wallet);
+CREATE INDEX idx_dm_unread     ON direct_messages (channel_id, read_at) WHERE read_at IS NULL;
+```
+
+**Notes:**
+- `channel_id` is constructed client-side as `[walletA, walletB].sort().join(':')` — alphabetical sort ensures both parties derive the same key regardless of who initiates.
+- No FK constraints on either `channel_id` or `sender_wallet` — the table is accessed via RLS-protected client queries.
+- `read_at` is set when the recipient opens the conversation. The partial index on `(channel_id, read_at) WHERE read_at IS NULL` supports fast unread-count queries.
+
+---
+
+### 24. **SPECTATOR_BETS** *(v1.8.0)*
+
+Side-bets placed by spectators on active wagers. Supports a peer-to-peer counter-bet model.
+
+```sql
+CREATE TABLE IF NOT EXISTS spectator_bets (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  wager_id        UUID        NOT NULL REFERENCES wagers(id) ON DELETE CASCADE,
+  bettor_wallet   TEXT        NOT NULL,   -- player who opened the bet
+  backer_wallet   TEXT,                  -- player who countered (NULL until matched)
+  backed_player   TEXT        NOT NULL,
+  -- 'player_a' | 'player_b'
+  amount_lamports BIGINT      NOT NULL,
+  status          TEXT        NOT NULL DEFAULT 'open',
+  -- 'open' | 'countered' | 'matched' | 'expired' | 'resolved' | 'cancelled'
+  counter_amount  BIGINT,                -- backer's counter-stake (may differ from bettor's)
+  tx_signature    TEXT,                  -- on-chain escrow tx (when matched)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  matched_at      TIMESTAMPTZ,
+  expires_at      TIMESTAMPTZ,           -- open bets expire if unmatched
+  resolved_at     TIMESTAMPTZ
+);
+
+CREATE INDEX idx_spectator_bets_wager  ON spectator_bets (wager_id);
+CREATE INDEX idx_spectator_bets_bettor ON spectator_bets (bettor_wallet);
+CREATE INDEX idx_spectator_bets_open   ON spectator_bets (wager_id, status) WHERE status = 'open';
+```
+
+**Notes:**
+- `bettor_wallet` and `backer_wallet` have **no DB-level FK constraints** — confirmed by `Relationships` in `types.ts` only containing the `wager_id` FK.
+- The `counter_amount` allows asymmetric odds — e.g. bettor risks 0.1 SOL, backer risks 0.05 SOL at 2:1 odds.
+- `spectator_bets` is fully wired as of v1.8.0. The primary hook is `useSideBets.ts` (local interface — table is not yet in auto-generated `types.ts`, see Known Issues). `useSpectatorCount` in `useFeed.ts` reads the count only. Place/counter/accept/cancel flow and auto-resolve on wager end are all implemented per the v1.8.0 roadmap.
+
+---
+
+### Table 25: FOLLOWS *(v1.8.0)*
+
+```sql
+CREATE TABLE IF NOT EXISTS follows (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  follower_wallet  TEXT        NOT NULL,   -- player who followed
+  following_wallet TEXT        NOT NULL,   -- player being followed
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (follower_wallet, following_wallet)
+);
+
+CREATE INDEX idx_follows_follower  ON follows (follower_wallet);
+CREATE INDEX idx_follows_following ON follows (following_wallet);
+```
+
+**Notes:**
+- `follower_wallet` and `following_wallet` have **no DB-level FK constraints** — access enforced by RLS policies only.
+- Distinct from `friendships`: follows are **asymmetric and immediate** (no request/approval step). Player A can follow Player B without Player B following back.
+- Realtime is enabled on the `follows` table. `useFollows.ts` subscribes to the channel `follows:{walletAddress}` filtered by `following_wallet=eq.{wallet}` to keep follower/following counts in sync.
+- Run `ALTER PUBLICATION supabase_realtime ADD TABLE follows;` after applying the migration if the table was created after the initial Realtime setup.
+
+
 ## DB Functions (RPC)
 
 These are callable via `.rpc()` on the Supabase client. Confirmed live in `information_schema.routines`.
@@ -1182,16 +1351,19 @@ The following tables are enabled in the `supabase_realtime` publication and emit
 | `notifications` | INSERT | Bell icon dropdown, filtered by `player_wallet` |
 | `moderation_requests` | INSERT | `GameEventContext` — filtered by `moderator_wallet=eq.{wallet}`, triggers moderator popup |
 | `wager_messages` | INSERT, UPDATE | Ready room chat and proposals, filtered by `wager_id` — **one subscription per wager per client** |
+| `follows` | INSERT, DELETE | `useFollows` — filtered by `following_wallet=eq.{wallet}`; invalidates follower/following query cache |
 
 > **Migration required:** Run `ALTER PUBLICATION supabase_realtime ADD TABLE moderation_requests;` in the SQL editor if this table was created after the initial Realtime setup. Without this, `GameEventContext`'s moderator popup subscription will never fire.
 
-Tables **not** in realtime: `players`, `admin_*`, `push_subscriptions`, `rate_limit_logs`, `nfts`, `achievements`, `username_appeals`, `username_change_requests`, `punishment_log`, `player_behaviour_log`.
+Tables **not** in realtime: `players`, `admin_*`, `push_subscriptions`, `rate_limit_logs`, `nfts`, `achievements`, `username_appeals`, `username_change_requests`, `punishment_log`, `player_behaviour_log`, `feed_reactions`, `friendships`, `spectator_bets`.
+
+> **Note on `direct_messages`:** Not yet in the realtime publication as of v1.8.0. The `messages` page in `useDirectMessages.ts` currently polls rather than subscribing. Add `ALTER PUBLICATION supabase_realtime ADD TABLE direct_messages;` when adding realtime DM delivery.
 
 ---
 
 ## Indexes & Performance
 
-### Complete Index List (live DB, v1.5.0)
+### Complete Index List (live DB, v1.8.0)
 
 | Table | Index | Definition |
 |-------|-------|------------|
@@ -1279,6 +1451,26 @@ Tables **not** in realtime: `players`, `admin_*`, `push_subscriptions`, `rate_li
 | `wagers` | `idx_wagers_resolved` | btree (status) WHERE status = 'resolved' |
 | `wagers` | `wagers_disputed_idx` | btree (status, dispute_created_at) WHERE status = 'disputed' |
 | `wagers` | `wagers_moderator_wallet_idx` | btree (moderator_wallet) WHERE moderator_wallet IS NOT NULL |
+| `feed_reactions` | `feed_reactions_pkey` | UNIQUE btree (id) |
+| `feed_reactions` | `feed_reactions_wager_id_wallet_key` | UNIQUE btree (wager_id, wallet) |
+| `feed_reactions` | `idx_feed_reactions_wager` | btree (wager_id) |
+| `friendships` | `friendships_pkey` | UNIQUE btree (id) |
+| `friendships` | `friendships_requester_wallet_recipient_wallet_key` | UNIQUE btree (requester_wallet, recipient_wallet) |
+| `friendships` | `idx_friendships_requester` | btree (requester_wallet) |
+| `friendships` | `idx_friendships_recipient` | btree (recipient_wallet) |
+| `friendships` | `idx_friendships_status` | btree (status) WHERE status = 'accepted' |
+| `direct_messages` | `direct_messages_pkey` | UNIQUE btree (id) |
+| `direct_messages` | `idx_dm_channel` | btree (channel_id, created_at ASC) |
+| `direct_messages` | `idx_dm_sender` | btree (sender_wallet) |
+| `direct_messages` | `idx_dm_unread` | btree (channel_id, read_at) WHERE read_at IS NULL |
+| `spectator_bets` | `spectator_bets_pkey` | UNIQUE btree (id) |
+| `spectator_bets` | `idx_spectator_bets_wager` | btree (wager_id) |
+| `spectator_bets` | `idx_spectator_bets_bettor` | btree (bettor_wallet) |
+| `spectator_bets` | `idx_spectator_bets_open` | btree (wager_id, status) WHERE status = 'open' |
+| `follows` | `follows_pkey` | UNIQUE btree (id) |
+| `follows` | `follows_follower_wallet_following_wallet_key` | UNIQUE btree (follower_wallet, following_wallet) |
+| `follows` | `idx_follows_follower` | btree (follower_wallet) |
+| `follows` | `idx_follows_following` | btree (following_wallet) |
 
 ### Query Performance Targets
 
@@ -1330,26 +1522,138 @@ ALTER TABLE wager_transactions ADD CONSTRAINT unique_tx_signature UNIQUE (tx_sig
 
 ## Known Type Gaps
 
-> After running all migrations, regenerate types to clear all gaps:
+> After any schema change, regenerate types:
 > ```bash
 > npx supabase gen types typescript --project-id vqgtwalwvalbephvpxap > src/integrations/supabase/types.ts
 > ```
 
-| Table | Status | Workaround |
-|-------|--------|------------|
-| `wager_messages` | ❌ Not in `types.ts` | `as any` cast in `useWagerChat.ts`; `WagerMessage` interface defined there |
-| `moderation_requests` | ❌ Not in `types.ts` | Define local interface in consuming hook |
-| `username_appeals` | ❌ Not in `types.ts` | Define local interface in consuming hook |
-| `username_change_requests` | ❌ Not in `types.ts` | Define local interface in consuming hook |
-| `punishment_log` | ❌ Not in `types.ts` | Define local interface in consuming hook |
-| `player_behaviour_log` | ❌ Not in `types.ts` | Define local interface in consuming hook |
-| `players` new columns (v1.5.0) | ❌ Not in `types.ts` | `as any` casts in `src/app/api/settings/route.ts` and `usePlayerSettings.ts` |
-| `wagers` new columns (v1.5.0) | ❌ Not in `types.ts` | Local field references in `useWagers.ts` `Wager` interface |
-| `game_type` enum `free_fire` | ❌ Not in `types.ts` | `GameType` union in `useWagers.ts` includes `'free_fire'` manually |
+### ✅ Resolved in v1.8.0 (types.ts fully regenerated)
+
+All previously listed gaps have been resolved. The following tables and columns are now fully present in `src/integrations/supabase/types.ts` and no workaround casts are needed:
+
+- `wager_messages` — fully typed; remove the `as any` cast and local `WagerMessage` interface in `useWagerChat.ts`
+- `moderation_requests`, `username_appeals`, `username_change_requests`, `punishment_log`, `player_behaviour_log`
+- All v1.5.0 player and wager columns (game account binding, punishment tracking, dispute/moderation fields)
+- `game_type` enum value `'free_fire'`
+- New social/spectator tables: `feed_reactions`, `friendships`, `direct_messages`, `spectator_bets`
+
+### ❌ Active Type Gaps
+
+| Column | Table | Status | Notes |
+|--------|-------|--------|-------|
+| `ban_expires_at` | `players` | ❌ Not in `types.ts` | Added by v1.7.0 migration SQL and used in `resolve-wager/index.ts` but missing from generated types. Cast to `any` at update site or add manually until next regen. |
 
 ---
 
 ## Recent Migrations
+
+### v1.8.0 — April 13, 2026
+
+Five new tables for social, feed, and spectator features, plus a `notifications` CHECK constraint expansion. Run in the Supabase SQL editor:
+
+**001 — `feed_reactions`**
+```sql
+CREATE TABLE IF NOT EXISTS feed_reactions (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  wager_id       UUID        NOT NULL REFERENCES wagers(id) ON DELETE CASCADE,
+  wallet         TEXT        NOT NULL,
+  reaction_type  TEXT        NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (wager_id, wallet)
+);
+CREATE INDEX IF NOT EXISTS idx_feed_reactions_wager ON feed_reactions (wager_id);
+```
+
+**002 — `friendships`**
+```sql
+CREATE TABLE IF NOT EXISTS friendships (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  requester_wallet TEXT        NOT NULL,
+  recipient_wallet TEXT        NOT NULL,
+  status           TEXT        NOT NULL DEFAULT 'pending',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (requester_wallet, recipient_wallet)
+);
+CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships (requester_wallet);
+CREATE INDEX IF NOT EXISTS idx_friendships_recipient ON friendships (recipient_wallet);
+CREATE INDEX IF NOT EXISTS idx_friendships_status    ON friendships (status) WHERE status = 'accepted';
+```
+
+**003 — `direct_messages`**
+```sql
+CREATE TABLE IF NOT EXISTS direct_messages (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id    TEXT        NOT NULL,
+  sender_wallet TEXT        NOT NULL,
+  message       TEXT        NOT NULL,
+  read_at       TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dm_channel ON direct_messages (channel_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_dm_sender  ON direct_messages (sender_wallet);
+CREATE INDEX IF NOT EXISTS idx_dm_unread  ON direct_messages (channel_id, read_at) WHERE read_at IS NULL;
+```
+
+**004 — `spectator_bets`**
+```sql
+CREATE TABLE IF NOT EXISTS spectator_bets (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  wager_id        UUID        NOT NULL REFERENCES wagers(id) ON DELETE CASCADE,
+  bettor_wallet   TEXT        NOT NULL,
+  backer_wallet   TEXT,
+  backed_player   TEXT        NOT NULL,
+  amount_lamports BIGINT      NOT NULL,
+  status          TEXT        NOT NULL DEFAULT 'open',
+  counter_amount  BIGINT,
+  tx_signature    TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  matched_at      TIMESTAMPTZ,
+  expires_at      TIMESTAMPTZ,
+  resolved_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_spectator_bets_wager  ON spectator_bets (wager_id);
+CREATE INDEX IF NOT EXISTS idx_spectator_bets_bettor ON spectator_bets (bettor_wallet);
+CREATE INDEX IF NOT EXISTS idx_spectator_bets_open   ON spectator_bets (wager_id, status) WHERE status = 'open';
+```
+
+**005 — `follows`**
+```sql
+CREATE TABLE IF NOT EXISTS follows (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  follower_wallet  TEXT        NOT NULL,
+  following_wallet TEXT        NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (follower_wallet, following_wallet)
+);
+CREATE INDEX IF NOT EXISTS idx_follows_follower  ON follows (follower_wallet);
+CREATE INDEX IF NOT EXISTS idx_follows_following ON follows (following_wallet);
+ALTER PUBLICATION supabase_realtime ADD TABLE follows;
+```
+
+**006 — Regenerate TypeScript types** *(clears all previously listed type gaps)*
+```bash
+npx supabase gen types typescript --project-id vqgtwalwvalbephvpxap > src/integrations/supabase/types.ts
+```
+
+**007 — Expand `notifications.type` CHECK constraint to include social types**
+```sql
+ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
+
+ALTER TABLE notifications ADD CONSTRAINT notifications_type_check
+  CHECK (type IN (
+    'wager_joined', 'wager_won', 'wager_lost', 'wager_draw',
+    'wager_cancelled', 'game_started',
+    'wager_vote', 'wager_disputed', 'wager_proposal',
+    'chat_message', 'rematch_challenge',
+    'moderation_request',
+    'username_appeal', 'username_appeal_resolved',
+    'username_appeal_update', 'username_change_request',
+    'feed_reaction', 'friend_request', 'friend_accepted', 'new_follower'
+  ));
+```
+
+---
 
 ### v1.7.0 — April 3, 2026
 
@@ -1911,4 +2215,4 @@ Contact Supabase support with:
 
 ---
 
-Last updated: March 28, 2026 — v1.6.0
+Last updated: April 13, 2026 — v1.8.0

@@ -468,6 +468,7 @@ export type Database = {
       }
       notifications: {
         Row: {
+          actor_wallet: string | null
           created_at: string | null
           id: string
           message: string
@@ -478,6 +479,7 @@ export type Database = {
           wager_id: string | null
         }
         Insert: {
+          actor_wallet?: string | null
           created_at?: string | null
           id?: string
           message: string
@@ -488,6 +490,7 @@ export type Database = {
           wager_id?: string | null
         }
         Update: {
+          actor_wallet?: string | null
           created_at?: string | null
           id?: string
           message?: string
@@ -562,6 +565,7 @@ export type Database = {
           free_fire_username: string | null
           game_username_bound_at: Json | null
           id: number
+          invite_code: string | null
           is_banned: boolean | null
           is_suspended: boolean
           last_active: string | null
@@ -575,6 +579,8 @@ export type Database = {
           pubg_player_id: string | null
           pubg_username: string | null
           push_notifications_enabled: boolean
+          referral_count: number
+          referred_by_wallet: string | null
           skill_rating: number | null
           suspension_ends_at: string | null
           total_earnings: number | null
@@ -607,6 +613,7 @@ export type Database = {
           free_fire_username?: string | null
           game_username_bound_at?: Json | null
           id?: number
+          invite_code?: string | null
           is_banned?: boolean | null
           is_suspended?: boolean
           last_active?: string | null
@@ -620,6 +627,8 @@ export type Database = {
           pubg_player_id?: string | null
           pubg_username?: string | null
           push_notifications_enabled?: boolean
+          referral_count?: number
+          referred_by_wallet?: string | null
           skill_rating?: number | null
           suspension_ends_at?: string | null
           total_earnings?: number | null
@@ -652,6 +661,7 @@ export type Database = {
           free_fire_username?: string | null
           game_username_bound_at?: Json | null
           id?: number
+          invite_code?: string | null
           is_banned?: boolean | null
           is_suspended?: boolean
           last_active?: string | null
@@ -665,6 +675,8 @@ export type Database = {
           pubg_player_id?: string | null
           pubg_username?: string | null
           push_notifications_enabled?: boolean
+          referral_count?: number
+          referred_by_wallet?: string | null
           skill_rating?: number | null
           suspension_ends_at?: string | null
           total_earnings?: number | null
@@ -1226,6 +1238,169 @@ export type Database = {
           },
         ]
       }
+      feed_reactions: {
+        Row: {
+          id: string
+          wager_id: string
+          wallet: string
+          reaction_type: 'fire' | 'skull' | 'goat' | 'eyes'
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          wager_id: string
+          wallet: string
+          reaction_type: 'fire' | 'skull' | 'goat' | 'eyes'
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          wager_id?: string
+          wallet?: string
+          reaction_type?: 'fire' | 'skull' | 'goat' | 'eyes'
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "feed_reactions_wager_id_fkey"
+            columns: ["wager_id"]
+            isOneToOne: false
+            referencedRelation: "wagers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      friendships: {
+        Row: {
+          id: string
+          requester_wallet: string
+          recipient_wallet: string
+          status: 'pending' | 'accepted' | 'blocked'
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          requester_wallet: string
+          recipient_wallet: string
+          status?: 'pending' | 'accepted' | 'blocked'
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          requester_wallet?: string
+          recipient_wallet?: string
+          status?: 'pending' | 'accepted' | 'blocked'
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      direct_messages: {
+        Row: {
+          id: string
+          channel_id: string
+          sender_wallet: string
+          message: string
+          read_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          channel_id: string
+          sender_wallet: string
+          message: string
+          read_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          channel_id?: string
+          sender_wallet?: string
+          message?: string
+          read_at?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      spectator_bets: {
+        Row: {
+          id: string
+          wager_id: string
+          bettor_wallet: string
+          backer_wallet: string | null
+          backed_player: 'player_a' | 'player_b'
+          amount_lamports: number
+          status: 'open' | 'countered' | 'matched' | 'expired' | 'resolved' | 'cancelled'
+          counter_amount: number | null
+          tx_signature: string | null
+          created_at: string
+          matched_at: string | null
+          expires_at: string | null
+          resolved_at: string | null
+        }
+        Insert: {
+          id?: string
+          wager_id: string
+          bettor_wallet: string
+          backer_wallet?: string | null
+          backed_player: 'player_a' | 'player_b'
+          amount_lamports: number
+          status?: 'open' | 'countered' | 'matched' | 'expired' | 'resolved' | 'cancelled'
+          counter_amount?: number | null
+          tx_signature?: string | null
+          created_at?: string
+          matched_at?: string | null
+          expires_at?: string | null
+          resolved_at?: string | null
+        }
+        Update: {
+          id?: string
+          wager_id?: string
+          bettor_wallet?: string
+          backer_wallet?: string | null
+          backed_player?: 'player_a' | 'player_b'
+          amount_lamports?: number
+          status?: 'open' | 'countered' | 'matched' | 'expired' | 'resolved' | 'cancelled'
+          counter_amount?: number | null
+          tx_signature?: string | null
+          created_at?: string
+          matched_at?: string | null
+          expires_at?: string | null
+          resolved_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "spectator_bets_wager_id_fkey"
+            columns: ["wager_id"]
+            isOneToOne: false
+            referencedRelation: "wagers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      follows: {
+        Row: {
+          id: string
+          follower_wallet: string
+          following_wallet: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          follower_wallet: string
+          following_wallet: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          follower_wallet?: string
+          following_wallet?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -1313,27 +1488,27 @@ export type Database = {
       nft_tier: "bronze" | "silver" | "gold" | "diamond"
       transaction_status: "pending" | "confirmed" | "failed"
       transaction_type:
-        | "escrow_deposit"
-        | "escrow_release"
-        | "winner_payout"
-        | "draw_refund"
-        | "platform_fee"
-        | "cancelled"
-        | "cancel_refund"
-        | "error_on_chain_resolve"
-        | "error_resolution_call"
-        | "error_on_chain_draw_refund"
-        | "error_on_chain_cancel_refund"
-        | "moderator_fee"
-        | "error_cancel_refund"
+      | "escrow_deposit"
+      | "escrow_release"
+      | "winner_payout"
+      | "draw_refund"
+      | "platform_fee"
+      | "cancelled"
+      | "cancel_refund"
+      | "error_on_chain_resolve"
+      | "error_resolution_call"
+      | "error_on_chain_draw_refund"
+      | "error_on_chain_cancel_refund"
+      | "moderator_fee"
+      | "error_cancel_refund"
       wager_status:
-        | "created"
-        | "joined"
-        | "voting"
-        | "retractable"
-        | "disputed"
-        | "resolved"
-        | "cancelled"
+      | "created"
+      | "joined"
+      | "voting"
+      | "retractable"
+      | "disputed"
+      | "resolved"
+      | "cancelled"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1347,116 +1522,116 @@ type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+  | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+  ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+    DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+    DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
       Row: infer R
     }
-    ? R
-    : never
+  ? R
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
-      }
-      ? R
-      : never
-    : never
+    DefaultSchema["Views"])
+  ? (DefaultSchema["Tables"] &
+    DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+      Row: infer R
+    }
+  ? R
+  : never
+  : never
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["Tables"]
+  | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
-    }
-    ? I
-    : never
+    Insert: infer I
+  }
+  ? I
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
-      }
-      ? I
-      : never
-    : never
+  ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    Insert: infer I
+  }
+  ? I
+  : never
+  : never
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["Tables"]
+  | { schema: keyof DatabaseWithoutInternals },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
-    }
-    ? U
-    : never
+    Update: infer U
+  }
+  ? U
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
-      }
-      ? U
-      : never
-    : never
+  ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    Update: infer U
+  }
+  ? U
+  : never
+  : never
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["Enums"]
+  | { schema: keyof DatabaseWithoutInternals },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+  : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
+  ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+  : never
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof DatabaseWithoutInternals },
+  | keyof DefaultSchema["CompositeTypes"]
+  | { schema: keyof DatabaseWithoutInternals },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+  ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+  : never = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
   ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never
+  ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+  : never
 
 export const Constants = {
   public: {

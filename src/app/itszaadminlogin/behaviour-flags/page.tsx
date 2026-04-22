@@ -7,8 +7,7 @@ import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Flag, Search, Loader2, RefreshCcw, AlertTriangle,
-    Copy, Check, ChevronRight, ExternalLink, TrendingUp, Users, Shield,
-    Siren, Eye, PartyPopper,
+    Copy, Check, ChevronRight, ChevronLeft, ExternalLink, TrendingUp, Users, Shield,
 } from 'lucide-react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 
@@ -62,21 +61,18 @@ function TimeAgo({ date }: { date: string }) {
 
 function RiskBadge({ score }: { score: number }) {
     if (score >= 8) return (
-        <span className="bg-red-500/15 text-red-400 border border-red-500/30 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit">
-            <Siren className="h-3.5 w-3.5" />
-            High Risk
+        <span className="bg-red-500/15 text-red-400 border border-red-500/30 text-xs font-bold px-2.5 py-1 rounded-full">
+            🚨 High Risk
         </span>
     );
     if (score >= 4) return (
-        <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Medium Risk
+        <span className="bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold px-2.5 py-1 rounded-full">
+            ⚠️ Medium Risk
         </span>
     );
     return (
-        <span className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 w-fit">
-            <Eye className="h-3.5 w-3.5" />
-            Low Risk
+        <span className="bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 text-xs font-bold px-2.5 py-1 rounded-full">
+            👁 Low Risk
         </span>
     );
 }
@@ -255,6 +251,10 @@ function BehaviourFlagsContent() {
     const [searchTerm, setSearchTerm] = useState('');
     const [riskFilter, setRiskFilter] = useState<RiskFilter>('all');
     const [expandedWallet, setExpandedWallet] = useState<string | null>(null);
+    const [page, setPage] = useState(1);
+
+    // Reset page when filters change
+    useEffect(() => { setPage(1); }, [searchTerm, riskFilter]);
 
     const fetchEvents = async () => {
         try {
@@ -264,7 +264,7 @@ function BehaviourFlagsContent() {
                 .from('player_behaviour_log')
                 .select('id, player_wallet, event_type, notes, related_id, created_at')
                 .order('created_at', { ascending: false })
-                .limit(500);
+                .limit(1000);
             if (fetchError) throw fetchError;
             setEvents((data ?? []) as BehaviourEvent[]);
         } catch (err) {
@@ -306,6 +306,10 @@ function BehaviourFlagsContent() {
             || (riskFilter === 'low' && f.riskScore < 4);
         return matchesSearch && matchesRisk;
     });
+
+    const PAGE_SIZE = 25;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const pageFlags = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     const highRiskCount = playerFlags.filter(f => f.riskScore >= 8).length;
     const mediumRiskCount = playerFlags.filter(f => f.riskScore >= 4 && f.riskScore < 8).length;
@@ -385,15 +389,12 @@ function BehaviourFlagsContent() {
                             <button
                                 key={f}
                                 onClick={() => setRiskFilter(f)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize border flex items-center gap-1.5
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors capitalize border
                                     ${riskFilter === f
                                         ? 'bg-primary/20 border-primary/40 text-primary'
                                         : 'bg-card border-border/40 text-muted-foreground hover:text-foreground hover:border-primary/30'}`}
                             >
-                                {f === 'high' && <Siren className="h-3 w-3" />}
-                                {f === 'medium' && <AlertTriangle className="h-3 w-3" />}
-                                {f === 'low' && <Eye className="h-3 w-3" />}
-                                {f === 'all' ? 'All' : f === 'high' ? 'High' : f === 'medium' ? 'Medium' : 'Low'}
+                                {f === 'all' ? 'All' : f === 'high' ? '🚨 High' : f === 'medium' ? '⚠️ Medium' : '👁 Low'}
                             </button>
                         ))}
                     </div>
@@ -417,13 +418,8 @@ function BehaviourFlagsContent() {
                         <p className="text-lg font-gaming font-bold text-foreground mb-1">
                             {searchTerm || riskFilter !== 'all' ? 'No matches found' : 'No flagged players'}
                         </p>
-                        <p className="text-sm text-muted-foreground flex items-center justify-center gap-1.5">
-                            {searchTerm || riskFilter !== 'all' ? 'Try adjusting your filters' : (
-                                <>
-                                    All players are behaving well
-                                    <PartyPopper className="h-4 w-4 text-emerald-400" />
-                                </>
-                            )}
+                        <p className="text-sm text-muted-foreground">
+                            {searchTerm || riskFilter !== 'all' ? 'Try adjusting your filters' : 'All players are behaving well 🎉'}
                         </p>
                     </motion.div>
                 ) : (
@@ -433,7 +429,7 @@ function BehaviourFlagsContent() {
                         transition={{ delay: 0.2 }}
                         className="space-y-3"
                     >
-                        {filtered.map(flag => (
+                        {pageFlags.map(flag => (
                             <PlayerFlagCard
                                 key={flag.wallet}
                                 flag={flag}
@@ -441,6 +437,15 @@ function BehaviourFlagsContent() {
                                 onToggle={() => setExpandedWallet(expandedWallet === flag.wallet ? null : flag.wallet)}
                             />
                         ))}
+                        {totalPages > 1 && (
+                            <div className="flex items-center justify-between pt-2">
+                                <span className="text-xs text-muted-foreground">Page <span className="font-semibold text-foreground">{page}</span> of <span className="font-semibold text-foreground">{totalPages}</span></span>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setPage(p => p - 1)} disabled={page <= 1} className="flex items-center gap-1 px-3 py-1.5 text-xs bg-card border border-border/50 hover:border-primary/40 rounded-lg text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"><ChevronLeft className="h-3.5 w-3.5" />Prev</button>
+                                    <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages} className="flex items-center gap-1 px-3 py-1.5 text-xs bg-card border border-border/50 hover:border-primary/40 rounded-lg text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Next<ChevronRight className="h-3.5 w-3.5" /></button>
+                                </div>
+                            </div>
+                        )}
                     </motion.div>
                 )}
             </div>

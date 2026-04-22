@@ -13,7 +13,7 @@ import {
   Trophy, Swords, TrendingUp, Wallet, Clock, Target,
   ChevronRight, Flame, Star, Activity, Zap,
   Shield, Crown, ArrowUpRight, ArrowDownRight, Minus,
-  BarChart3, CircleDot, Sparkles, Moon, Smartphone, Flag, ShieldAlert, ArrowRight, ShieldCheck, Check
+  BarChart3, CircleDot
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -59,9 +59,9 @@ function StreakDisplay({ current, best }: { current: number; best: number }) {
             filter: ['brightness(1)', 'brightness(1.3)', 'brightness(1)'],
           } : {}}
           transition={{ repeat: Infinity, duration: 1.5 }}
-          className="flex items-center justify-center h-12 w-12"
+          className="text-4xl"
         >
-          {isOnFire ? <Flame className="w-10 h-10 text-orange-500" /> : isHot ? <Zap className="w-10 h-10 text-yellow-500" /> : current > 0 ? <Sparkles className="w-10 h-10 text-cyan-400" /> : <Moon className="w-10 h-10 text-muted-foreground" />}
+          {isOnFire ? '🔥' : isHot ? '⚡' : current > 0 ? '✨' : '💤'}
         </motion.div>
         {isOnFire && (
           <motion.div
@@ -356,7 +356,7 @@ export default function DashboardPage() {
                 Welcome to <span className="text-primary">Game Gambit</span>
               </h1>
               <p className="text-sm sm:text-base text-muted-foreground mb-6">
-                Connect your Solana wallet to access your dashboard and start playing.
+                Connect wallet to see your stats, track active wagers, and jump into a match.
               </p>
             </motion.div>
             <motion.div
@@ -368,7 +368,7 @@ export default function DashboardPage() {
               <WalletMultiButton />
             </motion.div>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }} className="mt-4 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30">
-              <p className="text-xs sm:text-sm text-amber-400 font-medium mb-1 flex items-center gap-1"><Smartphone className="w-3 h-3" /> On mobile?</p>
+              <p className="text-xs sm:text-sm text-amber-400 font-medium mb-1">📱 On mobile?</p>
               <p className="text-xs text-muted-foreground">
                 Open in <span className="text-amber-400 font-medium">Phantom's browser</span>, <span className="text-amber-400 font-medium">Mises</span>, or <span className="text-amber-400 font-medium">Kiwi Browser</span>.
               </p>
@@ -435,10 +435,10 @@ export default function DashboardPage() {
               bg: 'bg-primary/15',
               sub: showDeltaBadge && balanceDelta
                 ? balanceDelta.type === 'win'
-                  ? <span className="flex items-center gap-1">+{ (balanceDelta.value / 1e9).toFixed(3) } SOL won! <Trophy className="w-4 h-4 text-yellow-400" /></span>
+                  ? `+${(balanceDelta.value / 1e9).toFixed(3)} SOL won! 🏆`
                   : balanceDelta.type === 'lose'
                     ? `-${(Math.abs(balanceDelta.value) / 1e9).toFixed(3)} SOL lost`
-                    : 'Draw — refunded'
+                    : 'Draw, refunded'
                 : 'Available',
               highlight: showDeltaBadge && balanceDelta
                 ? balanceDelta.type === 'win' ? 'border-green-500/50' : balanceDelta.type === 'lose' ? 'border-red-500/50' : ''
@@ -528,8 +528,8 @@ export default function DashboardPage() {
                     </div>
                   ) : (
                     <div className="text-center py-10">
-                      <div className="mb-3 flex justify-center"><Flag className="w-10 h-10" /></div>
-                      <p className="text-muted-foreground text-sm mb-4">No matches yet</p>
+                      <div className="text-4xl mb-3">♟️</div>
+                      <p className="text-muted-foreground text-sm mb-4">No matches yet. Your record starts here.</p>
                       <Link href="/arena">
                         <Button variant="neon" size="sm">
                           <Swords className="h-4 w-4 mr-2" />
@@ -600,7 +600,7 @@ export default function DashboardPage() {
                       animate={{ opacity: 1 }}
                       className="mt-3 text-xs text-orange-400 font-gaming"
                     >
-                      {(player?.current_streak ?? 0) >= 5 ? <span className="flex items-center gap-1">YOU'RE ON FIRE! <Flame className="w-4 h-4 text-orange-500" /></span> : <span className="flex items-center gap-1">KEEP IT UP! <Zap className="w-4 h-4 text-yellow-500" /></span>}
+                      {(player?.current_streak ?? 0) >= 5 ? "YOU'RE ON FIRE! 🔥" : "KEEP IT UP! ⚡"}
                     </motion.p>
                   )}
                 </CardContent>
@@ -682,7 +682,7 @@ export default function DashboardPage() {
                       )}
                     </>
                   ) : (
-                    <p className="text-center text-muted-foreground text-sm py-4">No active wagers</p>
+                    <p className="text-center text-muted-foreground text-sm py-4">Nothing in play right now.</p>
                   )}
                   <Link href="/arena" className="block pt-1">
                     <Button variant="neon" className="w-full" size="sm">

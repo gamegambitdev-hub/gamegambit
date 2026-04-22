@@ -1,12 +1,15 @@
 // supabase/functions/secure-wager/actions.ts
 //
-// All 18 wager action handlers. Each function receives:
-//   - supabase client
-//   - walletAddress of the authenticated caller
-//   - data: the request body (minus `action`)
-//   - respond: the HTTP response helper
+// LOGGING EDITION — Every critical path has a numbered breadcrumb log so you
+// can follow exactly what ran and where it died in Supabase Edge Function logs.
 //
-// Imports Solana helpers from ./solana.ts and notification helpers from ./notifications.ts
+// Key changes vs previous version:
+//  1. dispatchResolveOnChain — logs SUPABASE_URL presence, body being sent,
+//     HTTP status received, and full raw response text on any failure.
+//  2. handleFinalizeVote — logs every step before/after EdgeRuntime.waitUntil.
+//  3. cancelWager background task — now calls resolve-wager/refund_cancelled
+//     directly with full logging instead of inline Solana work.
+//  4. All EdgeRuntime.waitUntil blocks log entry + exit explicitly.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
@@ -14,14 +17,131 @@ import {
     loadAuthorityKeypair,
     deriveWagerPda,
     buildCloseWagerIx,
-    resolveOnChain,
+    sendAndConfirm,
 } from "./solana.ts";
 import { getDisplayName, insertNotifications } from "./notifications.ts";
 
+// deno-lint-ignore no-explicit-any
+declare const EdgeRuntime: { waitUntil(promise: Promise<any>): void };
+
+// ── dispatchResolveOnChain ────────────────────────────────────────────────────
+
+async function dispatchResolveOnChain(
+    wager: Record<string, unknown>,
+    winnerWallet: string | null,
+    resultType: 'playerA' | 'playerB' | 'draw',
+    moderatorWallet?: string,
+    callerLabel = 'unknown',
+): Promise<void> {
+    const wagerId = wager.id as string;
+    console.log(`[dispatch:${callerLabel}] ▶ ENTER wagerId=${wagerId} resultType=${resultType} winner=${winnerWallet ?? 'null'}`);
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+    if (!supabaseUrl) {
+        console.error(`[dispatch:${callerLabel}] ❌ SUPABASE_URL env var is missing — cannot dispatch`);
+        return;
+    }
+    if (!serviceKey) {
+        console.error(`[dispatch:${callerLabel}] ❌ SUPABASE_SERVICE_ROLE_KEY env var is missing — cannot dispatch`);
+        return;
+    }
+
+    const action = resultType === 'draw' ? 'refund_draw' : 'resolve_wager';
+    const resolveUrl = `${supabaseUrl}/functions/v1/resolve-wager`;
+
+    const body: Record<string, unknown> = {
+        action,
+        wagerId,
+        matchId: wager.match_id,
+        playerAWallet: wager.player_a_wallet,
+        playerBWallet: wager.player_b_wallet,
+        stakeLamports: wager.stake_lamports,
+    };
+
+    if (resultType !== 'draw') {
+        body.winnerWallet = winnerWallet;
+        if (moderatorWallet) body.moderatorWallet = moderatorWallet;
+    }
+
+    console.log(`[dispatch:${callerLabel}] 📤 POST ${resolveUrl} action=${action}`, {
+        wagerId,
+        matchId: wager.match_id,
+        playerAWallet: wager.player_a_wallet,
+        playerBWallet: wager.player_b_wallet,
+        stakeLamports: wager.stake_lamports,
+        winnerWallet,
+        resultType,
+    });
+
+    let rawText = '';
+    let httpStatus = 0;
+    // deno-lint-ignore no-explicit-any
+    let result: Record<string, any> = { success: false, error: 'never_set' };
+
+    try {
+        const res = await fetch(resolveUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${serviceKey}`,
+                'apikey': serviceKey,
+            },
+            body: JSON.stringify(body),
+        });
+        httpStatus = res.status;
+        rawText = await res.text();
+        console.log(`[dispatch:${callerLabel}] 📥 HTTP ${httpStatus} raw response: ${rawText.slice(0, 800)}`);
+
+        try {
+            result = JSON.parse(rawText);
+        } catch {
+            result = { success: false, error: `non-JSON response: ${rawText.slice(0, 200)}` };
+        }
+    } catch (fetchErr: unknown) {
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        console.error(`[dispatch:${callerLabel}] ❌ fetch threw: ${msg}`);
+        result = { success: false, error: `fetch_threw: ${msg}` };
+    }
+
+    if (!result.success) {
+        const errMsg = `resolve-wager HTTP ${httpStatus} failure: ${JSON.stringify(result)}`;
+        console.error(`[dispatch:${callerLabel}] ❌ DISPATCH FAILED for wager ${wagerId}: ${errMsg}`);
+        try {
+            const supabase = createClient(supabaseUrl, serviceKey);
+            await supabase.from('wager_transactions').insert({
+                wager_id: wagerId,
+                tx_type: 'error_payout_failed',
+                wallet_address: (winnerWallet ?? wager.player_a_wallet) as string,
+                amount_lamports: 0,
+                status: 'failed',
+                error_message: errMsg,
+                created_at: new Date().toISOString(),
+            });
+            console.log(`[dispatch:${callerLabel}] ⚠️ error logged to wager_transactions`);
+        } catch (logErr: unknown) {
+            console.error(`[dispatch:${callerLabel}] ❌ also failed to log error to DB:`, logErr instanceof Error ? logErr.message : String(logErr));
+        }
+        throw new Error(errMsg);
+    }
+
+    console.log(`[dispatch:${callerLabel}] ✅ SUCCESS txSig=${result.txSignature ?? 'N/A'}`);
+}
+
+// Inline fee helper
+const MICRO_THRESHOLD = 500_000_000;
+const WHALE_THRESHOLD = 5_000_000_000;
+function calculatePlatformFee(stakeLamports: number): number {
+    let bps: number;
+    if (stakeLamports < MICRO_THRESHOLD) bps = 1000;
+    else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
+    else bps = 500;
+    return Math.floor(stakeLamports * 2 * bps / 10_000);
+}
+
 type Supabase = ReturnType<typeof createClient>;
 type Respond = (body: unknown, status?: number) => Response;
-
-// ── Shared wager fetcher ──────────────────────────────────────────────────────
 
 async function getWager(supabase: Supabase, wagerId: string) {
     const { data: w, error } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
@@ -34,9 +154,10 @@ async function getWager(supabase: Supabase, wagerId: string) {
 export async function handleCreate(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { game, stake_lamports, is_public, stream_url, chess_clock_limit, chess_clock_increment, chess_rated, chess_side_preference } = data;
     if (!game || !['chess', 'codm', 'pubg', 'free_fire'].includes(game as string)) return respond({ error: 'Invalid game type' }, 400);
-    if (!stake_lamports || (stake_lamports as number) <= 0) return respond({ error: 'Invalid stake amount' }, 400);
+    // SEC-06: require stake to be a positive integer (lamports are whole numbers —
+    // fractional lamports would corrupt on-chain accounting)
+    if (!stake_lamports || !Number.isInteger(stake_lamports as number) || (stake_lamports as number) <= 0) return respond({ error: 'Invalid stake amount — must be a positive integer (lamports)' }, 400);
 
-    // Guard: suspended players cannot create wagers
     const { data: creator } = await supabase.from('players').select('is_suspended').eq('wallet_address', walletAddress).single();
     if (creator?.is_suspended) return respond({ error: 'Your account is suspended. You cannot create wagers until the suspension expires.' }, 403);
 
@@ -72,10 +193,9 @@ export async function handleJoin(supabase: Supabase, walletAddress: string, data
     const { wagerId } = data;
     if (!wagerId) return respond({ error: 'Wager ID required' }, 400);
     const wager = await getWager(supabase, wagerId as string);
-    if (wager.status !== 'created') return respond({ error: 'Wager is not available to join' }, 400);
+    if (wager.status !== 'created') return respond({ error: `This wager is no longer available — it has already been ${wager.status === 'joined' ? 'accepted by another player' : wager.status}` }, 400);
     if (wager.player_a_wallet === walletAddress) return respond({ error: 'Cannot join your own wager' }, 400);
 
-    // Guard: suspended players cannot join wagers
     const { data: joiner } = await supabase.from('players').select('is_suspended').eq('wallet_address', walletAddress).single();
     if (joiner?.is_suspended) return respond({ error: 'Your account is suspended. You cannot join wagers until the suspension expires.' }, 403);
 
@@ -99,7 +219,7 @@ export async function handleJoin(supabase: Supabase, walletAddress: string, data
     const { data: updatedWager, error } = await supabase.from('wagers')
         .update({ player_b_wallet: walletAddress, status: 'joined' })
         .eq('id', wagerId).eq('status', 'created').select().single();
-    if (error) return respond({ error: 'Failed to join wager' }, 500);
+    if (error) { console.error('[actions] join wager DB error:', error); return respond({ error: 'Failed to join wager' }, 500); }
 
     const joinerName = await getDisplayName(supabase, walletAddress);
     await insertNotifications(supabase, [{
@@ -113,7 +233,7 @@ export async function handleJoin(supabase: Supabase, walletAddress: string, data
     return respond({ wager: updatedWager });
 }
 
-// ── vote (legacy chess vote path — kept for backwards compat) ─────────────────
+// ── vote (legacy) ─────────────────────────────────────────────────────────────
 
 export async function handleVote(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { wagerId, votedWinner } = data;
@@ -133,7 +253,7 @@ export async function handleVote(supabase: Supabase, walletAddress: string, data
     if (otherVote && otherVote === votedWinner) { updateData.status = 'retractable'; updateData.retract_deadline = new Date(Date.now() + 15_000).toISOString(); voteResultStatus = 'agreed'; }
     else if (otherVote && otherVote !== votedWinner) { updateData.status = 'disputed'; voteResultStatus = 'disputed'; }
     const { data: updatedWager, error } = await supabase.from('wagers').update(updateData).eq('id', wagerId).select().single();
-    if (error) return respond({ error: 'Failed to submit vote' }, 500);
+    if (error) { console.error('[actions] submit vote DB error:', error); return respond({ error: 'Failed to submit vote' }, 500); }
 
     const opponentWallet = isPlayerA ? wager.player_b_wallet : wager.player_a_wallet;
     if (opponentWallet) {
@@ -166,7 +286,7 @@ export async function handleEdit(supabase: Supabase, walletAddress: string, data
     if (Object.keys(updateData).length === 0) return respond({ wager }, 200);
 
     const { data: updatedWager, error } = await supabase.from('wagers').update(updateData).eq('id', wagerId).select().single();
-    if (error) return respond({ error: 'Failed to edit wager' }, 500);
+    if (error) { console.error('[actions] edit wager DB error:', error); return respond({ error: 'Failed to edit wager' }, 500); }
     return respond({ wager: updatedWager });
 }
 
@@ -180,10 +300,9 @@ export async function handleApplyProposal(supabase: Supabase, walletAddress: str
     if (!isParticipant) return respond({ error: 'Not a participant in this wager' }, 403);
     const allowedFields = ['stake_lamports', 'is_public', 'stream_url'];
     if (!allowedFields.includes(field as string)) return respond({ error: `Field '${field}' cannot be changed via proposal` }, 400);
-    if (field === 'stake_lamports' && (typeof newValue !== 'number' || newValue <= 0)) return respond({ error: 'Invalid stake amount' }, 400);
+    if (field === 'stake_lamports' && (typeof newValue !== 'number' || !Number.isInteger(newValue) || newValue <= 0)) return respond({ error: 'Invalid stake amount — must be a positive integer (lamports)' }, 400);
     const { data: updatedWager, error } = await supabase.from('wagers').update({ [field as string]: newValue }).eq('id', wagerId).select().single();
-    if (error) return respond({ error: 'Failed to apply proposal' }, 500);
-    console.log(`[actions] applyProposal: ${field as string} = ${newValue} on wager ${wagerId as string} by ${walletAddress}`);
+    if (error) { console.error('[actions] apply proposal DB error:', error); return respond({ error: 'Failed to apply proposal' }, 500); }
     return respond({ wager: updatedWager });
 }
 
@@ -240,7 +359,7 @@ export async function handleDelete(supabase: Supabase, walletAddress: string, da
     if (wager.player_a_wallet !== walletAddress) return respond({ error: 'Only the wager owner can delete' }, 403);
     if (wager.status !== 'created') return respond({ error: 'Cannot delete a wager that has been accepted' }, 400);
     const { error } = await supabase.from('wagers').delete().eq('id', wagerId);
-    if (error) return respond({ error: 'Failed to delete wager' }, 500);
+    if (error) { console.error('[actions] delete wager DB error:', error); return respond({ error: 'Failed to delete wager' }, 500); }
     return respond({ success: true });
 }
 
@@ -263,7 +382,7 @@ export async function handleSetReady(supabase: Supabase, walletAddress: string, 
         console.warn('[actions] set_player_ready RPC unavailable, fallback:', rpcError.message);
         const readyField = isPlayerA ? 'ready_player_a' : 'ready_player_b';
         const { error: step1Error } = await supabase.from('wagers').update({ [readyField]: ready }).eq('id', wagerId);
-        if (step1Error) return respond({ error: 'Failed to set ready status' }, 500);
+        if (step1Error) { console.error('[actions] set ready status DB error:', step1Error); return respond({ error: 'Failed to set ready status' }, 500); }
         const fresh = await getWager(supabase, wagerId as string);
         const bothReady = fresh.ready_player_a && fresh.ready_player_b;
         const shouldStartCountdown = bothReady && !fresh.countdown_started_at;
@@ -307,7 +426,7 @@ export async function handleRecordOnChainCreate(supabase: Supabase, walletAddres
     if (bothDeposited) updatePayload.status = 'voting';
 
     const { data: updated, error } = await supabase.from('wagers').update(updatePayload).eq('id', wagerId).select().single();
-    if (error) return respond({ error: 'Failed to record deposit' }, 500);
+    if (error) { console.error('[actions] record deposit DB error:', error); return respond({ error: 'Failed to record deposit' }, 500); }
 
     if (bothDeposited) {
         return await _handleBothDeposited(supabase, wagerId as string, wager, updated, respond);
@@ -329,7 +448,7 @@ export async function handleRecordOnChainJoin(supabase: Supabase, walletAddress:
     if (bothDeposited) updatePayload.status = 'voting';
 
     const { data: updated, error } = await supabase.from('wagers').update(updatePayload).eq('id', wagerId).select().single();
-    if (error) return respond({ error: 'Failed to record deposit' }, 500);
+    if (error) { console.error('[actions] record deposit DB error:', error); return respond({ error: 'Failed to record deposit' }, 500); }
 
     if (bothDeposited) {
         return await _handleBothDeposited(supabase, wagerId as string, wager, updated, respond);
@@ -337,7 +456,6 @@ export async function handleRecordOnChainJoin(supabase: Supabase, walletAddress:
     return respond({ success: true, wager: updated, gameStarted: false });
 }
 
-// shared "both deposited" logic for create + join
 async function _handleBothDeposited(supabase: Supabase, wagerId: string, wager: Record<string, unknown>, updated: Record<string, unknown>, respond: Respond) {
     if (wager.game === 'chess') {
         console.log(`[actions] Both deposited on chess wager ${wagerId} — creating Lichess game`);
@@ -356,7 +474,7 @@ async function _handleBothDeposited(supabase: Supabase, wagerId: string, wager: 
     }
 }
 
-// ── checkGameComplete (chess/Lichess polling) ─────────────────────────────────
+// ── checkGameComplete ─────────────────────────────────────────────────────────
 
 export async function handleCheckGameComplete(supabase: Supabase, _walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { wagerId } = data;
@@ -406,7 +524,7 @@ export async function handleCheckGameComplete(supabase: Supabase, _walletAddress
         if (updateError || !updatedWager) return respond({ gameComplete: true, message: 'Already resolved by concurrent request' });
 
         const stake = wager.stake_lamports as number;
-        const payout = Math.floor(stake * 2 * 0.9);
+        const payout = stake * 2 - calculatePlatformFee(stake);
         const payoutSol = (payout / 1e9).toFixed(4);
 
         if (resultType === 'draw') {
@@ -422,8 +540,19 @@ export async function handleCheckGameComplete(supabase: Supabase, _walletAddress
             ]);
         }
 
-        const txSig = await resolveOnChain(supabase, wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw');
-        return respond({ gameComplete: true, status: game.status, winner: game.winner, resultType, winnerWallet: resultType === 'draw' ? null : winnerWallet, isDraw: resultType === 'draw', wager: updatedWager, txSignature: txSig, explorerUrl: txSig ? `https://explorer.solana.com/tx/${txSig}?cluster=devnet` : null });
+        console.log(`[actions] checkGameComplete: awaiting dispatchResolveOnChain wagerId=${wagerId as string}`);
+        try {
+            await dispatchResolveOnChain(wager, winnerWallet, resultType as 'playerA' | 'playerB' | 'draw', undefined, 'checkGameComplete');
+            console.log(`[actions] checkGameComplete dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`);
+        } catch (err: unknown) {
+            console.error(`[actions] checkGameComplete dispatchResolveOnChain ❌ wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err));
+        }
+
+        return respond({
+            gameComplete: true, status: game.status, winner: game.winner, resultType,
+            winnerWallet: resultType === 'draw' ? null : winnerWallet,
+            isDraw: resultType === 'draw', wager: updatedWager, txSignature: null, explorerUrl: null,
+        });
     } catch (lichessError) {
         console.error('[actions] Lichess API error:', lichessError);
         return respond({ gameComplete: false, message: 'Error checking Lichess game' });
@@ -444,31 +573,45 @@ export async function handleCancelWager(supabase: Supabase, walletAddress: strin
     const { data: updatedWager, error: updateError } = await supabase.from('wagers')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: walletAddress, cancel_reason: reason || 'user_requested', ready_player_a: false, ready_player_b: false, countdown_started_at: null })
         .eq('id', wagerId).select().single();
-    if (updateError) return respond({ error: 'Failed to cancel wager' }, 500);
+    if (updateError) { console.error('[actions] cancel wager DB error:', updateError); return respond({ error: 'Failed to cancel wager' }, 500); }
 
     try { await supabase.from('wager_transactions').insert({ wager_id: wagerId, tx_type: 'cancelled', wallet_address: wager.player_a_wallet, amount_lamports: 0, status: 'confirmed' }); } catch { /* non-critical */ }
 
     if (wager.player_b_wallet) {
-        try {
-            const { Connection, PublicKey } = await getSolana();
-            const rpcUrl = Deno.env.get('SOLANA_RPC_URL') || 'https://api.devnet.solana.com';
-            const connection = new Connection(rpcUrl, 'confirmed');
-            const authority = await loadAuthorityKeypair();
-            const playerAPubkey = new PublicKey(wager.player_a_wallet);
-            const playerBPubkey = new PublicKey(wager.player_b_wallet);
-            const wagerPda = await deriveWagerPda(wager.player_a_wallet, BigInt(wager.match_id));
-            const pdaBalance = await connection.getBalance(wagerPda);
-            if (pdaBalance > 0) {
-                const ix = await buildCloseWagerIx(wagerPda, authority.publicKey, playerAPubkey, playerBPubkey);
-                const { sendAndConfirm } = await import("./solana.ts");
-                const txSig = await sendAndConfirm(connection, authority, ix);
-                console.log(`[actions] Cancel refund tx: ${txSig}`);
-                await supabase.from('wager_transactions').upsert([
-                    { wager_id: wagerId, tx_type: 'cancel_refund', wallet_address: wager.player_a_wallet, amount_lamports: wager.stake_lamports, tx_signature: txSig, status: 'confirmed' },
-                    { wager_id: wagerId, tx_type: 'cancel_refund', wallet_address: wager.player_b_wallet, amount_lamports: wager.stake_lamports, tx_signature: txSig, status: 'confirmed' },
-                ], { onConflict: 'tx_signature', ignoreDuplicates: true });
-            }
-        } catch (e: unknown) { console.error('[actions] Cancel refund failed:', e instanceof Error ? e.message : String(e)); }
+        console.log(`[actions] cancelWager: registering EdgeRuntime.waitUntil for on-chain refund wagerId=${wagerId as string}`);
+        EdgeRuntime.waitUntil(
+            (async () => {
+                const supabaseUrl = Deno.env.get('SUPABASE_URL');
+                const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+                if (!supabaseUrl || !serviceKey) {
+                    console.error('[actions] cancelWager refund: missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+                    return;
+                }
+                const body = {
+                    action: 'refund_cancelled',
+                    wagerId,
+                    matchId: wager.match_id,
+                    playerAWallet: wager.player_a_wallet,
+                    playerBWallet: wager.player_b_wallet,
+                    stakeLamports: wager.stake_lamports,
+                    cancelledBy: walletAddress,
+                    reason: reason || 'user_requested',
+                };
+                console.log(`[actions] cancelWager refund: POST ${supabaseUrl}/functions/v1/resolve-wager`, JSON.stringify(body));
+                try {
+                    const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}`, 'apikey': serviceKey },
+                        body: JSON.stringify(body),
+                    });
+                    const rawText = await res.text();
+                    console.log(`[actions] cancelWager refund: HTTP ${res.status} response: ${rawText.slice(0, 600)}`);
+                } catch (err: unknown) {
+                    console.error('[actions] cancelWager refund fetch threw:', err instanceof Error ? err.message : String(err));
+                }
+            })()
+        );
+        console.log(`[actions] cancelWager: EdgeRuntime.waitUntil registered`);
     }
 
     const otherPlayer = walletAddress === wager.player_a_wallet ? wager.player_b_wallet : wager.player_a_wallet;
@@ -501,39 +644,18 @@ export async function handleMarkGameComplete(supabase: Supabase, walletAddress: 
     }
 
     const { data: updated, error: updateErr } = await supabase.from('wagers').update(updates).eq('id', wagerId).select().single();
-    if (updateErr) return respond({ error: updateErr.message }, 500);
+    if (updateErr) { console.error('[actions] markGameComplete DB error:', updateErr); return respond({ error: 'Failed to mark game complete' }, 500); }
 
-    // Notify opponent that this player confirmed game complete
     const opponentWallet = isPlayerA ? wager.player_b_wallet : wager.player_a_wallet;
     if (opponentWallet) {
         const confirmerName = await getDisplayName(supabase, walletAddress);
         if (opponentConfirmed) {
-            // Both confirmed — voting is starting
             await insertNotifications(supabase, [
-                {
-                    player_wallet: opponentWallet,
-                    type: 'game_started',
-                    title: '🗳️ Time to vote!',
-                    message: `Both players confirmed the game is done. Open the app to vote on the winner — you have 5 minutes.`,
-                    wager_id: wagerId as string,
-                },
-                {
-                    player_wallet: walletAddress,
-                    type: 'game_started',
-                    title: '🗳️ Both confirmed — vote now!',
-                    message: `Both players confirmed. Open the voting screen to select the winner.`,
-                    wager_id: wagerId as string,
-                },
+                { player_wallet: opponentWallet, type: 'game_started', title: '🗳️ Time to vote!', message: `Both players confirmed the game is done. Open the app to vote on the winner — you have 5 minutes.`, wager_id: wagerId as string },
+                { player_wallet: walletAddress, type: 'game_started', title: '🗳️ Both confirmed — vote now!', message: `Both players confirmed. Open the voting screen to select the winner.`, wager_id: wagerId as string },
             ]);
         } else {
-            // Only this player confirmed — nudge opponent
-            await insertNotifications(supabase, [{
-                player_wallet: opponentWallet,
-                type: 'game_started',
-                title: '⏳ Opponent confirmed game complete',
-                message: `${confirmerName} has marked the game as done. Open the app to confirm and start voting.`,
-                wager_id: wagerId as string,
-            }]);
+            await insertNotifications(supabase, [{ player_wallet: opponentWallet, type: 'game_started', title: '⏳ Opponent confirmed game complete', message: `${confirmerName} has marked the game as done. Open the app to confirm and start voting.`, wager_id: wagerId as string }]);
         }
     }
 
@@ -560,53 +682,42 @@ export async function handleSubmitVote(supabase: Supabase, walletAddress: string
     const { data: updated, error: updateErr } = await supabase.from('wagers')
         .update({ [voteField]: votedWinner, [voteAtField]: new Date().toISOString() })
         .eq('id', wagerId).select().single();
-    if (updateErr) return respond({ error: updateErr.message }, 500);
+    if (updateErr) { console.error('[actions] submitVote DB error:', updateErr); return respond({ error: 'Failed to submit vote' }, 500); }
+
+    console.log(`[actions] submitVote wagerId=${wagerId as string} voter=${walletAddress} voted=${votedWinner as string} opponentVote=${opponentVote ?? 'null'}`);
 
     if (opponentVote) {
         const stake = wager.stake_lamports as number;
-        const payout = Math.floor(stake * 2 * 0.9);
+        const payout = stake * 2 - calculatePlatformFee(stake);
         const payoutSol = (payout / 1e9).toFixed(4);
 
         if (opponentVote === votedWinner) {
-            // Agreement — enter 15s retractable window before resolving on-chain
             const resultType: 'playerA' | 'playerB' | 'draw' = votedWinner === 'draw' ? 'draw' : votedWinner === wager.player_a_wallet ? 'playerA' : 'playerB';
             const winnerWallet = votedWinner === 'draw' ? null : votedWinner as string;
             const retractDeadline = new Date(Date.now() + 15_000).toISOString();
-            await supabase.from('wagers').update({
-                status: 'retractable',
-                winner_wallet: winnerWallet,
-                retract_deadline: retractDeadline,
-            }).eq('id', wagerId);
-            // Notify both — they see the 15s window in VotingModal
+            console.log(`[actions] submitVote: votes AGREE → resultType=${resultType} winner=${winnerWallet ?? 'draw'} retractDeadline=${retractDeadline}`);
+            await supabase.from('wagers').update({ status: 'retractable', winner_wallet: winnerWallet, retract_deadline: retractDeadline }).eq('id', wagerId);
             await insertNotifications(supabase, [
                 { player_wallet: wager.player_a_wallet, type: 'wager_vote', title: '✅ Votes agree!', message: 'Both players agree. Result locks in 15 seconds — retract if it was a mistake.', wager_id: wagerId as string },
                 { player_wallet: wager.player_b_wallet as string, type: 'wager_vote', title: '✅ Votes agree!', message: 'Both players agree. Result locks in 15 seconds — retract if it was a mistake.', wager_id: wagerId as string },
             ]);
         } else {
-            // Dispute
+            console.log(`[actions] submitVote: votes DISAGREE → status=disputed`);
             await supabase.from('wagers').update({ status: 'disputed', dispute_created_at: new Date().toISOString() }).eq('id', wagerId);
             await insertNotifications(supabase, [
                 { player_wallet: wager.player_a_wallet, type: 'wager_disputed', title: '⚠️ Result disputed', message: 'You and your opponent voted differently. A moderator will review the match.', wager_id: wagerId as string },
                 { player_wallet: wager.player_b_wallet as string, type: 'wager_disputed', title: '⚠️ Result disputed', message: 'You and your opponent voted differently. A moderator will review the match.', wager_id: wagerId as string },
             ]);
-            // ── Kick off moderator assignment (fire-and-forget) ───────────────
-            // We don't await this — it runs async so the vote response returns
-            // immediately. assign-moderator handles its own error logging.
-            // If it fails (e.g. no eligible moderators), moderation-timeout
-            // will retry every 30s via pg_cron.
             const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
             const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
             fetch(`${supabaseUrl}/functions/v1/assign-moderator`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${serviceKey}`,
-                },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
                 body: JSON.stringify({ wagerId }),
-            }).catch((err: unknown) => {
-                console.error('[actions] assign-moderator invoke failed:', err instanceof Error ? err.message : String(err));
-            });
+            }).catch((err: unknown) => console.error('[actions] assign-moderator invoke failed:', err instanceof Error ? err.message : String(err)));
         }
+    } else {
+        console.log(`[actions] submitVote: only one vote so far, waiting for opponent`);
     }
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
@@ -615,24 +726,92 @@ export async function handleSubmitVote(supabase: Supabase, walletAddress: string
 
 // ── retractVote ───────────────────────────────────────────────────────────────
 
+export async function handleRetractVote(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+    const { wagerId } = data;
+    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+    const wager = await getWager(supabase, wagerId as string);
 
-// ── concedeDispute ─────────────────────────────────────────────────────────────────────────────
-//
-// Step 4 grace period: player admits they voted wrong.
-// - Validates wager is 'disputed' and not already conceded
-// - Sets grace_conceded_by + grace_conceded_at, marks 'resolved'
-// - Resolves on-chain (winner = opponent, no moderator fee)
-// - Logs dispute_conceded to player_behaviour_log
-// - Notifies both players
+    if (wager.status !== 'voting' && wager.status !== 'retractable') {
+        return respond({ error: 'Cannot retract at this stage' }, 400);
+    }
+
+    const isPlayerA = wager.player_a_wallet === walletAddress;
+    const isPlayerB = wager.player_b_wallet === walletAddress;
+    if (!isPlayerA && !isPlayerB) return respond({ error: 'Not a participant' }, 403);
+
+    if (wager.status === 'voting') {
+        const opponentVote = isPlayerA ? wager.vote_player_b : wager.vote_player_a;
+        if (opponentVote) return respond({ error: 'Cannot retract — opponent has already voted' }, 400);
+    }
+
+    const voteField = isPlayerA ? 'vote_player_a' : 'vote_player_b';
+    const voteAtField = isPlayerA ? 'vote_a_at' : 'vote_b_at';
+
+    const updatePayload: Record<string, unknown> = { [voteField]: null, [voteAtField]: null };
+    if (wager.status === 'retractable') {
+        updatePayload.vote_player_a = null; updatePayload.vote_a_at = null;
+        updatePayload.vote_player_b = null; updatePayload.vote_b_at = null;
+        updatePayload.status = 'voting'; updatePayload.retract_deadline = null; updatePayload.winner_wallet = null;
+    }
+
+    const { data: updated, error: updateErr } = await supabase.from('wagers')
+        .update(updatePayload).eq('id', wagerId).in('status', ['voting', 'retractable']).select().single();
+    if (updateErr) { console.error('[actions] retractVote DB error:', updateErr); return respond({ error: 'Failed to retract vote' }, 500); }
+
+    if (wager.status === 'retractable') {
+        const retractorName = await getDisplayName(supabase, walletAddress);
+        const opponentWallet = isPlayerA ? wager.player_b_wallet : wager.player_a_wallet;
+        if (opponentWallet) {
+            await insertNotifications(supabase, [{ player_wallet: opponentWallet, type: 'wager_vote', title: '↩️ Vote retracted', message: `${retractorName} retracted their vote. Both players need to re-vote.`, wager_id: wagerId as string }]);
+        }
+    }
+
+    return respond({ wager: updated });
+}
+
+// ── voteTimeout ───────────────────────────────────────────────────────────────
+
+export async function handleVoteTimeout(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+    const { wagerId } = data;
+    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+    const wager = await getWager(supabase, wagerId as string);
+    if (wager.status !== 'voting') return respond({ wager });
+    const isParticipant = wager.player_a_wallet === walletAddress || wager.player_b_wallet === walletAddress;
+    if (!isParticipant) return respond({ error: 'Not a participant' }, 403);
+    if (wager.vote_player_a && wager.vote_player_b) return respond({ wager });
+    if (wager.vote_deadline) {
+        const deadline = new Date(wager.vote_deadline as string).getTime();
+        if (Date.now() < deadline) return respond({ error: 'Vote deadline has not passed yet' }, 400);
+    }
+    const { data: updated, error: updateErr } = await supabase.from('wagers')
+        .update({ status: 'disputed', dispute_created_at: new Date().toISOString() })
+        .eq('id', wagerId).eq('status', 'voting').select().single();
+    if (updateErr || !updated) {
+        const { data: current } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
+        return respond({ wager: current ?? wager });
+    }
+    await insertNotifications(supabase, [
+        { player_wallet: wager.player_a_wallet, type: 'wager_disputed', title: '⏰ Vote timer expired', message: 'Not all players voted in time. A moderator will review the match.', wager_id: wagerId as string },
+        { player_wallet: wager.player_b_wallet as string, type: 'wager_disputed', title: '⏰ Vote timer expired', message: 'Not all players voted in time. A moderator will review the match.', wager_id: wagerId as string },
+    ]);
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    fetch(`${supabaseUrl}/functions/v1/assign-moderator`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${serviceKey}` },
+        body: JSON.stringify({ wagerId }),
+    }).catch((err: unknown) => console.error('[actions] assign-moderator invoke failed:', err instanceof Error ? err.message : String(err)));
+    return respond({ wager: updated });
+}
+
+// ── concedeDispute ────────────────────────────────────────────────────────────
 
 export async function handleConcedeDispute(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { wagerId } = data;
     if (!wagerId) return respond({ error: 'wagerId required' }, 400);
     const wager = await getWager(supabase, wagerId as string);
-
     if (wager.status !== 'disputed') return respond({ error: 'Wager is not in disputed state' }, 400);
-    if (wager.player_a_wallet !== walletAddress && wager.player_b_wallet !== walletAddress)
-        return respond({ error: 'Not a participant' }, 403);
+    if (wager.player_a_wallet !== walletAddress && wager.player_b_wallet !== walletAddress) return respond({ error: 'Not a participant' }, 403);
     if (wager.grace_conceded_by) return respond({ error: 'Dispute has already been conceded' }, 400);
 
     const isPlayerA = wager.player_a_wallet === walletAddress;
@@ -640,79 +819,53 @@ export async function handleConcedeDispute(supabase: Supabase, walletAddress: st
     const resultType: 'playerA' | 'playerB' = isPlayerA ? 'playerB' : 'playerA';
     const now = new Date().toISOString();
 
-    const { data: updated, error: updateErr } = await supabase
-        .from('wagers')
-        .update({
-            status: 'resolved',
-            winner_wallet: winnerWallet,
-            resolved_at: now,
-            grace_conceded_by: walletAddress,
-            grace_conceded_at: now,
-        })
-        .eq('id', wagerId)
-        .eq('status', 'disputed')
-        .select()
-        .single();
-
-    if (updateErr || !updated) return respond({ error: 'Failed to record concession — may have already been resolved' }, 500);
+    const { data: updated, error: updateErr } = await supabase.from('wagers')
+        .update({ status: 'resolved', winner_wallet: winnerWallet, resolved_at: now, grace_conceded_by: walletAddress, grace_conceded_at: now })
+        .eq('id', wagerId).eq('status', 'disputed').select().single();
+    if (updateErr || !updated) { console.error('[actions] record concession DB error:', updateErr); return respond({ error: 'Failed to record concession' }, 500); }
 
     const stake = wager.stake_lamports as number;
-    const payout = Math.floor(stake * 2 * 0.9);
+    const payout = stake * 2 - calculatePlatformFee(stake);
     const payoutSol = (payout / 1e9).toFixed(4);
     const concederName = await getDisplayName(supabase, walletAddress);
 
     await insertNotifications(supabase, [
-        {
-            player_wallet: winnerWallet,
-            type: 'wager_won',
-            title: '\uD83C\uDFC6 Opponent conceded \u2014 you won!',
-            message: `${concederName} admitted they voted incorrectly. ${payoutSol} SOL is on its way.`,
-            wager_id: wagerId as string,
-        },
-        {
-            player_wallet: walletAddress,
-            type: 'wager_lost',
-            title: 'Concession recorded',
-            message: 'Thanks for your honesty. Your opponent has been paid out.',
-            wager_id: wagerId as string,
-        },
+        { player_wallet: winnerWallet, type: 'wager_won', title: '🏆 Opponent conceded — you won!', message: `${concederName} admitted they voted incorrectly. ${payoutSol} SOL is on its way.`, wager_id: wagerId as string },
+        { player_wallet: walletAddress, type: 'wager_lost', title: 'Concession recorded', message: 'Thanks for your honesty. Your opponent has been paid out.', wager_id: wagerId as string },
     ]);
 
     try {
-        await supabase.from('player_behaviour_log').insert({
-            player_wallet: walletAddress,
-            event_type: 'dispute_conceded',
-            related_id: wagerId,
-            notes: `Conceded to ${winnerWallet}. Conceded at ${now}.`,
-        });
+        await supabase.from('player_behaviour_log').insert({ player_wallet: walletAddress, event_type: 'dispute_conceded', related_id: wagerId, notes: `Conceded to ${winnerWallet}. Conceded at ${now}.` });
     } catch { /* non-critical */ }
 
+    console.log(`[actions] concedeDispute: awaiting dispatchResolveOnChain wagerId=${wagerId as string}`);
     try {
-        await resolveOnChain(supabase, wager, winnerWallet, resultType);
-    } catch (err) {
-        console.error('[actions] concedeDispute resolveOnChain failed:', err instanceof Error ? err.message : String(err));
+        await dispatchResolveOnChain(wager, winnerWallet, resultType, undefined, 'concedeDispute');
+        console.log(`[actions] concedeDispute dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`);
+    } catch (err: unknown) {
+        console.error(`[actions] concedeDispute dispatchResolveOnChain ❌ wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err));
     }
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
     return respond({ wager: final ?? updated });
 }
 
-
 // ── finalizeVote ──────────────────────────────────────────────────────────────
-//
-// Called by VotingModal after the 15s retractable window expires.
-// Resolves the wager on-chain and notifies both players.
-// Guards against double-fire: wager must still be 'retractable'.
 
 export async function handleFinalizeVote(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { wagerId } = data;
+    console.log(`[finalizeVote] ▶ ENTER wagerId=${wagerId as string} caller=${walletAddress}`);
+
     if (!wagerId) return respond({ error: 'wagerId required' }, 400);
     const wager = await getWager(supabase, wagerId as string);
 
+    console.log(`[finalizeVote] wager fetched: status=${wager.status} winner=${wager.winner_wallet ?? 'null'} matchId=${wager.match_id} stakeLamports=${wager.stake_lamports} playerA=${wager.player_a_wallet} playerB=${wager.player_b_wallet}`);
+
     if (wager.status !== 'retractable') {
-        // Already finalized or retracted — return current state silently
+        console.log(`[finalizeVote] status is '${wager.status}' not 'retractable' — returning current wager without resolving`);
         return respond({ wager });
     }
+
     const isParticipant = wager.player_a_wallet === walletAddress || wager.player_b_wallet === walletAddress;
     if (!isParticipant) return respond({ error: 'Not a participant' }, 403);
 
@@ -720,22 +873,26 @@ export async function handleFinalizeVote(supabase: Supabase, walletAddress: stri
     const resultType: 'playerA' | 'playerB' | 'draw' = !winnerWallet ? 'draw'
         : winnerWallet === wager.player_a_wallet ? 'playerA' : 'playerB';
 
+    console.log(`[finalizeVote] resultType=${resultType} winnerWallet=${winnerWallet ?? 'null (draw)'}`);
+
     const { data: updated, error: updateErr } = await supabase
         .from('wagers')
         .update({ status: 'resolved', resolved_at: new Date().toISOString() })
         .eq('id', wagerId)
-        .eq('status', 'retractable') // race guard
+        .eq('status', 'retractable')
         .select()
         .single();
 
     if (updateErr || !updated) {
-        // Another request already finalized it — return current state
+        console.log(`[finalizeVote] DB update failed (updateErr=${updateErr?.message ?? 'no row returned'}) — wager likely already resolved by concurrent request`);
         const { data: current } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
         return respond({ wager: current ?? wager });
     }
 
+    console.log(`[finalizeVote] DB updated to 'resolved' ✅`);
+
     const stake = wager.stake_lamports as number;
-    const payout = Math.floor(stake * 2 * 0.9);
+    const payout = stake * 2 - calculatePlatformFee(stake);
     const payoutSol = (payout / 1e9).toFixed(4);
 
     if (resultType === 'draw') {
@@ -751,173 +908,36 @@ export async function handleFinalizeVote(supabase: Supabase, walletAddress: stri
         ]);
     }
 
+    console.log(`[finalizeVote] awaiting dispatchResolveOnChain wagerId=${wagerId as string}`);
     try {
-        await resolveOnChain(supabase, wager, winnerWallet, resultType);
-    } catch (err) {
-        console.error('[actions] finalizeVote resolveOnChain failed:', err instanceof Error ? err.message : String(err));
+        await dispatchResolveOnChain(wager, winnerWallet, resultType, undefined, 'finalizeVote');
+        console.log(`[finalizeVote] dispatchResolveOnChain ✅ settled wagerId=${wagerId as string}`);
+    } catch (err: unknown) {
+        console.error(`[finalizeVote] dispatchResolveOnChain ❌ error wagerId=${wagerId as string}:`, err instanceof Error ? err.message : String(err));
     }
+    console.log(`[finalizeVote] dispatch done — now fetching final wager state`);
 
     const { data: final } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
+    console.log(`[finalizeVote] ✅ DONE responding — final DB status=${final?.status ?? 'unknown'}`);
     return respond({ wager: final ?? updated });
 }
 
-export async function handleRetractVote(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
+// ── declineChallenge ──────────────────────────────────────────────────────────
+
+export async function handleDeclineChallenge(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
     const { wagerId } = data;
-    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
+    if (!wagerId) return respond({ error: 'Wager ID required' }, 400);
     const wager = await getWager(supabase, wagerId as string);
-
-    // Allow retraction from both 'voting' (solo retract before opponent votes)
-    // and 'retractable' (15s window after both agreed — either player can pull back)
-    if (wager.status !== 'voting' && wager.status !== 'retractable') {
-        return respond({ error: 'Cannot retract at this stage' }, 400);
-    }
-
-    const isPlayerA = wager.player_a_wallet === walletAddress;
-    const isPlayerB = wager.player_b_wallet === walletAddress;
-    if (!isPlayerA && !isPlayerB) return respond({ error: 'Not a participant' }, 403);
-
-    // In 'voting' state: can only retract your own vote if opponent hasn't voted yet
-    if (wager.status === 'voting') {
-        const opponentVote = isPlayerA ? wager.vote_player_b : wager.vote_player_a;
-        if (opponentVote) return respond({ error: 'Cannot retract — opponent has already voted' }, 400);
-    }
-
-    const voteField = isPlayerA ? 'vote_player_a' : 'vote_player_b';
-    const voteAtField = isPlayerA ? 'vote_a_at' : 'vote_b_at';
-
-    // When retracting from 'retractable', clear both votes and reset to 'voting'
-    // so both players must re-vote. Also clear the retract window fields.
-    const updatePayload: Record<string, unknown> = {
-        [voteField]: null,
-        [voteAtField]: null,
-    };
-    if (wager.status === 'retractable') {
-        updatePayload.vote_player_a = null;
-        updatePayload.vote_a_at = null;
-        updatePayload.vote_player_b = null;
-        updatePayload.vote_b_at = null;
-        updatePayload.status = 'voting';
-        updatePayload.retract_deadline = null;
-        updatePayload.winner_wallet = null;
-    }
-
-    const { data: updated, error: updateErr } = await supabase.from('wagers')
-        .update(updatePayload)
-        .eq('id', wagerId)
-        .in('status', ['voting', 'retractable'])
-        .select()
-        .single();
-    if (updateErr) return respond({ error: updateErr.message }, 500);
-
-    // Notify both players if a retraction happened during the agreed window
-    if (wager.status === 'retractable') {
-        const retractorName = await getDisplayName(supabase, walletAddress);
-        const opponentWallet = isPlayerA ? wager.player_b_wallet : wager.player_a_wallet;
-        if (opponentWallet) {
-            await insertNotifications(supabase, [{
-                player_wallet: opponentWallet,
-                type: 'wager_vote',
-                title: '↩️ Vote retracted',
-                message: `${retractorName} retracted their vote. Both players need to re-vote.`,
-                wager_id: wagerId as string,
-            }]);
-        }
-    }
-
-    return respond({ wager: updated });
+    if (wager.player_b_wallet !== walletAddress) return respond({ error: 'Only the challenged player can decline' }, 403);
+    if (wager.status !== 'created') return respond({ error: 'Challenge can only be declined before it is accepted' }, 400);
+    const { error } = await supabase.from('wagers').delete().eq('id', wagerId);
+    if (error) { console.error('[actions] decline challenge DB error:', error); return respond({ error: 'Failed to decline challenge' }, 500); }
+    const declinerName = await getDisplayName(supabase, walletAddress);
+    await insertNotifications(supabase, [{ player_wallet: wager.player_a_wallet as string, type: 'wager_declined', title: 'Challenge Declined', message: `${declinerName} declined your challenge.`, wager_id: wagerId as string }]);
+    return respond({ success: true });
 }
 
-
-// ── voteTimeout ────────────────────────────────────────────────────────────────
-//
-// Called by VotingModal when the 5-min vote timer expires and the caller
-// has NOT voted yet. Marks the wager as 'disputed' so both players know the
-// result needs moderator review.
-//
-// Guards:
-//   - Only acts when wager is still in 'voting' status (idempotent otherwise).
-//   - If both players already voted by the time this fires (race), do nothing
-//     and let the normal vote-agreement / retractable flow continue.
-//   - Uses .eq('status', 'voting') on the UPDATE as a DB-level race guard so
-//     only one client's call wins.
-
-export async function handleVoteTimeout(supabase: Supabase, walletAddress: string, data: Record<string, unknown>, respond: Respond) {
-    const { wagerId } = data;
-    if (!wagerId) return respond({ error: 'wagerId required' }, 400);
-
-    const wager = await getWager(supabase, wagerId as string);
-
-    // Already past voting — return current state silently so the client
-    // can update its UI without showing an error.
-    if (wager.status !== 'voting') {
-        return respond({ wager });
-    }
-
-    const isParticipant = wager.player_a_wallet === walletAddress || wager.player_b_wallet === walletAddress;
-    if (!isParticipant) return respond({ error: 'Not a participant' }, 403);
-
-    // If both players already voted, don't dispute — normal flow will resolve it.
-    if (wager.vote_player_a && wager.vote_player_b) {
-        return respond({ wager });
-    }
-
-    // Sanity-check: only fire if deadline has actually passed.
-    if (wager.vote_deadline) {
-        const deadline = new Date(wager.vote_deadline as string).getTime();
-        if (Date.now() < deadline) {
-            return respond({ error: 'Vote deadline has not passed yet' }, 400);
-        }
-    }
-
-    const { data: updated, error: updateErr } = await supabase
-        .from('wagers')
-        .update({ status: 'disputed', dispute_created_at: new Date().toISOString() })
-        .eq('id', wagerId)
-        .eq('status', 'voting') // race guard
-        .select()
-        .single();
-
-    if (updateErr || !updated) {
-        // Another request already moved the status — return current state.
-        const { data: current } = await supabase.from('wagers').select('*').eq('id', wagerId).single();
-        return respond({ wager: current ?? wager });
-    }
-
-    await insertNotifications(supabase, [
-        {
-            player_wallet: wager.player_a_wallet,
-            type: 'wager_disputed',
-            title: '⏰ Vote timer expired',
-            message: 'Not all players voted in time. A moderator will review the match.',
-            wager_id: wagerId as string,
-        },
-        {
-            player_wallet: wager.player_b_wallet as string,
-            type: 'wager_disputed',
-            title: '⏰ Vote timer expired',
-            message: 'Not all players voted in time. A moderator will review the match.',
-            wager_id: wagerId as string,
-        },
-    ]);
-
-    // Kick off moderator assignment fire-and-forget (same pattern as submitVote dispute)
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    fetch(`${supabaseUrl}/functions/v1/assign-moderator`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${serviceKey}`,
-        },
-        body: JSON.stringify({ wagerId }),
-    }).catch((err: unknown) => {
-        console.error('[actions] assign-moderator invoke failed:', err instanceof Error ? err.message : String(err));
-    });
-
-    return respond({ wager: updated });
-}
-
-// ── Lichess game creation helper ──────────────────────────────────────────────
+// ── Lichess helpers ───────────────────────────────────────────────────────────
 
 async function createLichessGame(
     playerAUsername: string, playerBUsername: string,

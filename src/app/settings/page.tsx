@@ -6,8 +6,7 @@ import { useWalletReady } from '@/app/providers'
 import dynamic from 'next/dynamic'
 import {
     Bell, BellOff, Shield, ShieldOff, ChevronRight,
-    Settings, FileText, Clock, Coins,
-    Swords, CheckCircle, Vote, Scale,
+    Settings, FileText, Clock, Coins, AlertTriangle, CheckCircle2, HelpCircle,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
@@ -19,6 +18,8 @@ import { usePlayerSettings } from '@/hooks/usePlayerSettings'
 import { SettingsPageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
+import { subscribeToPush } from '@/hooks/useNotifications'
+import { useEffect, useState } from 'react'
 
 const WalletMultiButton = dynamic(
     () => import('@solana/wallet-adapter-react-ui').then(m => ({ default: m.WalletMultiButton })),
@@ -28,11 +29,11 @@ const WalletMultiButton = dynamic(
 // ── Notification sub-types — shown when push is ON ───────────────────────────
 
 const NOTIFICATION_TYPES = [
-    { label: 'Wager joined / opponent found', icon: Swords },
-    { label: 'Game complete confirmations', icon: CheckCircle },
-    { label: 'Voting reminders', icon: Vote },
-    { label: 'Dispute updates', icon: Scale },
-    { label: 'Funds received', icon: Coins },
+    { label: 'Wager joined / opponent found', icon: '⚔️' },
+    { label: 'Game complete confirmations', icon: '✅' },
+    { label: 'Voting reminders', icon: '🗳️' },
+    { label: 'Dispute updates', icon: '⚖️' },
+    { label: 'Funds received', icon: '💰' },
 ] as const
 
 // ── Account quick-links ───────────────────────────────────────────────────────
@@ -43,12 +44,59 @@ const ACCOUNT_LINKS = [
     { label: 'Terms & Privacy', href: '/terms', icon: FileText },
 ] as const
 
+// ── Browser permission badge ──────────────────────────────────────────────────
+
+function BrowserPermissionBadge({ permission }: { permission: NotificationPermission | 'unsupported' }) {
+    if (permission === 'unsupported') {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50">
+                <HelpCircle className="h-3 w-3" />
+                Browser: Not supported
+            </span>
+        )
+    }
+    if (permission === 'denied') {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive border border-destructive/20">
+                <AlertTriangle className="h-3 w-3" />
+                Browser: Blocked
+            </span>
+        )
+    }
+    if (permission === 'granted') {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/20">
+                <CheckCircle2 className="h-3 w-3" />
+                Browser: Allowed
+            </span>
+        )
+    }
+    // 'default' = not yet asked
+    return (
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/50">
+            <HelpCircle className="h-3 w-3" />
+            Browser: Not asked yet
+        </span>
+    )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-    const { connected } = useWallet()
+    const { connected, publicKey } = useWallet()
     const walletReady = useWalletReady()
     const { settings, isLoading, updateSettings, isUpdating } = usePlayerSettings()
+    const [browserPermission, setBrowserPermission] = useState<NotificationPermission | 'unsupported'>('unsupported')
+
+    // Read actual browser notification permission state
+    useEffect(() => {
+        if (typeof window === 'undefined') return
+        if (!('Notification' in window)) {
+            setBrowserPermission('unsupported')
+            return
+        }
+        setBrowserPermission(Notification.permission)
+    }, [])
 
     // ── Not ready yet — show skeleton instead of flashing connect screen ────
     if (!walletReady) {
@@ -61,12 +109,10 @@ export default function SettingsPage() {
             <div className="py-8 pb-16">
                 <div className="container px-4 max-w-2xl mx-auto">
                     <div className="flex flex-col items-center justify-center py-20 gap-6">
-                        <div className="bg-primary/10 p-4 rounded-full">
-                            <Settings className="h-10 w-10 text-primary" />
-                        </div>
+                        <div className="text-4xl">⚙️</div>
                         <div className="text-center">
-                            <h2 className="text-xl font-gaming font-bold mb-2">Connect Your Wallet</h2>
-                            <p className="text-muted-foreground text-sm">Connect your wallet to manage settings.</p>
+                            <h2 className="text-xl font-gaming font-bold mb-2">Sign In to Manage Settings</h2>
+                            <p className="text-muted-foreground text-sm">Your preferences, notifications, and account links live here.</p>
                         </div>
                         <WalletMultiButton />
                     </div>
@@ -84,6 +130,41 @@ export default function SettingsPage() {
 
     const handlePushToggle = async (enabled: boolean) => {
         try {
+            if (enabled) {
+                // Must be called from a user gesture (this click handler) so mobile
+                // browsers show the permission prompt instead of silently ignoring it.
+                if (!('Notification' in window)) {
+                    toast.error('Push notifications not supported', {
+                        description: 'Your browser does not support web push notifications.',
+                    })
+                    return
+                }
+
+                if (Notification.permission === 'denied') {
+                    toast.error('Notifications blocked by browser', {
+                        description: 'Go to your browser Settings → Site Settings → Notifications, find this site and set it to "Allow", then try again.',
+                    })
+                    return
+                }
+
+                // This is the user gesture — requestPermission will show the prompt
+                const wallet = publicKey?.toBase58()
+                if (wallet) {
+                    await subscribeToPush(wallet)
+                }
+
+                // Re-read permission state after the prompt
+                setBrowserPermission(Notification.permission)
+
+                if (Notification.permission !== 'granted') {
+                    // User dismissed or denied — don't save to DB
+                    toast.error('Permission not granted', {
+                        description: 'You need to allow notifications in the browser prompt.',
+                    })
+                    return
+                }
+            }
+
             await updateSettings({ pushNotificationsEnabled: enabled })
             toast.success(
                 enabled ? 'Push notifications turned on' : 'Push notifications turned off',
@@ -141,10 +222,10 @@ export default function SettingsPage() {
 
                             {/* Push toggle */}
                             <div className="flex items-start justify-between gap-4">
-                                <div className="space-y-1 min-w-0">
+                                <div className="space-y-1.5 min-w-0">
                                     <Label
                                         htmlFor="push-toggle"
-                                        className="text-sm font-medium flex items-center gap-2 cursor-pointer"
+                                        className="text-sm font-medium flex items-center gap-2 cursor-pointer flex-wrap"
                                     >
                                         {settings.pushNotificationsEnabled
                                             ? <Bell className="h-4 w-4 text-primary flex-shrink-0" />
@@ -157,15 +238,31 @@ export default function SettingsPage() {
                                             </Badge>
                                         )}
                                     </Label>
+                                    {/* Browser permission status — shows actual browser state separately from DB toggle */}
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <BrowserPermissionBadge permission={browserPermission} />
+                                    </div>
                                     <p className="text-xs text-muted-foreground leading-relaxed">
                                         Get notified on your device about wager activity, results, and platform updates.
                                     </p>
+                                    {/* Hint when blocked */}
+                                    {browserPermission === 'denied' && (
+                                        <p className="text-xs text-destructive/80 leading-relaxed">
+                                            Your browser is blocking notifications for this site. Go to browser Settings → Site Settings → Notifications and set this site to Allow.
+                                        </p>
+                                    )}
+                                    {/* iOS PWA hint */}
+                                    {browserPermission === 'unsupported' && (
+                                        <p className="text-xs text-muted-foreground/70 leading-relaxed">
+                                            On iPhone, push notifications only work when the app is added to your Home Screen. Tap Share → Add to Home Screen in Safari.
+                                        </p>
+                                    )}
                                 </div>
                                 <Switch
                                     id="push-toggle"
                                     checked={settings.pushNotificationsEnabled}
                                     onCheckedChange={handlePushToggle}
-                                    disabled={isLoading || isUpdating}
+                                    disabled={isLoading || isUpdating || browserPermission === 'denied' || browserPermission === 'unsupported'}
                                     className="flex-shrink-0 mt-0.5"
                                 />
                             </div>
@@ -183,7 +280,7 @@ export default function SettingsPage() {
                                     </p>
                                     {NOTIFICATION_TYPES.map((n) => (
                                         <div key={n.label} className="flex items-center gap-2 text-xs text-muted-foreground">
-                                            <n.icon className="h-3.5 w-3.5 text-primary/70" />
+                                            <span className="text-sm">{n.icon}</span>
                                             <span>{n.label}</span>
                                         </div>
                                     ))}
@@ -222,7 +319,7 @@ export default function SettingsPage() {
                                             ? <Shield className="h-4 w-4 text-accent flex-shrink-0" />
                                             : <ShieldOff className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                                         }
-                                        Accept Moderation Requests
+                                        Become a Match Moderator
                                         {settings.moderationRequestsEnabled && (
                                             <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-accent border-accent/30">
                                                 ON
@@ -231,7 +328,7 @@ export default function SettingsPage() {
                                     </Label>
                                     <p className="text-xs text-muted-foreground leading-relaxed">
                                         Allow the platform to select you as a neutral moderator for disputed matches.
-                                        You earn a fee paid in SOL — arrives in seconds — for each case you moderate.
+                                        You earn a fee paid in SOL, arriving in seconds, for each case you moderate.
                                     </p>
                                 </div>
                                 <Switch
@@ -251,8 +348,8 @@ export default function SettingsPage() {
                                     className="p-3 rounded-lg bg-muted/40 border border-border/50"
                                 >
                                     <p className="text-xs text-muted-foreground leading-relaxed">
-                                        <span className="text-foreground font-medium">Moderation requests are off.</span>{' '}
-                                        You won't receive requests and won't earn moderator fees.
+                                        <span className="text-foreground font-medium">Moderation is off.</span>{' '}
+                                        You won't be called to review disputes or earn moderator fees.
                                         You can turn this back on anytime.
                                     </p>
                                 </motion.div>
@@ -265,7 +362,7 @@ export default function SettingsPage() {
                                         <Clock className="h-3.5 w-3.5 text-accent flex-shrink-0 mt-0.5" />
                                         <p className="text-xs text-muted-foreground leading-relaxed">
                                             When selected, you'll get a 20-second popup to accept or decline.
-                                            Declining is fine — it passes to someone else with no penalty.
+                                            Declining is fine. It passes to someone else with no penalty.
                                             If you accept, you have 10 minutes to review the match and submit a verdict.
                                         </p>
                                     </div>

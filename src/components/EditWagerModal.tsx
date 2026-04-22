@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, Save, Info, Send, Dices } from 'lucide-react';
+import { Loader2, Save, Info, Send } from 'lucide-react';
 import { Wager } from '@/hooks/useWagers';
 import { GAMES, LAMPORTS_PER_SOL, formatSol } from '@/lib/constants';
 
@@ -95,7 +95,7 @@ export function EditWagerModal({
       <DialogContent className="sm:max-w-md border-primary/30 bg-card max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <div className="text-3xl">{game?.icon ? <game.icon className="w-8 h-8" /> : <Dices className="w-8 h-8" />}</div>
+            <div className="text-3xl">{game?.icon || '🎮'}</div>
             <div>
               <DialogTitle className="text-xl font-gaming">Edit Wager</DialogTitle>
               {isJoined && (

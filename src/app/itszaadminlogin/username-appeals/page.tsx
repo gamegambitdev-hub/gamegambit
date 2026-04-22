@@ -7,7 +7,7 @@ import { ProtectedRoute } from '@/components/admin';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Link2, Search, Loader2, RefreshCcw, CheckCircle2, AlertTriangle,
-    X, Copy, Check, ChevronRight, ExternalLink, Target, Flame, Flag, Gamepad2, CheckCircle
+    X, Copy, Check, ChevronRight, ChevronLeft, ExternalLink,
 } from 'lucide-react';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -29,11 +29,11 @@ interface Appeal {
     created_at: string;
 }
 
-const GAME_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
-    chess: { label: 'Chess', icon: <Flag className="w-4 h-4" /> },
-    codm: { label: 'CODM', icon: <Target className="w-4 h-4" /> },
-    pubg: { label: 'PUBG', icon: <Target className="w-4 h-4" /> },
-    free_fire: { label: 'Free Fire', icon: <Flame className="w-4 h-4" /> },
+const GAME_CONFIG: Record<string, { label: string; icon: string }> = {
+    chess: { label: 'Chess', icon: '♟️' },
+    codm: { label: 'CODM', icon: '🎯' },
+    pubg: { label: 'PUBG', icon: '🪖' },
+    free_fire: { label: 'Free Fire', icon: '🔥' },
 };
 
 const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
@@ -90,7 +90,7 @@ function AppealCard({
     const [notes, setNotes] = useState('');
 
     const short = (w: string) => `${w.slice(0, 8)}...${w.slice(-4)}`;
-    const gameCfg = GAME_CONFIG[appeal.game] || { label: appeal.game, icon: <Gamepad2 className="w-4 h-4" /> };
+    const gameCfg = GAME_CONFIG[appeal.game] || { label: appeal.game, icon: '🎮' };
     const statusCfg = STATUS_CONFIG[appeal.status] || { label: appeal.status, classes: 'bg-muted text-muted-foreground border-border' };
     const isResolved = ['released', 'rejected', 'resolved'].includes(appeal.status);
     const deadlinePassed = new Date(appeal.response_deadline) < new Date();
@@ -188,8 +188,8 @@ function AppealCard({
                             {appeal.holder_response && (
                                 <div
                                     className={`rounded-xl p-3 border text-xs ${appeal.holder_response === 'release'
-                                            ? 'bg-emerald-500/10 border-emerald-500/20'
-                                            : 'bg-orange-500/10 border-orange-500/20'
+                                        ? 'bg-emerald-500/10 border-emerald-500/20'
+                                        : 'bg-orange-500/10 border-orange-500/20'
                                         }`}
                                 >
                                     <p
@@ -309,7 +309,7 @@ function AppealCard({
                                                     {actionLoading === appeal.id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
                                                     ) : (
-                                                        <><CheckCircle className="w-4 h-4 mr-2" /> Confirm Release</>
+                                                        '✓ Confirm Release'
                                                     )}
                                                 </button>
                                             </div>
@@ -353,7 +353,7 @@ function AppealCard({
                                                     {actionLoading === appeal.id ? (
                                                         <Loader2 className="h-4 w-4 animate-spin" />
                                                     ) : (
-                                                        <><X className="w-4 h-4 mr-2" /> Confirm Rejection</>
+                                                        '✗ Confirm Rejection'
                                                     )}
                                                 </button>
                                             </div>
@@ -385,6 +385,7 @@ function UsernameAppealsContent() {
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+    const [page, setPage] = useState(1);
     const { publicKey } = useWallet();
 
     const showToast = (type: 'success' | 'error', msg: string) => {
@@ -404,6 +405,7 @@ function UsernameAppealsContent() {
                 .order('created_at', { ascending: false }) as any);
             if (fetchErr) throw fetchErr;
             setAppeals((data || []) as Appeal[]);
+            setPage(1);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch appeals');
         } finally {
@@ -488,6 +490,10 @@ function UsernameAppealsContent() {
         return matchesSearch && matchesFilter;
     });
 
+    const PAGE_SIZE = 20;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
     const pendingCount = appeals.filter((a) => !['released', 'rejected', 'resolved'].includes(a.status)).length;
 
     return (
@@ -501,8 +507,8 @@ function UsernameAppealsContent() {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -20 }}
                             className={`fixed top-20 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border text-sm font-medium ${toast.type === 'success'
-                                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                                    : 'bg-red-500/15 border-red-500/30 text-red-400'
+                                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                                : 'bg-red-500/15 border-red-500/30 text-red-400'
                                 }`}
                         >
                             {toast.type === 'success' ? (
@@ -600,8 +606,8 @@ function UsernameAppealsContent() {
                                 key={f}
                                 onClick={() => setFilterStatus(f)}
                                 className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors capitalize ${filterStatus === f
-                                        ? 'bg-primary/20 text-primary border border-primary/30'
-                                        : 'bg-card border border-border/50 text-muted-foreground hover:text-foreground'
+                                    ? 'bg-primary/20 text-primary border border-primary/30'
+                                    : 'bg-card border border-border/50 text-muted-foreground hover:text-foreground'
                                     }`}
                             >
                                 {f}
@@ -625,12 +631,11 @@ function UsernameAppealsContent() {
                         <p className="text-lg font-gaming font-bold text-foreground mb-1">
                             {searchTerm ? 'No matches found' : 'No appeals found'}
                         </p>
-                        <p className="text-sm text-muted-foreground flex items-center justify-center">
-                            <CheckCircle className="w-5 h-5 text-muted-foreground mr-2" />
+                        <p className="text-sm text-muted-foreground">
                             {searchTerm
                                 ? 'Try a different search'
                                 : filterStatus === 'active'
-                                    ? 'No pending appeals — all clear'
+                                    ? 'No pending appeals — all clear ✓'
                                     : 'No resolved appeals yet'}
                         </p>
                     </motion.div>
@@ -641,7 +646,7 @@ function UsernameAppealsContent() {
                         transition={{ delay: 0.15 }}
                         className="space-y-3"
                     >
-                        {filtered.map((appeal) => (
+                        {pageItems.map((appeal) => (
                             <AppealCard
                                 key={appeal.id}
                                 appeal={appeal}
@@ -651,6 +656,15 @@ function UsernameAppealsContent() {
                                 actionLoading={actionLoading}
                             />
                         ))}
+                        {totalPages > 1 && (
+                            <div className="flex items-center justify-between pt-2">
+                                <span className="text-xs text-muted-foreground">Page <span className="font-semibold text-foreground">{page}</span> of <span className="font-semibold text-foreground">{totalPages}</span></span>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setPage(p => p - 1)} disabled={page <= 1} className="flex items-center gap-1 px-3 py-1.5 text-xs bg-card border border-border/50 hover:border-primary/40 rounded-lg text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"><ChevronLeft className="h-3.5 w-3.5" />Prev</button>
+                                    <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages} className="flex items-center gap-1 px-3 py-1.5 text-xs bg-card border border-border/50 hover:border-primary/40 rounded-lg text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed">Next<ChevronRight className="h-3.5 w-3.5" /></button>
+                                </div>
+                            </div>
+                        )}
                     </motion.div>
                 )}
             </div>

@@ -18,21 +18,24 @@ const games = [
   },
   {
     ...GAMES.CODM,
-    description: 'Mobile FPS 1v1 action. Coming soon — manual result verification in development.',
+    // ✅ Task 2 — updated from "Coming soon" to reflect live peer voting
+    description: 'Mobile FPS 1v1 action. Live now — peer voting resolves all matches.',
     bgGradient: 'from-magenta-500/20 to-pink-500/20',
-    features: ['Ranked matches', 'Custom rooms', 'Kill count'],
+    features: ['Ranked matches', 'Custom rooms', 'Peer voting'],
   },
   {
     ...GAMES.PUBG,
-    description: 'Battle Royale showdowns. Coming soon — match verification integration underway.',
+    // ✅ Task 2 — updated from "Coming soon" to reflect live peer voting
+    description: 'Battle Royale showdowns. Live now — peer voting resolves all matches.',
     bgGradient: 'from-yellow-500/20 to-orange-500/20',
-    features: ['Solo duels', 'Custom lobbies', 'Kill race'],
+    features: ['Solo duels', 'Custom lobbies', 'Peer voting'],
   },
   {
     ...GAMES.FREE_FIRE,
-    description: 'Fast-paced Battle Royale on mobile. Coming soon — verification integration in progress.',
+    // ✅ Task 2 — updated from "Coming soon" to reflect it's live
+    description: 'Fast-paced Battle Royale on mobile. Live now — peer voting resolves all matches.',
     bgGradient: 'from-orange-500/20 to-red-500/20',
-    features: ['Solo duels', 'Custom rooms', 'Kill race'],
+    features: ['Solo duels', 'Custom rooms', 'Peer voting'],
   },
 ]
 
@@ -83,11 +86,11 @@ function GameCard({ game, index }: { game: typeof games[number]; index: number }
 
           <CardContent className="relative p-6">
             <div className="flex items-center gap-4 mb-4">
-              <div className={`transition-transform duration-300 ${game.live
+              <div className={`text-5xl transition-transform duration-300 ${game.live
                 ? 'group-hover:scale-110 group-hover:drop-shadow-[0_0_20px_rgba(34,211,238,0.6)]'
                 : 'grayscale group-hover:scale-105 transition-all'
                 }`}>
-                <game.icon className="w-12 h-12" />
+                {game.icon}
               </div>
               <div>
                 <h3 className={`font-bold text-xl transition-colors ${game.live ? 'group-hover:text-cyan-400' : 'text-muted-foreground'
@@ -176,8 +179,9 @@ export function SupportedGames() {
           <h2 className="text-4xl font-bold mb-4 bg-gradient-to-r from-cyan-400 via-magenta-400 to-yellow-400 bg-clip-text text-transparent">
             Supported Games
           </h2>
+          {/* ✅ Task 2 — updated subtitle to reflect all 4 games being live */}
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Chess is live now. More games coming soon.
+            Chess, CODM, PUBG, and Free Fire are all live now. More coming soon.
           </p>
         </div>
 
@@ -202,11 +206,12 @@ export function SupportedGames() {
             <CardContent className="flex flex-col items-center justify-center py-12 px-6">
               <Gamepad2 className="h-12 w-12 text-cyber-magenta mb-4" />
               <h3 className="text-xl font-bold text-balance mb-2">More Games Coming Soon</h3>
+              {/* ✅ Task 2 — updated to reflect CODM, PUBG, Free Fire are now live */}
               <p className="text-sm text-muted-foreground mb-4">
-                We're actively integrating CODM, PUBG, Free Fire, and additional platforms
+                Chess, CODM, PUBG, and Free Fire are live. FIFA, Valorant, and League of Legends are on the roadmap.
               </p>
               <Badge variant="cyber" className="px-4 py-2">
-                Roadmap: CODM · PUBG · Free Fire · FIFA · Valorant · League of Legends
+                Roadmap: FIFA · Valorant · League of Legends · More
               </Badge>
             </CardContent>
           </Card>

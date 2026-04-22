@@ -39,7 +39,7 @@ import {
 import { Wager, useFinalizeVote, invokeSecureWager } from '@/hooks/useWagers'
 import { useSubmitVote, useRetractVote, deriveVoteOutcome } from '@/hooks/useVoting'
 import { useWalletAuth } from '@/hooks/useWalletAuth'
-import { GAMES, formatSol } from '@/lib/constants'
+import { GAMES, formatSol, calculatePlatformFee } from '@/lib/constants'
 import { PlayerLink } from '@/components/PlayerLink'
 import { usePlayerByWallet } from '@/hooks/usePlayer'
 import { toast } from 'sonner'
@@ -187,7 +187,8 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
 
     const game = getGameData(wager.game)
     const pot = wager.stake_lamports * 2
-    const payout = Math.floor(pot * 0.9)
+    const platformFee = calculatePlatformFee(wager.stake_lamports)
+    const payout = pot - platformFee
 
     // Allow closing if: already voted, resolved/disputed/retractable, or submit errored
     const canClose = !!myVote || isResolved || isDisputed || isRetractable || hasSubmitError
@@ -296,7 +297,7 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
 
                                 <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
                                     <p className="text-[10px] text-amber-300">
-                                        <AlertTriangle className="w-4 h-4 text-amber-500 mr-1" /> <span className="font-medium">Vote honestly.</span> False votes increase your dispute risk.
+                                        ⚠️ <span className="font-medium">Vote honestly.</span> False votes increase your dispute risk.
                                         {timeLeft !== null && timeLeft < 60000 && <span className="text-red-400 font-medium"> Time running out!</span>}
                                     </p>
                                 </div>
@@ -346,12 +347,10 @@ export function VotingModal({ wager, open, onOpenChange, currentWallet }: Voting
                                                     <PlayerLink walletAddress={p.wallet} username={p.player?.username} className="text-xs font-medium" />
                                                 </div>
                                             </div>
-                                            <Badge variant={p.voted ? 'success' : 'secondary'} className="text-[10px] flex items-center gap-1">
-                                                {p.voted ? (
-                                                    <>Voted <CheckCircle2 className="h-2.5 w-2.5" /></>
-                                                ) : (
-                                                    p.isMe ? 'Your turn' : 'Waiting…'
-                                                )}
+                                            <Badge variant={p.voted ? 'success' : 'secondary'} className="text-[10px]">
+                                                {p.voted
+                                                    ? 'Voted ✓'
+                                                    : (p.isMe ? 'Your turn' : 'Waiting…')}
                                             </Badge>
                                         </div>
                                     ))}

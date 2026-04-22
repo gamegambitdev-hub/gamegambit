@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Loader2, AlertCircle, Swords, Search, User, X,
-  Users, UserPlus, Lock, CheckCircle2, Dices, AlertTriangle,
+  Users, UserPlus, Lock, CheckCircle2,
 } from 'lucide-react';
 import { useCreateWager, GameType } from '@/hooks/useWagers';
 import { useWalletBalance } from '@/hooks/useWalletBalance';
@@ -20,6 +20,7 @@ interface CreateWagerModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  prefilledOpponent?: Player | null;
 }
 
 const GAME_OPTIONS: { value: GameType; label: string; icon: string; live: boolean }[] = [
@@ -51,15 +52,15 @@ export const TIME_CONTROLS: TimeControl[] = [
   { label: '5+0', limit: 300, increment: 0, category: 'Blitz', description: '5 min each, no increment' },
   { label: '5+3', limit: 300, increment: 3, category: 'Blitz', description: '5 min + 3 sec/move' },
   // Rapid
-  { label: '10+0', limit: 600, increment: 0, category: 'Rapid', description: '10 min each — popular choice' },
+  { label: '10+0', limit: 600, increment: 0, category: 'Rapid', description: '10 min each, a popular choice' },
   { label: '15+10', limit: 900, increment: 10, category: 'Rapid', description: '15 min + 10 sec/move' },
   { label: '20+0', limit: 1200, increment: 0, category: 'Rapid', description: '20 min each' },
   { label: '25+0', limit: 1500, increment: 0, category: 'Rapid', description: '25 min each' },
   { label: '30+0', limit: 1800, increment: 0, category: 'Rapid', description: '30 min each' },
   // Classical
   { label: '45+45', limit: 2700, increment: 45, category: 'Classical', description: '45 min + 45 sec/move' },
-  { label: '60+0', limit: 3600, increment: 0, category: 'Classical', description: '1 hour each — ⚠ long game' },
-  { label: '90+30', limit: 5400, increment: 30, category: 'Classical', description: '90 min + 30 sec/move — ⚠ 2–4 hrs' },
+  { label: '60+0', limit: 3600, increment: 0, category: 'Classical', description: '1 hour each. Long game, plan ahead.' },
+  { label: '90+30', limit: 5400, increment: 30, category: 'Classical', description: '90 min + 30 sec/move. Expect 2 to 4 hours.' },
 ];
 
 const CATEGORY_STYLES: Record<TimeControlCategory, { dot: string; label: string; border: string; activeBg: string; activeText: string }> = {
@@ -75,7 +76,7 @@ export type SidePreference = 'random' | 'white' | 'black';
 
 type WagerMode = 'open' | 'challenge';
 
-export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerModalProps) {
+export function CreateWagerModal({ open, onOpenChange, onSuccess, prefilledOpponent }: CreateWagerModalProps) {
   const { publicKey } = useWallet();
   const [wagerMode, setWagerMode] = useState<WagerMode>('open');
   const [selectedGame, setSelectedGame] = useState<GameType>('chess');
@@ -88,6 +89,14 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
   const [isRated, setIsRated] = useState(false);
   const [isConnectingLichess, setIsConnectingLichess] = useState(false);
   const [sidePreference, setSidePreference] = useState<SidePreference>('random');
+
+  // When modal opens with a prefilled opponent, switch to challenge mode and pre-select them
+  useEffect(() => {
+    if (open && prefilledOpponent) {
+      setWagerMode('challenge');
+      setSelectedOpponent(prefilledOpponent);
+    }
+  }, [open, prefilledOpponent]);
 
   const createWager = useCreateWager();
   const { data: balance } = useWalletBalance();
@@ -223,7 +232,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
               >
                 <Users className="h-5 w-5 text-primary" />
                 <div className="text-left">
-                  <p className="font-medium">Open Wager</p>
+                  <p className="font-medium">Open to Anyone</p>
                   <p className="text-xs text-muted-foreground">Anyone can accept</p>
                 </div>
               </button>
@@ -289,10 +298,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                 <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
                   <CheckCircle2 className="h-4 w-4 text-success flex-shrink-0" />
                   <div>
-                    <p className="text-xs font-medium text-success flex items-center gap-1">
-                      Lichess verified
-                      <CheckCircle2 className="h-3 w-3" />
-                    </p>
+                    <p className="text-xs font-medium text-success">Lichess verified ✓</p>
                     <p className="text-xs text-muted-foreground">Playing as @{lichessUsername}</p>
                   </div>
                 </div>
@@ -308,19 +314,18 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                     </div>
                   </div>
                   <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="w-full border-warning/40 hover:border-warning flex items-center justify-center gap-2"
-                      onClick={handleConnectLichess}
-                      disabled={isConnectingLichess}
-                    >
-                      {isConnectingLichess ? (
-                        <><Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> Connecting…</>
-                      ) : (
-                        <><Swords className="h-4 w-4" /> Connect Lichess Account</>
-                      )}
-                    </Button>
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full border-warning/40 hover:border-warning"
+                    onClick={handleConnectLichess}
+                    disabled={isConnectingLichess}
+                  >
+                    {isConnectingLichess
+                      ? <><Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" /> Connecting…</>
+                      : '♟ Connect Lichess Account'
+                    }
+                  </Button>
                   <p className="text-[11px] text-muted-foreground text-center">
                     No Lichess account?{' '}
                     <a href="https://lichess.org/signup" target="_blank" rel="noopener noreferrer" className="text-primary underline">
@@ -380,10 +385,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                               {cat}
                             </span>
                             {cat === 'Classical' && (
-                              <span className="text-[10px] text-muted-foreground ml-1 flex items-center gap-1">
-                                <AlertTriangle className="h-3 w-3" />
-                                Long games
-                              </span>
+                              <span className="text-[10px] text-muted-foreground ml-1">⚠ Long games</span>
                             )}
                           </div>
                           <div className="flex flex-wrap gap-1.5">
@@ -443,7 +445,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                         )}
                       >
                         <span className="text-base">
-                          {side === 'random' ? <Dices className="w-4 h-4" /> : side === 'white' ? '♔' : '♚'}
+                          {side === 'random' ? '🎲' : side === 'white' ? '♔' : '♚'}
                         </span>
                         <span className="capitalize text-[11px]">{side}</span>
                       </button>
@@ -468,17 +470,10 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                       <p className="font-medium">{selectedOpponent.username || 'Anonymous'}</p>
                       <p className="text-xs text-muted-foreground">{truncateAddress(selectedOpponent.wallet_address)}</p>
                       {(selectedOpponent as any).lichess_username ? (
-                        <p className="text-xs text-success flex items-center gap-1">
-                          <Swords className="h-3 w-3" />
-                          @{ (selectedOpponent as any).lichess_username }
-                          <CheckCircle2 className="h-3 w-3" />
-                        </p>
+                        <p className="text-xs text-success">♟ @{(selectedOpponent as any).lichess_username} ✓</p>
                       ) : isChess ? (
-                          <p className="text-xs text-warning flex items-center gap-1">
-                            <AlertTriangle className="h-3 w-3" />
-                            No Lichess account linked
-                          </p>
-                        ) : null}
+                        <p className="text-xs text-warning">⚠ No Lichess account linked</p>
+                      ) : null}
                     </div>
                   </div>
                   <Button type="button" variant="ghost" size="icon" onClick={() => setSelectedOpponent(null)}>
@@ -512,10 +507,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
                               <p className="font-medium">{p.username || 'Anonymous'}</p>
                               <p className="text-xs text-muted-foreground">{truncateAddress(p.wallet_address)}</p>
                               {(p as any).lichess_username && (
-                                <p className="text-xs text-success flex items-center gap-1">
-                                  <Swords className="h-3 w-3" />
-                                  @{(p as any).lichess_username}
-                                </p>
+                                <p className="text-xs text-success">♟ @{(p as any).lichess_username}</p>
                               )}
                             </div>
                           </button>
@@ -567,7 +559,7 @@ export function CreateWagerModal({ open, onOpenChange, onSuccess }: CreateWagerM
           {/* ── Stream URL ───────────────────────────────────────────────── */}
           <div className="space-y-2">
             <Label htmlFor="streamUrl">
-              Stream URL <span className="text-muted-foreground">(optional)</span>
+              Stream Link <span className="text-muted-foreground">(optional, lets spectators watch live)</span>
             </Label>
             <Input
               id="streamUrl"

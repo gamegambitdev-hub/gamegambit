@@ -11,6 +11,7 @@ const footerLinks = {
     { label: 'Arena', href: '/arena' },
     { label: 'Leaderboard', href: '/leaderboard' },
     { label: 'My Wagers', href: '/my-wagers' },
+    { label: 'Events', href: '/events' },
   ],
   resources: [
     { label: 'How It Works', href: '/#how-it-works' },
@@ -57,7 +58,7 @@ export function Footer() {
               </span>
             </Link>
             <p className="text-sm text-muted-foreground mb-6">
-              The first trustless P2P gaming wager platform on Solana.
+              Skill-based wagering. No house. No middlemen. Just players.
             </p>
             <div className="flex gap-4">
               {socials.map((social) => (

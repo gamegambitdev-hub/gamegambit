@@ -5,7 +5,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletReady } from '@/app/providers'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 
 const WalletMultiButton = dynamic(
@@ -15,13 +15,13 @@ const WalletMultiButton = dynamic(
 
 import {
   Search, Zap, Filter, Plus, Swords, Clock, Trophy,
-  Wallet, Eye, Pencil, Trash2, Play, X, Handshake, AlertTriangle
+  Wallet, Eye, Pencil, Trash2, Play, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { GAMES, formatSol, truncateAddress } from '@/lib/constants'
+import { GAMES, formatSol, truncateAddress, calculatePlatformFee } from '@/lib/constants'
 import {
   useOpenWagers, useLiveWagers, useRecentWinners,
   useJoinWager, useEditWager, useDeleteWager, useSetReady,
@@ -139,37 +139,37 @@ function OpenWagerCard({
             {isOwner ? (
               <>
                 <Button
-                  variant="outline" size="sm" className="flex-1"
+                  variant="outline" size="sm" className="flex-1 h-10 px-3 text-sm"
                   onClick={() => onEdit?.(wager)}
                 >
-                  <Pencil className="h-4 w-4 sm:mr-1" />
+                  <Pencil className="h-3.5 w-3.5 sm:mr-1.5" />
                   <span className="hidden sm:inline">Edit</span>
                 </Button>
                 <Button
-                  variant="destructive" size="sm" className="flex-1"
+                  variant="destructive" size="sm" className="flex-1 h-10 px-3 text-sm"
                   onClick={() => onDelete?.(wager)}
                 >
-                  <Trash2 className="h-4 w-4 sm:mr-1" />
+                  <Trash2 className="h-3.5 w-3.5 sm:mr-1.5" />
                   <span className="hidden sm:inline">Delete</span>
                 </Button>
               </>
             ) : (
               <>
                 <Button
-                  variant="outline" size="sm" className="flex-1"
+                  variant="outline" size="sm" className="flex-1 h-10 px-3 text-sm"
                   onClick={() => onViewDetails(wager)}
                 >
-                  <Eye className="h-4 w-4 sm:mr-1" />
+                  <Eye className="h-3.5 w-3.5 sm:mr-1.5" />
                   <span className="hidden sm:inline">Details</span>
                 </Button>
                 <Button
-                  variant="neon" size="sm" className="flex-1"
+                  variant="neon" size="sm" className="flex-1 h-10 px-4 text-sm font-semibold"
                   onClick={() => onJoin(wager.id)}
                   disabled={isJoining}
                 >
                   {isJoining
                     ? <ButtonDots />
-                    : 'Accept Challenge'
+                    : <><Swords className="h-3.5 w-3.5 mr-1.5 flex-shrink-0" />Accept Challenge</>
                   }
                 </Button>
               </>
@@ -252,13 +252,13 @@ function LiveMatchCard({
               </div>
               {isResolved ? (
                 <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap">
-                  {wager.winner_wallet ? <span className="flex items-center"><Trophy className="w-4 h-4 mr-1" /> View</span> : <span className="flex items-center"><Handshake className="w-4 h-4 mr-1" /> Draw</span>}
+                  {wager.winner_wallet ? '🏆 View' : '🤝 Draw'}
                 </Badge>
               ) : canEnterReadyRoom ? (
                 <Badge variant="joined" className="cursor-pointer text-xs whitespace-nowrap">Ready Room</Badge>
               ) : isDisputed ? (
                 <Badge variant="outline" className="cursor-pointer text-xs whitespace-nowrap border-yellow-500/50 text-yellow-400">
-                  <span className="flex items-center"><AlertTriangle className="w-4 h-4 mr-1" /> Disputed</span>
+                  ⚠️ Disputed
                 </Badge>
               ) : isInProgress && isParticipant ? (
                 <Badge variant="voting" className="cursor-pointer flex items-center gap-1 text-xs whitespace-nowrap">
@@ -298,6 +298,7 @@ function ArenaInner() {
   const walletReady = useWalletReady()
   const walletAddress = publicKey?.toBase58()
   const searchParams = useSearchParams()
+  const router = useRouter()
   const queryClient = useQueryClient()
   const { getSessionToken } = useWalletAuth()
 
@@ -325,6 +326,7 @@ function ArenaInner() {
 
   // ── Modal state ──────────────────────────────────────────────────────────
   const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [prefilledOpponent, setPrefilledOpponent] = useState<any | null>(null)
   const [quickMatchOpen, setQuickMatchOpen] = useState(false)
   const [selectedWager, setSelectedWager] = useState<Wager | null>(null)
   const [detailsModalOpen, setDetailsModalOpen] = useState(false)
@@ -389,16 +391,31 @@ function ArenaInner() {
   // (see the two effects below that watch deepLink*Id).
   const [deepLinkGameCompleteId, setDeepLinkGameCompleteId] = useState<string | null>(null)
   const [deepLinkVotingId, setDeepLinkVotingId] = useState<string | null>(null)
+  const [deepLinkDetailsId, setDeepLinkDetailsId] = useState<string | null>(null)
+  const [deepLinkChallengeWallet, setDeepLinkChallengeWallet] = useState<string | null>(null)
 
   useEffect(() => {
     const wagerId = searchParams.get('wager')
     const modal = searchParams.get('modal')
+    const challengeWallet = searchParams.get('challenge')
+
+    if (challengeWallet) {
+      // Pre-open CreateWagerModal in challenge mode with the given wallet
+      // usePlayerByWallet is called below; we store the wallet so the effect
+      // can fire once the player record loads.
+      setDeepLinkChallengeWallet(challengeWallet)
+      const url = new URL(window.location.href)
+      url.searchParams.delete('challenge')
+      window.history.replaceState({}, '', url.pathname + url.search)
+    }
+
     if (!wagerId || !modal) return
 
     if (modal === 'ready-room') setReadyRoomWagerId(wagerId)
     else if (modal === 'result') setDeepLinkResultId(wagerId)
     else if (modal === 'game-complete') setDeepLinkGameCompleteId(wagerId)
     else if (modal === 'voting') setDeepLinkVotingId(wagerId)
+    else if (modal === 'details') setDeepLinkDetailsId(wagerId)
 
     const url = new URL(window.location.href)
     url.searchParams.delete('wager')
@@ -430,7 +447,7 @@ function ArenaInner() {
 
       const won = wager.winner_wallet === walletAddress
       const isDraw = !wager.winner_wallet
-      const payout = Math.floor(wager.stake_lamports * 2 * 0.9)
+      const payout = wager.stake_lamports * 2 - calculatePlatformFee(wager.stake_lamports)
       queueAnimation({
         delta: isDraw ? 0 : won ? payout : -wager.stake_lamports,
         wagerId: wager.id,
@@ -474,6 +491,8 @@ function ArenaInner() {
   // Fetch wager objects for deep-link game-complete and voting targets
   const { data: deepLinkGameCompleteWager } = useWagerById(deepLinkGameCompleteId)
   const { data: deepLinkVotingWager } = useWagerById(deepLinkVotingId)
+  const { data: deepLinkDetailsWager } = useWagerById(deepLinkDetailsId)
+  const { data: deepLinkChallengePlayer } = usePlayerByWallet(deepLinkChallengeWallet)
 
   // Only fire the search query when there's actual input
   const { data: searchedPlayers, isLoading: searchLoading } = useSearchPlayers(
@@ -509,6 +528,22 @@ function ArenaInner() {
     setVotingOpen(true)
     setDeepLinkVotingId(null)
   }, [deepLinkVotingWager, deepLinkVotingId, votingOpen])
+
+  // ── Open CreateWagerModal when ?challenge= player data arrives ───────────
+  useEffect(() => {
+    if (!deepLinkChallengePlayer || !deepLinkChallengeWallet) return
+    setPrefilledOpponent(deepLinkChallengePlayer)
+    setCreateModalOpen(true)
+    setDeepLinkChallengeWallet(null)
+  }, [deepLinkChallengePlayer, deepLinkChallengeWallet])
+
+  // ── Open WagerDetailsModal when deep-link wager data arrives ─────────────
+  useEffect(() => {
+    if (!deepLinkDetailsWager || !deepLinkDetailsId) return
+    setSelectedWager(deepLinkDetailsWager as Wager)
+    setDetailsModalOpen(true)
+    setDeepLinkDetailsId(null)
+  }, [deepLinkDetailsWager, deepLinkDetailsId])
 
   // ── Auto-recover modals after hard refresh ───────────────────────────────
   // If the user hard-refreshes while a voting or game-complete flow is active,
@@ -666,7 +701,7 @@ function ArenaInner() {
     try {
       if (editWager.status === 'joined' && Object.keys(updates).some(k => k !== 'stream_url')) {
         await sendProposal(editWager, updates)
-        toast.success('Proposal sent — waiting for opponent approval')
+        toast.success('Proposal sent. Waiting for opponent approval.')
       } else {
         await editWagerMutation.mutateAsync({ wagerId: editWager.id, ...updates })
         toast.success('Wager updated successfully')
@@ -694,6 +729,19 @@ function ArenaInner() {
 
   const handleJoinWager = async (wagerId: string) => {
     if (needsSetup) { toast.error('Please set up your username first'); return }
+
+    // BUG-07: SOL balance pre-check — catch empty wallets before hitting the chain
+    const wagerToJoin = openWagers?.find(w => w.id === wagerId) ?? selectedWager
+    if (wagerToJoin && walletBalance !== undefined) {
+      const stakeSol = wagerToJoin.stake_lamports / 1_000_000_000
+      if (walletBalance < stakeSol) {
+        toast.error('Insufficient SOL balance', {
+          description: `You need at least ${stakeSol.toFixed(4)} SOL to join this wager. Your balance: ${walletBalance.toFixed(4)} SOL`,
+        })
+        return
+      }
+    }
+
     try {
       await joinWager.mutateAsync({ wagerId })
       toast.success('Wager joined! Entering ready room...')
@@ -701,6 +749,7 @@ function ArenaInner() {
       setDetailsModalOpen(false)
     } catch (err: any) {
       toast.error(err.message || 'Failed to join wager')
+      setDetailsModalOpen(false) // BUG-06: close modal on join error
     }
   }
 
@@ -763,6 +812,7 @@ function ArenaInner() {
           action: 'create',
           game: gameResultWager.game,
           stake_lamports: gameResultWager.stake_lamports,
+          is_public: false, // BUG-19: rematches are always private challenges
         },
         sessionToken,
       )
@@ -785,16 +835,17 @@ function ArenaInner() {
       setGameResultOpen(false)
       setGameResultWager(null)
       queryClient.invalidateQueries({ queryKey: ['wagers'] })
+      router.push(`/arena?wager=${newWagerId}&modal=details`)
     } catch (err: any) {
       toast.error(err.message || 'Failed to send rematch challenge')
     } finally {
       setRematchPending(false)
     }
-  }, [gameResultWager, walletAddress, player, needsSetup, getSessionToken, queryClient])
+  }, [gameResultWager, walletAddress, player, needsSetup, getSessionToken, queryClient, router])
 
   // ── Derived result state ─────────────────────────────────────────────────
   const gameResultTotalPot = (gameResultWager?.stake_lamports ?? 0) * 2
-  const gameResultPlatformFee = Math.floor(gameResultTotalPot * 0.1)
+  const gameResultPlatformFee = calculatePlatformFee(gameResultWager?.stake_lamports ?? 0)
   const gameResultPayout = gameResultTotalPot - gameResultPlatformFee
   const gameResultIsDraw = gameResultWager?.status === 'resolved' && !gameResultWager?.winner_wallet
   const gameResultType: 'win' | 'lose' | 'draw' = gameResultIsDraw
@@ -815,9 +866,9 @@ function ArenaInner() {
               <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6 animate-glow-pulse">
                 <Swords className="h-10 w-10 text-primary" />
               </div>
-              <h1 className="text-3xl font-bold mb-4 font-gaming">Connect to Enter Arena</h1>
+              <h1 className="text-3xl font-bold mb-4 font-gaming">The Arena</h1>
               <p className="text-muted-foreground mb-8">
-                Connect your Solana wallet to browse wagers, challenge opponents, and start winning.
+                Connect wallet to browse wagers, challenge opponents, and start winning.
               </p>
             </div>
             <div className="[&_.wallet-adapter-button]:!bg-primary [&_.wallet-adapter-button]:!text-primary-foreground [&_.wallet-adapter-button]:!font-gaming [&_.wallet-adapter-button]:!rounded-xl [&_.wallet-adapter-button]:!h-12 [&_.wallet-adapter-button]:!px-8 [&_.wallet-adapter-button]:hover:!shadow-neon">
@@ -1045,9 +1096,14 @@ function ArenaInner() {
       {/* ── Modals ────────────────────────────────────────────────────────── */}
       <CreateWagerModal
         open={createModalOpen}
-        onOpenChange={setCreateModalOpen}
+        onOpenChange={(open) => {
+          setCreateModalOpen(open)
+          if (!open) setPrefilledOpponent(null)
+        }}
+        prefilledOpponent={prefilledOpponent}
         onSuccess={() => {
           setCreateModalOpen(false)
+          setPrefilledOpponent(null)
           queryClient.invalidateQueries({ queryKey: ['wagers'] })
         }}
       />
@@ -1146,6 +1202,20 @@ function ArenaInner() {
           setGameResultOpen(false)
           if (gameResultWager) handleViewDetails(gameResultWager)
         }}
+        game={gameResultWager?.game ?? null}
+        opponentWallet={
+          gameResultWager
+            ? gameResultWager.player_a_wallet === walletAddress
+              ? gameResultWager.player_b_wallet
+              : gameResultWager.player_a_wallet
+            : null
+        }
+        opponentUsername={
+          gameResultWager?.winner_wallet === gameResultWager?.player_a_wallet
+            ? winnerPlayerB?.username ?? null
+            : winnerPlayerA?.username ?? null
+        }
+        inviteCode={player?.invite_code ?? null}
       />
 
       {/* Deep-link result: notification tapped while already on arena page */}
@@ -1160,8 +1230,8 @@ function ArenaInner() {
         winnerWallet={(deepLinkResultWager as any)?.winner_wallet ?? null}
         winnerUsername={null}
         totalPot={(deepLinkResultWager?.stake_lamports ?? 0) * 2}
-        platformFee={Math.floor((deepLinkResultWager?.stake_lamports ?? 0) * 2 * 0.1)}
-        winnerPayout={Math.floor((deepLinkResultWager?.stake_lamports ?? 0) * 2 * 0.9)}
+        platformFee={calculatePlatformFee(deepLinkResultWager?.stake_lamports ?? 0)}
+        winnerPayout={(deepLinkResultWager?.stake_lamports ?? 0) * 2 - calculatePlatformFee(deepLinkResultWager?.stake_lamports ?? 0)}
         refundAmount={deepLinkResultWager?.stake_lamports}
       />
     </div>

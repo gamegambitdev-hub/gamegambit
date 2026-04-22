@@ -1,6 +1,11 @@
 // supabase/functions/resolve-wager/index.ts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.2";
+
+// ── Solana import via npm: specifier ─────────────────────────────────────────
+// esm.sh?bundle fails at Supabase deploy time (uuid sub-dep resolution error).
+// Dynamic import() is killed mid-flight by the Deno runtime (546 cold-start).
+// npm: specifiers are resolved and bundled correctly by Supabase's deploy pipeline.
 import {
     Connection,
     Keypair,
@@ -9,7 +14,7 @@ import {
     TransactionInstruction,
     SystemProgram,
     LAMPORTS_PER_SOL,
-} from "https://esm.sh/@solana/web3.js@1.98.0";
+} from "npm:@solana/web3.js@1.98.0";
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -20,10 +25,37 @@ const corsHeaders = {
 // ── Constants (must match lib.rs) ─────────────────────────────────────────────
 const PROGRAM_ID = "E2Vd3U91kMrgwp8JCXcLSn7bt3NowDmGwoBYsVRhGfMR";
 const PLATFORM_WALLET = "3hwPwugeuZ33HWJ3SoJkDN2JT3Be9fH62r19ezFiCgYY";
-const PLATFORM_FEE_BPS = 1000;   // 10%
-const MODERATOR_FEE_SHARE = 0.40;
 
-// Discriminators from IDL
+// ── Fee helpers (must match calculate_platform_fee() in lib.rs) ───────────────
+const MICRO_THRESHOLD = 500_000_000;   // 0.5 SOL
+const WHALE_THRESHOLD = 5_000_000_000; // 5.0 SOL
+const MODERATOR_FEE_SHARE = 0.30;
+const MOD_FEE_CAP_USD = 10;
+
+function calculatePlatformFee(stakeLamports: number): number {
+    let bps: number;
+    if (stakeLamports < MICRO_THRESHOLD) bps = 1000;
+    else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
+    else bps = 500;
+    return Math.floor((stakeLamports * 2 * bps) / 10_000);
+}
+
+async function getSolPriceUsd(): Promise<number> {
+    try {
+        const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+        const d = await r.json();
+        return d.solana.usd as number;
+    } catch {
+        return 150;
+    }
+}
+
+function calculateModFee(platformFeeLamports: number, solPriceUsd: number): number {
+    const feeUsd = (platformFeeLamports / 1_000_000_000) * solPriceUsd;
+    const modUsd = Math.min(feeUsd * MODERATOR_FEE_SHARE, MOD_FEE_CAP_USD);
+    return Math.floor((modUsd / solPriceUsd) * 1_000_000_000);
+}
+
 const DISCRIMINATORS = {
     resolve_wager: [31, 179, 1, 228, 83, 224, 1, 123],
     close_wager: [167, 240, 85, 147, 127, 50, 69, 203],
@@ -32,17 +64,16 @@ const DISCRIMINATORS = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function loadAuthorityKeypair(secret: string): Keypair {
-    const arr = JSON.parse(secret);
-    return Keypair.fromSecretKey(Uint8Array.from(arr));
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(secret)));
 }
 
-function deriveWagerPda(playerA: PublicKey, matchId: bigint): PublicKey {
+function deriveWagerPda(playerAWallet: string, matchId: bigint): PublicKey {
+    const playerA = new PublicKey(playerAWallet);
     const matchIdBytes = new Uint8Array(8);
-    const view = new DataView(matchIdBytes.buffer);
-    view.setBigUint64(0, matchId, true); // little-endian
+    new DataView(matchIdBytes.buffer).setBigUint64(0, matchId, true);
     const [pda] = PublicKey.findProgramAddressSync(
         [new TextEncoder().encode("wager"), playerA.toBytes(), matchIdBytes],
-        new PublicKey(PROGRAM_ID)
+        new PublicKey(PROGRAM_ID),
     );
     return pda;
 }
@@ -53,14 +84,11 @@ function buildResolveWagerIx(
     winner: PublicKey,
     platformWallet: PublicKey,
 ): TransactionInstruction {
-    // resolve_wager accounts — matches ResolveWager struct in lib.rs:
-    //   wager, winner, authorizer (signer), platform_wallet, system_program
-    // Args: winner pubkey (32 bytes)
     const disc = new Uint8Array(DISCRIMINATORS.resolve_wager);
     const winnerBytes = winner.toBytes();
-    const resolveData = new Uint8Array(disc.length + winnerBytes.length);
-    resolveData.set(disc, 0);
-    resolveData.set(winnerBytes, disc.length);
+    const data = new Uint8Array(disc.length + winnerBytes.length);
+    data.set(disc, 0);
+    data.set(winnerBytes, disc.length);
     return new TransactionInstruction({
         programId: new PublicKey(PROGRAM_ID),
         keys: [
@@ -70,7 +98,7 @@ function buildResolveWagerIx(
             { pubkey: platformWallet, isSigner: false, isWritable: true },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
-        data: resolveData,
+        data,
     });
 }
 
@@ -81,10 +109,6 @@ function buildCloseWagerIx(
     playerB: PublicKey,
     platformWallet: PublicKey,
 ): TransactionInstruction {
-    // close_wager accounts (draw refund):
-    // close_wager accounts — matches CloseWager struct in lib.rs:
-    //   wager (writable, closes to authorizer), player_a (writable), player_b (writable), authorizer (signer, writable), system_program
-    // No args needed
     return new TransactionInstruction({
         programId: new PublicKey(PROGRAM_ID),
         keys: [
@@ -110,8 +134,19 @@ async function sendAndConfirm(
     tx.feePayer = authority.publicKey;
     tx.sign(authority);
 
-    const signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed');
+    console.log(`[sendAndConfirm] sending raw tx...`);
+    const signature = await connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        maxRetries: 3,
+    });
+    console.log(`[sendAndConfirm] tx sent: ${signature} — awaiting 'processed' confirmation...`);
+
+    await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        'processed',
+    );
+
+    console.log(`[sendAndConfirm] ✅ confirmed (processed): ${signature}`);
     return signature;
 }
 
@@ -168,70 +203,84 @@ serve(async (req) => {
     const respond = (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
+    // SEC-01: Verify caller secret — only trusted internal callers (secure-wager, lichess webhook) may trigger payouts
+    const callerSecret = Deno.env.get('RESOLVE_WAGER_CALLER_SECRET');
+    if (!callerSecret) {
+        console.error('[resolve-wager] RESOLVE_WAGER_CALLER_SECRET not configured — rejecting all requests');
+        return respond({ error: 'Function not configured' }, 503);
+    }
+    const providedSecret = req.headers.get('x-caller-secret');
+    if (!providedSecret || providedSecret !== callerSecret) {
+        console.error('[resolve-wager] Unauthorized caller — missing or invalid x-caller-secret');
+        return respond({ error: 'Unauthorized' }, 401);
+    }
+
     try {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-        // Secret name matches what you set in Supabase dashboard
         const authoritySecret = Deno.env.get('AUTHORITY_WALLET_SECRET')!;
         const rpcUrl = Deno.env.get('SOLANA_RPC_URL') || 'https://api.devnet.solana.com';
 
         if (!authoritySecret) throw new Error('AUTHORITY_WALLET_SECRET not configured');
 
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
-        const connection = new Connection(rpcUrl, 'confirmed');
-        const authority = loadAuthorityKeypair(authoritySecret);
-
-        console.log(`📥 resolve-wager — authority: ${authority.publicKey.toBase58()}`);
-
         const body = await req.json();
-        console.log('Action:', body.action);
+
+        console.log(`[resolve-wager] ▶ ENTER action=${body.action} wagerId=${body.wagerId ?? 'N/A'} matchId=${body.matchId ?? 'N/A'} playerA=${body.playerAWallet ?? 'N/A'} winner=${body.winnerWallet ?? 'N/A'} stake=${body.stakeLamports ?? 'N/A'}`);
 
         switch (body.action) {
 
-            // ── resolve_wager: winner takes 90%, platform takes 10% ──────────────
+            // ── resolve_wager ─────────────────────────────────────────────────
             case 'resolve_wager': {
+                const connection = new Connection(rpcUrl, 'confirmed');
+                const authority = loadAuthorityKeypair(authoritySecret);
+
+                console.log(`[resolve-wager] authority pubkey: ${authority.publicKey.toBase58()} rpcUrl: ${rpcUrl}`);
+
                 const { matchId, playerAWallet, playerBWallet, winnerWallet, wagerId, stakeLamports, moderatorWallet } = body;
                 if (!matchId || !playerAWallet || !winnerWallet)
                     throw new Error('Missing: matchId, playerAWallet, winnerWallet');
 
-                const playerAPubkey = new PublicKey(playerAWallet);
+                console.log(`[resolve-wager] 🎮 resolve_wager: wagerId=${wagerId} matchId=${matchId} playerA=${playerAWallet} winner=${winnerWallet} stake=${stakeLamports}`);
+
                 const winnerPubkey = new PublicKey(winnerWallet);
                 const platformPubkey = new PublicKey(PLATFORM_WALLET);
-                const wagerPda = deriveWagerPda(playerAPubkey, BigInt(matchId));
+                const wagerPda = deriveWagerPda(playerAWallet, BigInt(matchId));
 
-                console.log(`🎮 Resolving wager PDA: ${wagerPda.toBase58()} → winner: ${winnerWallet}`);
+                console.log(`[resolve-wager] wagerPda: ${wagerPda.toBase58()}`);
+                const pdaBalance = await connection.getBalance(wagerPda).catch(() => -1);
+                console.log(`[resolve-wager] PDA balance: ${pdaBalance} lamports (${pdaBalance / 1_000_000_000} SOL)`);
 
-                // Build + sign + send on-chain resolve_wager instruction
                 const ix = buildResolveWagerIx(wagerPda, authority.publicKey, winnerPubkey, platformPubkey);
                 let txSig: string | null = null;
+
+                console.log(`[resolve-wager] sending resolve_wager tx...`);
                 try {
                     txSig = await sendAndConfirm(connection, authority, ix);
-                    console.log(`resolve_wager tx success: ${txSig}`);
-                } catch (onChainErr: any) {
-                    // Log error with full context for debugging
-                    const errorMsg = onChainErr?.message || String(onChainErr);
-                    console.error('On-chain resolve_wager failed:', errorMsg);
-
-                    // Log the failure to transactions table
+                    console.log(`[resolve-wager] resolve_wager tx ✅ confirmed: ${txSig}`);
+                } catch (onChainErr: unknown) {
+                    const onChainError = onChainErr instanceof Error ? onChainErr.message : String(onChainErr);
+                    console.error(`[resolve-wager] ❌ resolve_wager on-chain FAILED: ${onChainError}`);
                     if (wagerId) {
-                        await logError(supabase, wagerId, 'on_chain_resolve', errorMsg, {
+                        await logError(supabase, wagerId, 'on_chain_resolve', onChainError, {
                             walletAddress: winnerWallet,
                             wagerPda: wagerPda.toBase58(),
                             matchId,
                         });
                     }
+                    return respond({ success: false, error: onChainError, wagerPda: wagerPda.toBase58() }, 500);
                 }
 
-                // Update DB
                 if (wagerId) {
                     const { data: wager } = await supabase.from('wagers')
                         .select('status,stake_lamports,player_a_wallet,player_b_wallet').eq('id', wagerId).single();
 
                     const stake = stakeLamports || wager?.stake_lamports || 0;
                     const totalPot = stake * 2;
-                    const platformFee = Math.floor(totalPot * PLATFORM_FEE_BPS / 10_000);
+                    const platformFee = calculatePlatformFee(stake);
                     const winnerPayout = totalPot - platformFee;
-                    const moderatorCut = moderatorWallet ? Math.floor(platformFee * MODERATOR_FEE_SHARE) : 0;
+                    const solPrice = moderatorWallet ? await getSolPriceUsd() : 150;
+                    const moderatorCut = moderatorWallet ? calculateModFee(platformFee, solPrice) : 0;
                     const netPlatform = platformFee - moderatorCut;
                     const loserWallet = winnerWallet === wager?.player_a_wallet ? wager?.player_b_wallet : wager?.player_a_wallet;
 
@@ -241,7 +290,6 @@ serve(async (req) => {
                         }).eq('id', wagerId);
                     }
 
-                    // Update player stats
                     await supabase.rpc('update_winner_stats', { p_wallet: winnerWallet, p_stake: stake, p_earnings: winnerPayout })
                         .then(({ error }) => error && console.log('⚠️ winner stats:', error.message));
                     if (loserWallet) {
@@ -269,8 +317,11 @@ serve(async (req) => {
                 return respond({ success: true, txSignature: txSig });
             }
 
-            // ── refund_draw: close_wager returns funds to both players ────────────
+            // ── refund_draw ───────────────────────────────────────────────────
             case 'refund_draw': {
+                const connection = new Connection(rpcUrl, 'confirmed');
+                const authority = loadAuthorityKeypair(authoritySecret);
+
                 const { matchId, playerAWallet, playerBWallet, wagerId, stakeLamports } = body;
                 if (!matchId || !playerAWallet || !playerBWallet)
                     throw new Error('Missing: matchId, playerAWallet, playerBWallet');
@@ -278,7 +329,7 @@ serve(async (req) => {
                 const playerAPubkey = new PublicKey(playerAWallet);
                 const playerBPubkey = new PublicKey(playerBWallet);
                 const platformPubkey = new PublicKey(PLATFORM_WALLET);
-                const wagerPda = deriveWagerPda(playerAPubkey, BigInt(matchId));
+                const wagerPda = deriveWagerPda(playerAWallet, BigInt(matchId));
 
                 console.log(`🤝 Draw refund PDA: ${wagerPda.toBase58()}`);
 
@@ -287,10 +338,9 @@ serve(async (req) => {
                 try {
                     txSig = await sendAndConfirm(connection, authority, ix);
                     console.log(`close_wager (draw) tx success: ${txSig}`);
-                } catch (onChainErr: any) {
-                    const errorMsg = onChainErr?.message || String(onChainErr);
+                } catch (onChainErr: unknown) {
+                    const errorMsg = onChainErr instanceof Error ? onChainErr.message : String(onChainErr);
                     console.error('On-chain close_wager (draw) failed:', errorMsg);
-
                     if (wagerId) {
                         await logError(supabase, wagerId, 'on_chain_draw_refund', errorMsg, {
                             walletAddress: playerAWallet,
@@ -298,6 +348,7 @@ serve(async (req) => {
                             matchId,
                         });
                     }
+                    return respond({ success: false, error: errorMsg, wagerPda: wagerPda.toBase58() }, 500);
                 }
 
                 if (wagerId) {
@@ -319,8 +370,11 @@ serve(async (req) => {
                 });
             }
 
-            // ── get_balance: check authority wallet balance ───────────────────────
+            // ── get_balance ───────────────────────────────────────────────────
             case 'get_balance': {
+                const connection = new Connection(rpcUrl, 'confirmed');
+                const authority = loadAuthorityKeypair(authoritySecret);
+
                 const lamports = await connection.getBalance(authority.publicKey);
                 return respond({
                     success: true,
@@ -331,7 +385,8 @@ serve(async (req) => {
                 });
             }
 
-            // ── record_escrow: log deposit txs ────────────────────────────────────
+            // ── record_escrow ─────────────────────────────────────────────────
+            // No Solana needed — pure DB write
             case 'record_escrow': {
                 const { wagerId, playerAWallet, playerBWallet, stakeLamports, txSignature } = body;
                 if (!wagerId || !stakeLamports) throw new Error('Missing wagerId or stakeLamports');
@@ -340,33 +395,33 @@ serve(async (req) => {
                 return respond({ success: true });
             }
 
-            // ── refund_cancelled: refund both players when wager is cancelled ─────
+            // ── refund_cancelled ──────────────────────────────────────────────
             case 'refund_cancelled': {
+                const connection = new Connection(rpcUrl, 'confirmed');
+                const authority = loadAuthorityKeypair(authoritySecret);
+
                 const { matchId, playerAWallet, playerBWallet, wagerId, stakeLamports, cancelledBy, reason } = body;
                 if (!matchId || !playerAWallet) throw new Error('Missing: matchId, playerAWallet');
 
                 const playerAPubkey = new PublicKey(playerAWallet);
                 const playerBPubkey = playerBWallet ? new PublicKey(playerBWallet) : null;
                 const platformPubkey = new PublicKey(PLATFORM_WALLET);
-                const wagerPda = deriveWagerPda(playerAPubkey, BigInt(matchId));
+                const wagerPda = deriveWagerPda(playerAWallet, BigInt(matchId));
 
                 console.log(`Cancelled wager refund PDA: ${wagerPda.toBase58()} | Reason: ${reason}`);
 
-                // Check if PDA has funds (only if on-chain deposits were made)
                 const pdaBalance = await connection.getBalance(wagerPda);
                 let txSig: string | null = null;
 
                 if (pdaBalance > 0 && playerBPubkey) {
-                    // Funds exist on-chain, use close_wager to refund both players
                     console.log(`PDA has ${pdaBalance} lamports - initiating on-chain refund`);
                     const ix = buildCloseWagerIx(wagerPda, authority.publicKey, playerAPubkey, playerBPubkey, platformPubkey);
                     try {
                         txSig = await sendAndConfirm(connection, authority, ix);
                         console.log(`close_wager (cancelled) tx success: ${txSig}`);
-                    } catch (onChainErr: any) {
-                        const errorMsg = onChainErr?.message || String(onChainErr);
+                    } catch (onChainErr: unknown) {
+                        const errorMsg = onChainErr instanceof Error ? onChainErr.message : String(onChainErr);
                         console.error('On-chain close_wager (cancelled) failed:', errorMsg);
-
                         if (wagerId) {
                             await logError(supabase, wagerId, 'on_chain_cancel_refund', errorMsg, {
                                 walletAddress: cancelledBy,
@@ -380,7 +435,6 @@ serve(async (req) => {
                     console.log(`No on-chain funds to refund (PDA balance: ${pdaBalance})`);
                 }
 
-                // Update wager status in DB if not already done
                 if (wagerId) {
                     const { data: wager } = await supabase.from('wagers').select('status').eq('id', wagerId).single();
                     if (wager?.status !== 'cancelled') {
@@ -392,7 +446,6 @@ serve(async (req) => {
                         }).eq('id', wagerId);
                     }
 
-                    // Log refund transactions
                     const stake = stakeLamports || 0;
                     if (pdaBalance > 0) {
                         await logTransaction(supabase, wagerId, 'cancel_refund', playerAWallet, stake, txSig);
@@ -411,7 +464,8 @@ serve(async (req) => {
                 });
             }
 
-            // ── ban_player ────────────────────────────────────────────────────────
+            // ── ban_player ────────────────────────────────────────────────────
+            // No Solana needed — pure DB write
             case 'ban_player': {
                 const { playerPubkey, banDurationSeconds } = body;
                 if (!playerPubkey || !banDurationSeconds) throw new Error('Missing playerPubkey or banDurationSeconds');

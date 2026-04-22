@@ -6,8 +6,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Dices, Search, Loader2, ChevronLeft, ChevronRight, AlertTriangle,
     CheckCircle2, X, RefreshCcw, Filter, ExternalLink, Copy, Check,
-    Swords, Clock, Trophy, Ban, RotateCcw, Shield, ChevronDown, Flag, Target, Flame, Gamepad
+    Swords, Clock, Trophy, Ban, RotateCcw, Shield, ChevronDown, Cpu
 } from 'lucide-react';
+import Link from 'next/link';
 import { useAdminWagers, AdminWager } from '@/hooks/admin/useAdminWagers';
 import { useWallet } from '@solana/wallet-adapter-react';
 
@@ -23,11 +24,11 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
     cancelled: { label: 'Cancelled', color: 'text-red-400', bg: 'bg-red-500/15', border: 'border-red-500/30' },
 };
 
-const GAME_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
-    chess: { label: 'Chess', icon: <Flag className="w-4 h-4" /> },
-    codm: { label: 'CODM', icon: <Target className="w-4 h-4" /> },
-    pubg: { label: 'PUBG', icon: <Target className="w-4 h-4" /> },
-    free_fire: { label: 'Free Fire', icon: <Flame className="w-4 h-4" /> },
+const GAME_CONFIG: Record<string, { label: string; icon: string }> = {
+    chess: { label: 'Chess', icon: '♟️' },
+    codm: { label: 'CODM', icon: '🎯' },
+    pubg: { label: 'PUBG', icon: '🪖' },
+    free_fire: { label: 'Free Fire', icon: '🔥' },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -40,7 +41,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function GameBadge({ game }: { game: string }) {
-    const cfg = GAME_CONFIG[game] || { label: game, icon: <Gamepad className="w-4 h-4" /> };
+    const cfg = GAME_CONFIG[game] || { label: game, icon: '🎮' };
     return (
         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground bg-card/60 border border-border/40 px-2.5 py-1 rounded-full">
             <span>{cfg.icon}</span>{cfg.label}
@@ -92,7 +93,7 @@ function WagerDrawer({ wager, onClose, onAction, actionLoading }: {
                 <div className="p-6 border-b border-border/50 sticky top-0 bg-card z-10">
                     <div className="flex items-start justify-between">
                         <div className="flex items-center gap-3">
-                            <div className="text-xl flex items-center justify-center">{GAME_CONFIG[wager.game]?.icon || <Gamepad className="w-5 h-5" />}</div>
+                            <div className="text-xl">{GAME_CONFIG[wager.game]?.icon || '🎮'}</div>
                             <div>
                                 <div className="flex items-center gap-2 mb-0.5">
                                     <span className="text-sm font-gaming font-bold text-foreground">#{wager.match_id}</span>
@@ -101,9 +102,21 @@ function WagerDrawer({ wager, onClose, onAction, actionLoading }: {
                                 <p className="text-xs font-mono text-muted-foreground">{wager.id.slice(0, 16)}...</p>
                             </div>
                         </div>
-                        <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
-                            <X className="h-5 w-5" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {/* On-Chain Inspector shortcut */}
+                            <Link
+                                href={`/itszaadminlogin/on-chain?q=${encodeURIComponent(wager.id)}`}
+                                onClick={onClose}
+                                title="View PDAs & on-chain balance"
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 transition-colors text-xs font-medium"
+                            >
+                                <Cpu className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">On-Chain</span>
+                            </Link>
+                            <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+                                <X className="h-5 w-5" />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -153,7 +166,7 @@ function WagerDrawer({ wager, onClose, onAction, actionLoading }: {
                     {/* Dispute info */}
                     {wager.status === 'disputed' && (
                         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 space-y-1">
-                            <p className="text-xs font-semibold text-amber-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Disputed</p>
+                            <p className="text-xs font-semibold text-amber-400">⚠️ Disputed</p>
                             {wager.dispute_created_at && (
                                 <p className="text-xs text-muted-foreground">
                                     Disputed {new Date(wager.dispute_created_at).toLocaleString()}
@@ -404,11 +417,20 @@ function WagersContent() {
                             <p className="text-sm text-muted-foreground">{total.toLocaleString()} total wagers</p>
                         </div>
                     </div>
-                    <button onClick={refreshWagers} disabled={loading}
-                        className="flex items-center gap-2 px-4 py-2 bg-card border border-border/50 hover:border-primary/40 rounded-xl text-sm text-foreground transition-colors disabled:opacity-50">
-                        <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                        <span className="hidden sm:inline">Refresh</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <Link
+                            href="/itszaadminlogin/on-chain"
+                            className="hidden sm:flex items-center gap-2 px-3 py-2 bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 rounded-xl text-xs text-cyan-400 font-medium transition-colors"
+                        >
+                            <Cpu className="h-3.5 w-3.5" />
+                            On-Chain Inspector
+                        </Link>
+                        <button onClick={refreshWagers} disabled={loading}
+                            className="flex items-center gap-2 px-4 py-2 bg-card border border-border/50 hover:border-primary/40 rounded-xl text-sm text-foreground transition-colors disabled:opacity-50">
+                            <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                            <span className="hidden sm:inline">Refresh</span>
+                        </button>
+                    </div>
                 </motion.div>
 
                 {error && (

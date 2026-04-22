@@ -1,66 +1,60 @@
 // supabase/functions/admin-action/index.ts
-//
-// FIX 1: Lazy Solana import (getSolana()) — mirrors secure-wager/solana.ts.
-//         Eager top-level imports of @solana/web3.js@1.98.0 parse + execute the
-//         entire 2 MB SDK during Deno cold-start, exhausting the worker memory
-//         budget before the first request arrives (WORKER_LIMIT error).
-//
-// FIX 2: HTTP-polling confirmation — replaces sendAndConfirmTransaction() and
-//         connection.confirmTransaction(), both of which open a WebSocket that
-//         continuously drains Deno CPU budget, reliably hitting the ~2 s limit.
+// Solana helpers inlined — no ./solana.ts import, matches process-verdict single-file pattern.
+// The warm-up getSolana().catch() fires after supabase-js static parse completes,
+// so the dynamic import resolves cleanly instead of being terminated.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const CORS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
-};
+// ── Solana helpers (inlined from solana.ts) ───────────────────────────────────
+export const PROGRAM_ID_STR = "E2Vd3U91kMrgwp8JCXcLSn7bt3NowDmGwoBYsVRhGfMR";
+export const PLATFORM_WALLET_STR = "3hwPwugeuZ33HWJ3SoJkDN2JT3Be9fH62r19ezFiCgYY";
 
-const PROGRAM_ID_STR = "E2Vd3U91kMrgwp8JCXcLSn7bt3NowDmGwoBYsVRhGfMR";
-const PLATFORM_WALLET_STR = "3hwPwugeuZ33HWJ3SoJkDN2JT3Be9fH62r19ezFiCgYY";
+// ── Fee helper ────────────────────────────────────────────────────────────────
+const MICRO_THRESHOLD = 500_000_000;
+const WHALE_THRESHOLD = 5_000_000_000;
 
-const DISCRIMINATORS = {
+export function calculatePlatformFee(stakeLamports: number): number {
+    let bps: number;
+    if (stakeLamports < MICRO_THRESHOLD) bps = 1000;
+    else if (stakeLamports <= WHALE_THRESHOLD) bps = 700;
+    else bps = 500;
+    return Math.floor((stakeLamports * 2 * bps) / 10_000);
+}
+
+export const DISCRIMINATORS = {
     resolve_wager: new Uint8Array([31, 179, 1, 228, 83, 224, 1, 123]),
     close_wager: new Uint8Array([167, 240, 85, 147, 127, 50, 69, 203]),
 };
 
 // ── Lazy Solana import ────────────────────────────────────────────────────────
-// The SDK is only loaded when a Solana action is actually needed.
-// This keeps cold-start memory well under the worker limit.
+// Matches the pattern used in secure-wager/solana.ts and process-verdict/index.ts.
+// Dynamic import defers bundle parsing to first use, keeping cold-start CPU cheap.
+let _solana: typeof import("https://esm.sh/@solana/web3.js@1.98.0") | null = null;
 
-// deno-lint-ignore no-explicit-any
-let _solana: any = null;
-async function getSolana() {
+export async function getSolana() {
     if (!_solana) {
         _solana = await import("https://esm.sh/@solana/web3.js@1.98.0");
     }
     return _solana;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// Eagerly warm up at boot — fires after supabase-js static import completes.
+// This is what makes the dynamic import safe (matches process-verdict pattern).
+getSolana().catch(() => { /* warm-up best-effort */ });
 
-function getSupabase() {
-    const url = Deno.env.get("SUPABASE_URL");
-    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!url || !key) throw new Error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set in edge function secrets");
-    return createClient(url, key);
-}
-
-async function getAuthority() {
+// ── Keypair ───────────────────────────────────────────────────────────────────
+export async function getAuthority() {
     const { Keypair } = await getSolana();
     const raw = Deno.env.get("AUTHORITY_WALLET_SECRET");
-    if (!raw) throw new Error("AUTHORITY_WALLET_SECRET is not set in edge function secrets");
+    if (!raw) throw new Error("AUTHORITY_WALLET_SECRET is not set");
     let bytes: number[];
-    try {
-        bytes = JSON.parse(raw);
-    } catch {
-        throw new Error("AUTHORITY_WALLET_SECRET is not valid JSON — expected a JSON array of numbers");
-    }
+    try { bytes = JSON.parse(raw); }
+    catch { throw new Error("AUTHORITY_WALLET_SECRET is not valid JSON"); }
     return Keypair.fromSecretKey(new Uint8Array(bytes));
 }
 
-async function deriveWagerPDA(playerAWallet: string, matchId: bigint) {
+// ── PDA derivation ────────────────────────────────────────────────────────────
+export async function deriveWagerPDA(playerAWallet: string, matchId: bigint) {
     const { PublicKey } = await getSolana();
     const matchIdBytes = new Uint8Array(8);
     new DataView(matchIdBytes.buffer).setBigUint64(0, matchId, true);
@@ -71,13 +65,14 @@ async function deriveWagerPDA(playerAWallet: string, matchId: bigint) {
     return pda;
 }
 
-// ── HTTP-polling confirmation ─────────────────────────────────────────────────
-// Does NOT use sendAndConfirmTransaction() or connection.confirmTransaction().
-// Both open WebSocket subscriptions that drain Deno CPU budget continuously.
-// Plain fetch() polls getSignatureStatuses instead — zero WebSocket usage.
-
-// deno-lint-ignore no-explicit-any
-async function sendAndConfirm(authority: any, instruction: any, rpcUrl: string): Promise<string> {
+// ── Send + confirm ────────────────────────────────────────────────────────────
+export async function sendAndConfirm(
+    // deno-lint-ignore no-explicit-any
+    authority: any,
+    // deno-lint-ignore no-explicit-any
+    instruction: any,
+    rpcUrl: string,
+): Promise<string> {
     const { Connection, Transaction } = await getSolana();
     const connection = new Connection(rpcUrl, "confirmed");
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
@@ -93,41 +88,27 @@ async function sendAndConfirm(authority: any, instruction: any, rpcUrl: string):
         preflightCommitment: "confirmed",
     });
 
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 2000));
+    await connection.confirmTransaction(
+        { signature, blockhash, lastValidBlockHeight },
+        "confirmed",
+    );
 
-        const res = await fetch(rpcUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: 1,
-                method: "getSignatureStatuses",
-                params: [[signature], { searchTransactionHistory: false }],
-            }),
-        });
-
-        const json = await res.json();
-        const status = json?.result?.value?.[0];
-
-        if (status) {
-            if (status.err) throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
-            if (status.confirmationStatus === "confirmed" || status.confirmationStatus === "finalized") {
-                return signature;
-            }
-        }
-
-        const blockHeight = await connection.getBlockHeight("confirmed");
-        if (blockHeight > lastValidBlockHeight) {
-            throw new Error("Transaction expired — blockhash no longer valid");
-        }
-    }
-
-    throw new Error("Transaction confirmation timed out after 30 s");
+    return signature;
 }
 
-// ── Admin audit log ────────────────────────────────────────────────────────────
+// ── Main handler ───────────────────────────────────────────────────────────────
+const CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
+};
+
+function getSupabase() {
+    const url = Deno.env.get("SUPABASE_URL");
+    const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !key) throw new Error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
+    return createClient(url, key);
+}
 
 async function logAdminAction(
     supabase: ReturnType<typeof getSupabase>,
@@ -139,309 +120,289 @@ async function logAdminAction(
     metadata: Record<string, unknown> = {},
 ) {
     await supabase.from("admin_logs").insert({
-        action,
-        wager_id: wagerId,
-        wallet_address: walletAddress,
-        performed_by: performedBy,
-        notes,
-        metadata,
+        action, wager_id: wagerId, wallet_address: walletAddress,
+        performed_by: performedBy, notes, metadata,
     });
 }
 
-// ── Actions ────────────────────────────────────────────────────────────────────
+// Statuses from which an admin can still force-resolve or force-refund.
+// Includes "resolving"/"cancelling" so that wagers stuck by a prior CPU-timeout
+// crash can be retried without manual DB surgery.
+const RETRYABLE_STATUSES = ["voting", "joined", "disputed", "retractable", "resolving", "cancelling"];
 
 async function forceResolve(
     supabase: ReturnType<typeof getSupabase>,
-    wagerId: string,
-    winnerWallet: string,
-    adminWallet: string,
-    notes: string | null,
-    rpcUrl: string,
+    wagerId: string, winnerWallet: string, adminWallet: string,
+    notes: string | null, rpcUrl: string,
 ) {
-    const { data: wager, error } = await supabase
-        .from("wagers")
-        .select("*")
-        .eq("id", wagerId)
-        .single();
-
+    const { data: wager, error } = await supabase.from("wagers").select("*").eq("id", wagerId).single();
     if (error || !wager) throw new Error("Wager not found");
 
-    if (winnerWallet !== wager.player_a_wallet && winnerWallet !== wager.player_b_wallet) {
+    if (winnerWallet !== wager.player_a_wallet && winnerWallet !== wager.player_b_wallet)
         throw new Error("Winner must be a participant in this wager");
-    }
 
-    if (!["voting", "joined", "disputed", "retractable"].includes(wager.status)) {
+    if (!RETRYABLE_STATUSES.includes(wager.status))
         throw new Error(`Cannot resolve wager with status: ${wager.status}`);
-    }
 
+    // If already stuck in "resolving" for a DIFFERENT winner, block the override
+    if (wager.status === "resolving" && wager.winner_wallet && wager.winner_wallet !== winnerWallet)
+        throw new Error("Wager is already resolving for a different winner — cannot override");
+
+    // Atomically claim — prevents double-pay if two admins race
     const { data: updatedWager, error: updateError } = await supabase
         .from("wagers")
-        .update({
-            status: "resolved",
-            winner_wallet: winnerWallet,
-            resolved_at: new Date().toISOString(),
-        })
+        .update({ status: "resolving", winner_wallet: winnerWallet, resolved_at: new Date().toISOString() })
         .eq("id", wagerId)
-        .in("status", ["voting", "joined", "disputed", "retractable"])
-        .select()
-        .single();
+        .in("status", RETRYABLE_STATUSES)
+        .select().single();
 
-    if (updateError || !updatedWager) {
+    if (updateError || !updatedWager)
         throw new Error("Wager already resolved or status changed — aborting to prevent double-pay");
-    }
-
-    // Solana SDK loaded lazily here — not at module boot
-    const { PublicKey, TransactionInstruction, SystemProgram } = await getSolana();
-    const authority = await getAuthority();
-    const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
-    const winnerPubkey = new PublicKey(winnerWallet);
-    const platformPubkey = new PublicKey(PLATFORM_WALLET_STR);
-
-    const disc = DISCRIMINATORS.resolve_wager;
-    const winnerBytes = winnerPubkey.toBytes();
-    const instructionData = new Uint8Array(disc.length + winnerBytes.length);
-    instructionData.set(disc, 0);
-    instructionData.set(winnerBytes, disc.length);
-
-    const ix = new TransactionInstruction({
-        programId: new PublicKey(PROGRAM_ID_STR),
-        keys: [
-            { pubkey: wagerPDA, isSigner: false, isWritable: true },
-            { pubkey: winnerPubkey, isSigner: false, isWritable: true },
-            { pubkey: authority.publicKey, isSigner: true, isWritable: true },
-            { pubkey: platformPubkey, isSigner: false, isWritable: true },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        data: instructionData,
-    });
-
-    const sig = await sendAndConfirm(authority, ix, rpcUrl);
-    console.log(`[admin-action] forceResolve tx: ${sig}`);
 
     const totalPot = wager.stake_lamports * 2;
-    const platformFee = Math.floor(totalPot * 0.1);
+    const platformFee = calculatePlatformFee(wager.stake_lamports);
     const winnerPayout = totalPot - platformFee;
 
-    await supabase.from("wager_transactions").upsert([
-        { wager_id: wagerId, wallet_address: winnerWallet, tx_type: "winner_payout", amount_lamports: winnerPayout, tx_signature: sig, status: "confirmed" },
-        { wager_id: wagerId, wallet_address: PLATFORM_WALLET_STR, tx_type: "platform_fee", amount_lamports: platformFee, tx_signature: sig, status: "confirmed" },
-    ], { onConflict: "tx_signature", ignoreDuplicates: true });
+    // Insert a pending tx record so the admin can track progress immediately
+    const { data: pendingTx } = await supabase.from("wager_transactions").insert({
+        wager_id: wagerId, wallet_address: winnerWallet,
+        tx_type: "winner_payout", status: "pending", amount_lamports: winnerPayout,
+    }).select().single();
 
-    await logAdminAction(supabase, "force_resolve", wagerId, winnerWallet, adminWallet, notes, {
-        tx_signature: sig,
+    await logAdminAction(supabase, "force_resolve_queued", wagerId, winnerWallet, adminWallet, notes, {
         winner: winnerWallet,
-        payout_lamports: winnerPayout,
     });
+
+    // Fire on-chain work in the background — return 200 immediately
+    const onChainWork = (async () => {
+        try {
+            const { PublicKey, TransactionInstruction, SystemProgram } = await getSolana();
+            const authority = await getAuthority();
+            const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
+            const winnerPubkey = new PublicKey(winnerWallet);
+            const platformPubkey = new PublicKey(PLATFORM_WALLET_STR);
+
+            const disc = DISCRIMINATORS.resolve_wager;
+            const winnerBytes = winnerPubkey.toBytes();
+            const instructionData = new Uint8Array(disc.length + winnerBytes.length);
+            instructionData.set(disc, 0);
+            instructionData.set(winnerBytes, disc.length);
+
+            const ix = new TransactionInstruction({
+                programId: new PublicKey(PROGRAM_ID_STR),
+                keys: [
+                    { pubkey: wagerPDA, isSigner: false, isWritable: true },
+                    { pubkey: winnerPubkey, isSigner: false, isWritable: true },
+                    { pubkey: authority.publicKey, isSigner: true, isWritable: true },
+                    { pubkey: platformPubkey, isSigner: false, isWritable: true },
+                    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                ],
+                data: instructionData,
+            });
+
+            const sig = await sendAndConfirm(authority, ix, rpcUrl);
+            console.log(`[admin-action] forceResolve tx confirmed: ${sig}`);
+
+            await supabase.from("wagers").update({ status: "resolved" }).eq("id", wagerId);
+            await supabase.from("wager_transactions").upsert([
+                { wager_id: wagerId, wallet_address: winnerWallet, tx_type: "winner_payout", amount_lamports: winnerPayout, tx_signature: sig, status: "confirmed" },
+                { wager_id: wagerId, wallet_address: PLATFORM_WALLET_STR, tx_type: "platform_fee", amount_lamports: platformFee, tx_signature: sig, status: "confirmed" },
+            ], { onConflict: "tx_signature", ignoreDuplicates: true });
+            if (pendingTx?.id) {
+                await supabase.from("wager_transactions").update({ status: "confirmed", tx_signature: sig }).eq("id", pendingTx.id);
+            }
+            await logAdminAction(supabase, "force_resolve", wagerId, winnerWallet, adminWallet, notes, {
+                tx_signature: sig, winner: winnerWallet, payout_lamports: winnerPayout,
+            });
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[admin-action] forceResolve on-chain failed: ${msg}`);
+            // Roll back to "disputed" so an admin can retry
+            await supabase.from("wagers").update({ status: "disputed" }).eq("id", wagerId);
+            if (pendingTx?.id) {
+                await supabase.from("wager_transactions").update({ status: "failed" }).eq("id", pendingTx.id);
+            }
+            await logAdminAction(supabase, "force_resolve_failed", wagerId, winnerWallet, adminWallet, msg);
+        }
+    })();
+
+    // @ts-ignore — EdgeRuntime is available in Supabase edge functions
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(onChainWork);
 
     return {
         success: true,
-        txSignature: sig,
-        explorerUrl: `https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+        queued: true,
+        message: "Wager status set to 'resolving'. On-chain transaction running in background — check wager_transactions for confirmation.",
         winnerWallet,
-        payoutLamports: winnerPayout,
     };
 }
 
 async function forceRefund(
     supabase: ReturnType<typeof getSupabase>,
-    wagerId: string,
-    adminWallet: string,
-    notes: string | null,
-    rpcUrl: string,
+    wagerId: string, adminWallet: string, notes: string | null, rpcUrl: string,
 ) {
-    const { data: wager, error } = await supabase
-        .from("wagers")
-        .select("*")
-        .eq("id", wagerId)
-        .single();
-
+    const { data: wager, error } = await supabase.from("wagers").select("*").eq("id", wagerId).single();
     if (error || !wager) throw new Error("Wager not found");
 
-    if (!["voting", "joined", "disputed", "retractable"].includes(wager.status)) {
+    if (!RETRYABLE_STATUSES.includes(wager.status))
         throw new Error(`Cannot refund wager with status: ${wager.status}`);
-    }
 
-    if (!wager.player_b_wallet) {
+    if (!wager.player_b_wallet)
         throw new Error("Cannot refund single-player wager — player B hasn't joined yet");
-    }
 
+    // Atomically claim — prevents double-refund
     const { data: updatedWager, error: updateError } = await supabase
         .from("wagers")
-        .update({
-            status: "cancelled",
-            cancelled_at: new Date().toISOString(),
-            cancel_reason: "admin_force_refund",
-        })
+        .update({ status: "cancelling", resolved_at: new Date().toISOString() })
         .eq("id", wagerId)
-        .in("status", ["voting", "joined", "disputed", "retractable"])
-        .select()
-        .single();
+        .in("status", RETRYABLE_STATUSES)
+        .select().single();
 
-    if (updateError || !updatedWager) {
-        throw new Error("Wager already cancelled or status changed — aborting to prevent double-refund");
-    }
+    if (updateError || !updatedWager)
+        throw new Error("Wager already resolved or status changed — aborting to prevent double-refund");
 
-    // Solana SDK loaded lazily here — not at module boot
-    const { Connection, PublicKey, TransactionInstruction, SystemProgram } = await getSolana();
-    const authority = await getAuthority();
-    const connection = new Connection(rpcUrl, "confirmed");
-    const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
+    // Insert pending records for both players immediately
+    const { data: pendingTxA } = await supabase.from("wager_transactions").insert({
+        wager_id: wagerId, wallet_address: wager.player_a_wallet,
+        tx_type: "refund", status: "pending", amount_lamports: wager.stake_lamports,
+    }).select().single();
+    const { data: pendingTxB } = await supabase.from("wager_transactions").insert({
+        wager_id: wagerId, wallet_address: wager.player_b_wallet,
+        tx_type: "refund", status: "pending", amount_lamports: wager.stake_lamports,
+    }).select().single();
 
-    const pdaBalance = await connection.getBalance(wagerPDA);
-    if (pdaBalance === 0) throw new Error("PDA is empty — funds may have already been distributed");
+    await logAdminAction(supabase, "force_refund_queued", wagerId, null, adminWallet, notes);
 
-    const playerAPubkey = new PublicKey(wager.player_a_wallet);
-    const playerBPubkey = new PublicKey(wager.player_b_wallet);
+    const onChainWork = (async () => {
+        try {
+            const { PublicKey, TransactionInstruction, SystemProgram } = await getSolana();
+            const authority = await getAuthority();
+            const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
+            const playerAPubkey = new PublicKey(wager.player_a_wallet);
+            const playerBPubkey = new PublicKey(wager.player_b_wallet);
+            const platformPubkey = new PublicKey(PLATFORM_WALLET_STR);
 
-    const ix = new TransactionInstruction({
-        programId: new PublicKey(PROGRAM_ID_STR),
-        keys: [
-            { pubkey: wagerPDA, isSigner: false, isWritable: true },
-            { pubkey: playerAPubkey, isSigner: false, isWritable: true },
-            { pubkey: playerBPubkey, isSigner: false, isWritable: true },
-            { pubkey: authority.publicKey, isSigner: true, isWritable: true },
-            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        data: DISCRIMINATORS.close_wager,
-    });
+            const ix = new TransactionInstruction({
+                programId: new PublicKey(PROGRAM_ID_STR),
+                keys: [
+                    { pubkey: wagerPDA, isSigner: false, isWritable: true },
+                    { pubkey: playerAPubkey, isSigner: false, isWritable: true },
+                    { pubkey: playerBPubkey, isSigner: false, isWritable: true },
+                    { pubkey: authority.publicKey, isSigner: true, isWritable: true },
+                    { pubkey: platformPubkey, isSigner: false, isWritable: true },
+                    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+                ],
+                data: new Uint8Array(DISCRIMINATORS.close_wager),
+            });
 
-    const sig = await sendAndConfirm(authority, ix, rpcUrl);
-    console.log(`[admin-action] forceRefund tx: ${sig}`);
+            const sig = await sendAndConfirm(authority, ix, rpcUrl);
+            console.log(`[admin-action] forceRefund tx confirmed: ${sig}`);
 
-    await supabase.from("wager_transactions").upsert([
-        { wager_id: wagerId, wallet_address: wager.player_a_wallet, tx_type: "cancel_refund", amount_lamports: wager.stake_lamports, tx_signature: sig, status: "confirmed" },
-        { wager_id: wagerId, wallet_address: wager.player_b_wallet, tx_type: "cancel_refund", amount_lamports: wager.stake_lamports, tx_signature: sig, status: "confirmed" },
-    ], { onConflict: "tx_signature", ignoreDuplicates: true });
+            await supabase.from("wagers").update({ status: "cancelled" }).eq("id", wagerId);
+            await supabase.from("wager_transactions").upsert([
+                { wager_id: wagerId, wallet_address: wager.player_a_wallet, tx_type: "refund", amount_lamports: wager.stake_lamports, tx_signature: sig, status: "confirmed" },
+                { wager_id: wagerId, wallet_address: wager.player_b_wallet, tx_type: "refund", amount_lamports: wager.stake_lamports, tx_signature: sig, status: "confirmed" },
+            ], { onConflict: "tx_signature", ignoreDuplicates: true });
+            if (pendingTxA?.id) await supabase.from("wager_transactions").update({ status: "confirmed", tx_signature: sig }).eq("id", pendingTxA.id);
+            if (pendingTxB?.id) await supabase.from("wager_transactions").update({ status: "confirmed", tx_signature: sig }).eq("id", pendingTxB.id);
+            await logAdminAction(supabase, "force_refund", wagerId, null, adminWallet, notes, {
+                tx_signature: sig, refund_lamports: wager.stake_lamports,
+            });
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[admin-action] forceRefund on-chain failed: ${msg}`);
+            // Roll back to "disputed" so an admin can retry
+            await supabase.from("wagers").update({ status: "disputed" }).eq("id", wagerId);
+            if (pendingTxA?.id) await supabase.from("wager_transactions").update({ status: "failed" }).eq("id", pendingTxA.id);
+            if (pendingTxB?.id) await supabase.from("wager_transactions").update({ status: "failed" }).eq("id", pendingTxB.id);
+            await logAdminAction(supabase, "force_refund_failed", wagerId, null, adminWallet, msg);
+        }
+    })();
 
-    await logAdminAction(supabase, "force_refund", wagerId, null, adminWallet, notes, {
-        tx_signature: sig,
-        refund_lamports: wager.stake_lamports,
-    });
+    // @ts-ignore
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(onChainWork);
 
     return {
         success: true,
-        txSignature: sig,
-        explorerUrl: `https://explorer.solana.com/tx/${sig}?cluster=devnet`,
+        queued: true,
+        message: "Wager status set to 'cancelling'. Refund transaction running in background — check wager_transactions for confirmation.",
         refundLamports: wager.stake_lamports,
     };
 }
 
 async function markDisputed(
     supabase: ReturnType<typeof getSupabase>,
-    wagerId: string,
-    adminWallet: string,
-    notes: string | null,
+    wagerId: string, adminWallet: string, notes: string | null,
 ) {
-    const { error } = await supabase
-        .from("wagers")
-        .update({ status: "disputed", requires_moderator: true })
-        .eq("id", wagerId);
-
+    const { error } = await supabase.from("wagers")
+        .update({ status: "disputed", requires_moderator: true }).eq("id", wagerId);
     if (error) throw new Error("Failed to mark as disputed");
-
     await logAdminAction(supabase, "mark_disputed", wagerId, null, adminWallet, notes);
     return { success: true };
 }
 
 async function banPlayer(
     supabase: ReturnType<typeof getSupabase>,
-    walletAddress: string,
-    reason: string,
-    adminWallet: string,
+    walletAddress: string, reason: string, adminWallet: string,
 ) {
-    const { error } = await supabase
-        .from("players")
-        .update({ is_banned: true, ban_reason: reason })
-        .eq("wallet_address", walletAddress);
-
+    const { error } = await supabase.from("players")
+        .update({ is_banned: true, ban_reason: reason }).eq("wallet_address", walletAddress);
     if (error) throw new Error("Failed to ban player");
-
     await logAdminAction(supabase, "ban_player", null, walletAddress, adminWallet, reason);
     return { success: true };
 }
 
 async function unbanPlayer(
     supabase: ReturnType<typeof getSupabase>,
-    walletAddress: string,
-    adminWallet: string,
+    walletAddress: string, adminWallet: string,
 ) {
-    const { error } = await supabase
-        .from("players")
-        .update({ is_banned: false, ban_reason: null })
-        .eq("wallet_address", walletAddress);
-
+    const { error } = await supabase.from("players")
+        .update({ is_banned: false, ban_reason: null }).eq("wallet_address", walletAddress);
     if (error) throw new Error("Failed to unban player");
-
     await logAdminAction(supabase, "unban_player", null, walletAddress, adminWallet, null);
     return { success: true };
 }
 
 async function flagPlayer(
     supabase: ReturnType<typeof getSupabase>,
-    walletAddress: string,
-    reason: string,
-    adminWallet: string,
+    walletAddress: string, reason: string, adminWallet: string,
 ) {
-    const { error } = await supabase
-        .from("players")
-        .update({
-            flagged_for_review: true,
-            flag_reason: reason,
-            flagged_at: new Date().toISOString(),
-            flagged_by: adminWallet,
-        })
-        .eq("wallet_address", walletAddress);
-
+    const { error } = await supabase.from("players").update({
+        flagged_for_review: true, flag_reason: reason,
+        flagged_at: new Date().toISOString(), flagged_by: adminWallet,
+    }).eq("wallet_address", walletAddress);
     if (error) throw new Error("Failed to flag player");
-
     await logAdminAction(supabase, "flag_player", null, walletAddress, adminWallet, reason);
     return { success: true };
 }
 
 async function unflagPlayer(
     supabase: ReturnType<typeof getSupabase>,
-    walletAddress: string,
-    adminWallet: string,
+    walletAddress: string, adminWallet: string,
 ) {
-    const { error } = await supabase
-        .from("players")
-        .update({
-            flagged_for_review: false,
-            flag_reason: null,
-            flagged_at: null,
-            flagged_by: null,
-        })
-        .eq("wallet_address", walletAddress);
-
+    const { error } = await supabase.from("players").update({
+        flagged_for_review: false, flag_reason: null, flagged_at: null, flagged_by: null,
+    }).eq("wallet_address", walletAddress);
     if (error) throw new Error("Failed to unflag player");
-
     await logAdminAction(supabase, "unflag_player", null, walletAddress, adminWallet, null);
     return { success: true };
 }
 
 async function checkPdaBalance(
     supabase: ReturnType<typeof getSupabase>,
-    wagerId: string,
-    adminWallet: string,
-    rpcUrl: string,
+    wagerId: string, adminWallet: string, rpcUrl: string,
 ) {
-    const { data: wager, error } = await supabase
-        .from("wagers")
-        .select("player_a_wallet, match_id, stake_lamports")
-        .eq("id", wagerId)
-        .single();
-
+    const { data: wager, error } = await supabase.from("wagers")
+        .select("player_a_wallet, match_id, stake_lamports").eq("id", wagerId).single();
     if (error || !wager) throw new Error("Wager not found");
 
-    // Solana SDK loaded lazily — only when this action is called
     const { Connection } = await getSolana();
     const connection = new Connection(rpcUrl, "confirmed");
     const wagerPDA = await deriveWagerPDA(wager.player_a_wallet, BigInt(wager.match_id));
     const balance = await connection.getBalance(wagerPDA);
 
     await logAdminAction(supabase, "check_pda_balance", wagerId, null, adminWallet, null, {
-        pda: wagerPDA.toBase58(),
-        balance_lamports: balance,
+        pda: wagerPDA.toBase58(), balance_lamports: balance,
     });
 
     return {
@@ -456,28 +417,102 @@ async function checkPdaBalance(
 
 async function addNote(
     supabase: ReturnType<typeof getSupabase>,
-    wagerId: string | null,
-    walletAddress: string | null,
-    note: string,
-    adminWallet: string,
+    wagerId: string | null, walletAddress: string | null, note: string, adminWallet: string,
 ) {
     await supabase.from("admin_notes").insert({
-        wager_id: wagerId,
-        player_wallet: walletAddress,
-        note,
-        created_by: adminWallet,
+        wager_id: wagerId, player_wallet: walletAddress, note, created_by: adminWallet,
     });
-
     await logAdminAction(supabase, "add_note", wagerId, walletAddress, adminWallet, note);
     return { success: true };
 }
 
-// ── Main Handler ───────────────────────────────────────────────────────────────
+
+// ── recoverStuckPda ───────────────────────────────────────────────────────────
+// Calls resolve-wager directly — bypasses DB status checks.
+// Used for wagers that are already marked resolved/cancelled in DB but have
+// SOL still locked in the on-chain PDA (the root cause was the secret mismatch).
+async function recoverStuckPda(
+    supabase: ReturnType<typeof getSupabase>,
+    wagerId: string, adminWallet: string, notes: string | null,
+) {
+    const { data: wager, error } = await supabase.from("wagers")
+        .select("id, match_id, player_a_wallet, player_b_wallet, winner_wallet, stake_lamports, status")
+        .eq("id", wagerId).single();
+    if (error || !wager) throw new Error("Wager not found");
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const callerSecret = Deno.env.get("RESOLVE_WAGER_CALLER_SECRET") ?? "";
+    if (!callerSecret) throw new Error("RESOLVE_WAGER_CALLER_SECRET not set");
+
+    let payload: Record<string, unknown>;
+    let action: string;
+
+    if (wager.status === "cancelled" || !wager.player_b_wallet) {
+        // Refund path
+        action = "refund_cancelled";
+        payload = {
+            action: "refund_cancelled",
+            wagerId: wager.id,
+            matchId: wager.match_id,
+            playerAWallet: wager.player_a_wallet,
+            playerBWallet: wager.player_b_wallet,
+            stakeLamports: wager.stake_lamports,
+            cancelledBy: adminWallet,
+            reason: notes ?? "admin_manual_recovery",
+        };
+    } else {
+        // Resolve path — winner must be set in DB
+        if (!wager.winner_wallet) throw new Error("Cannot recover: wager has no winner_wallet set. Use forceResolve first to set the winner.");
+        action = "resolve_wager";
+        payload = {
+            action: "resolve_wager",
+            wagerId: wager.id,
+            matchId: wager.match_id,
+            playerAWallet: wager.player_a_wallet,
+            playerBWallet: wager.player_b_wallet,
+            winnerWallet: wager.winner_wallet,
+            stakeLamports: wager.stake_lamports,
+        };
+    }
+
+    const res = await fetch(`${supabaseUrl}/functions/v1/resolve-wager`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "x-caller-secret": callerSecret,
+        },
+        body: JSON.stringify(payload),
+    });
+
+    const result = await res.json();
+
+    await logAdminAction(supabase, `recover_stuck_pda_${action}`, wagerId, null, adminWallet, notes, {
+        result, wager_status: wager.status,
+    });
+
+    if (!result.success) {
+        // PDA already empty is fine — account for it
+        const s = JSON.stringify(result).toLowerCase();
+        if (s.includes("accountdidnotdeserialize") || s.includes("pda balance: 0") || s.includes("no on-chain funds")) {
+            return { success: true, message: "PDA is already empty — no funds were stuck", txSignature: null };
+        }
+        throw new Error(result.error ?? "resolve-wager returned failure");
+    }
+
+    return {
+        success: true,
+        message: result.txSignature
+            ? `PDA recovered successfully`
+            : "PDA was already empty (no funds stuck)",
+        txSignature: result.txSignature ?? null,
+        action,
+    };
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-    if (req.method === "OPTIONS") {
-        return new Response("ok", { headers: CORS });
-    }
+    if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
     const respond = (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), {
@@ -489,14 +524,27 @@ Deno.serve(async (req) => {
         const body = await req.json();
         const { action, adminWallet, notes } = body;
 
+        // Auth: allow either the ADMIN_WALLET env var OR any wallet bound to an admin account
+        if (!adminWallet)
+            return respond({ error: "adminWallet is required" }, 400);
+
         const configuredAdminWallet = Deno.env.get("ADMIN_WALLET");
-        if (!configuredAdminWallet) {
-            return respond({ error: "ADMIN_WALLET is not set in edge function secrets" }, 500);
+        const supabaseForAuth = getSupabase();
+
+        // Check if the wallet matches the env var OR is bound to an active admin
+        let isAuthorized = !!(configuredAdminWallet && adminWallet === configuredAdminWallet);
+        if (!isAuthorized) {
+            const { data: binding } = await supabaseForAuth
+                .from("admin_wallet_bindings")
+                .select("wallet_address")
+                .eq("wallet_address", adminWallet)
+                .eq("is_active", true)
+                .maybeSingle();
+            isAuthorized = !!binding;
         }
 
-        if (!adminWallet || adminWallet !== configuredAdminWallet) {
-            return respond({ error: "Forbidden: wallet does not match ADMIN_WALLET secret" }, 403);
-        }
+        if (!isAuthorized)
+            return respond({ error: "Forbidden: wallet is not an authorized admin wallet" }, 403);
 
         const rpcUrl = Deno.env.get("SOLANA_RPC_URL") || "https://api.devnet.solana.com";
         const supabase = getSupabase();
@@ -529,6 +577,9 @@ Deno.serve(async (req) => {
                 break;
             case "addNote":
                 result = await addNote(supabase, body.wagerId ?? null, body.playerWallet ?? null, body.note, adminWallet);
+                break;
+            case "recoverStuckPda":
+                result = await recoverStuckPda(supabase, body.wagerId, adminWallet, notes ?? null);
                 break;
             default:
                 return respond({ error: `Unknown action: ${action}` }, 400);

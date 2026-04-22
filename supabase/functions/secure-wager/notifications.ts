@@ -148,7 +148,7 @@ async function buildVapidJwt(
 function buildPkcs8(privKey: Uint8Array, pubKey: Uint8Array): ArrayBuffer {
     const ecPrivKey = concat(
         new Uint8Array([0x30]),
-        derLength(1 + 2 + 32 + 2 + 2 + 66),
+        derLength(107),
         new Uint8Array([0x02, 0x01, 0x01]),
         new Uint8Array([0x04, 0x20]), ...[privKey],
         new Uint8Array([0xa1, 0x44, 0x03, 0x42, 0x00]), ...[pubKey],

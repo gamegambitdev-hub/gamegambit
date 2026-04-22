@@ -5,7 +5,7 @@
 import dynamic from 'next/dynamic'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { motion } from 'framer-motion'
-import { Menu, X, LogOut, User, Copy, Check, BarChart2, Dice5, AlertTriangle, ShieldCheck, Gamepad2, Settings } from 'lucide-react'
+import { Menu, X, LogOut } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -21,14 +21,15 @@ const WalletMultiButton = dynamic(
 )
 
 const navItems = [
-    { label: 'Dashboard', href: '/itszaadminlogin/dashboard', icon: <BarChart2 className="w-4 h-4" /> },
-    { label: 'Users', href: '/itszaadminlogin/users', icon: <User className="w-4 h-4" /> },
-    { label: 'Wagers', href: '/itszaadminlogin/wagers', icon: <Dice5 className="w-4 h-4" /> },
-    { label: 'Disputes', href: '/itszaadminlogin/disputes', icon: <AlertTriangle className="w-4 h-4" /> },
-    { label: 'Wallet', href: '/itszaadminlogin/wallet-bindings', icon: <Settings className="w-4 h-4" /> },
-    { label: 'Appeals', href: '/itszaadminlogin/username-appeals', icon: <ShieldCheck className="w-4 h-4" /> },
-    { label: 'Changes', href: '/itszaadminlogin/username-changes', icon: <Gamepad2 className="w-4 h-4" /> },
-    { label: 'Behaviour', href: '/itszaadminlogin/behaviour-flags', icon: <AlertTriangle className="w-4 h-4" /> },
+    { label: 'Dashboard', href: '/itszaadminlogin/dashboard', icon: '📊' },
+    { label: 'Users', href: '/itszaadminlogin/users', icon: '👥' },
+    { label: 'Wagers', href: '/itszaadminlogin/wagers', icon: '🎲' },
+    { label: 'Disputes', href: '/itszaadminlogin/disputes', icon: '⚖️' },
+    { label: 'Stuck', href: '/itszaadminlogin/stuck-wagers', icon: '⚠️' },
+    { label: 'Wallet', href: '/itszaadminlogin/wallet-bindings', icon: '💼' },
+    { label: 'Appeals', href: '/itszaadminlogin/username-appeals', icon: '🔗' },
+    { label: 'Changes', href: '/itszaadminlogin/username-changes', icon: '✏️' },
+    { label: 'Behaviour', href: '/itszaadminlogin/behaviour-flags', icon: '🚩' },
 ]
 
 export function AdminHeader() {

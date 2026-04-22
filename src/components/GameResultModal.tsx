@@ -6,13 +6,13 @@ import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, Frown, Scale, Sparkles, ArrowRight, ExternalLink,
-  LayoutDashboard, Swords, BarChart3, RefreshCw, Home, Loader2,
-  Coins, BicepsFlexed,
+  LayoutDashboard, Swords, BarChart3, RefreshCw, Home, Loader2, Share2,
 } from 'lucide-react';
-import { formatSol } from '@/lib/constants';
+import { formatSol, calculatePlatformFee, getFeeTierLabel } from '@/lib/constants';
 import { PlayerLink } from '@/components/PlayerLink';
 import { useRouter } from 'next/navigation';
 import confetti from 'canvas-confetti';
+import { WinShareCard } from '@/components/ShareCards';
 
 interface GameResultModalProps {
   open: boolean;
@@ -29,6 +29,11 @@ interface GameResultModalProps {
   /** Called when the player taps Rematch — creates a new wager + notifies opponent */
   onRematch?: () => Promise<void>;
   isRematchPending?: boolean;
+  // Share card props (wins only)
+  game?: string | null;
+  opponentWallet?: string | null;
+  opponentUsername?: string | null;
+  inviteCode?: string | null;
 }
 
 // ─── Animated counter ──────────────────────────────────────────────────────────
@@ -66,15 +71,22 @@ function AnimatedCounter({
 function VictoryContent({
   totalPot, platformFee, winnerPayout, explorerUrl,
   onClose, onViewDetails, onRematch, isRematchPending,
+  game, opponentUsername, winnerUsername, inviteCode,
 }: {
   totalPot: number; platformFee: number; winnerPayout?: number;
   explorerUrl?: string | null;
   onClose: () => void; onViewDetails?: () => void;
   onRematch?: () => Promise<void>; isRematchPending?: boolean;
+  game?: string | null;
+  opponentUsername?: string | null;
+  winnerUsername?: string | null;
+  inviteCode?: string | null;
 }) {
   const router = useRouter();
-  const payout = winnerPayout || Math.floor(totalPot * 0.9);
+  const _platformFee = calculatePlatformFee(totalPot / 2);
+  const payout = winnerPayout || (totalPot - _platformFee);
   const [claimed, setClaimed] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     const duration = 5000;
@@ -184,7 +196,7 @@ function VictoryContent({
           <p className="text-3xl font-gaming font-bold text-success">+{formatSol(payout)} SOL</p>
         )}
         <p className="text-xs text-muted-foreground mt-2">
-          Total pot: {formatSol(totalPot)} SOL · Platform fee: {formatSol(platformFee)} SOL (10%)
+          Total pot: {formatSol(totalPot)} SOL · Platform fee: {formatSol(platformFee)} SOL ({getFeeTierLabel(totalPot / 2)})
         </p>
       </motion.div>
 
@@ -196,8 +208,7 @@ function VictoryContent({
         {!claimed ? (
           <Button variant="neon" className="w-full" onClick={() => setClaimed(true)}>
             <ArrowRight className="h-4 w-4 mr-2" />
-            Collect Your Reward
-            <Coins className="h-4 w-4 ml-2" />
+            Collect Your Reward💰
           </Button>
         ) : (
           <motion.div
@@ -238,9 +249,32 @@ function VictoryContent({
                 </Button>
               </a>
             )}
+            {game && (
+              <Button
+                variant="outline"
+                className="w-full col-span-2 border-success/30 text-success hover:bg-success/10"
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 className="h-4 w-4 mr-1.5" />
+                Share Your Win
+              </Button>
+            )}
           </motion.div>
         )}
       </motion.div>
+
+      {/* Win Share Card dialog */}
+      {game && (
+        <WinShareCard
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          game={game}
+          amountSol={payout}
+          opponentUsername={opponentUsername ?? null}
+          winnerUsername={winnerUsername ?? null}
+          inviteCode={inviteCode ?? null}
+        />
+      )}
     </motion.div>
   );
 }
@@ -332,7 +366,7 @@ function DefeatContent({
             className="font-gaming font-bold text-primary text-sm"
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Took home {formatSol(Math.floor(totalPot * 0.9))} SOL
+            Took home {formatSol(totalPot - calculatePlatformFee(totalPot / 2))} SOL
           </p>
         </motion.div>
       )}
@@ -343,9 +377,8 @@ function DefeatContent({
         transition={{ delay: 0.5 }}
         className="p-3 rounded-xl bg-primary/5 border border-primary/20 mb-4"
       >
-        <p className="text-xs text-muted-foreground flex items-center justify-center gap-2">
-          <BicepsFlexed className="h-4 w-4 text-primary shrink-0" />
-          <span>Study the game, level up, and come back stronger. The leaderboard is waiting.</span>
+        <p className="text-xs text-muted-foreground">
+          💪 Study the game, level up, and come back stronger. The leaderboard is waiting.
         </p>
       </motion.div>
 
@@ -356,7 +389,7 @@ function DefeatContent({
       >
         {!acknowledged ? (
           <Button variant="default" className="w-full" onClick={() => setAcknowledged(true)}>
-            Accept Defeat
+            Walk it off
           </Button>
         ) : (
           <motion.div
@@ -504,6 +537,7 @@ export function GameResultModal({
   totalPot, platformFee, winnerPayout, refundAmount,
   explorerUrl, onViewDetails,
   onRematch, isRematchPending,
+  game, opponentWallet: _opponentWallet, opponentUsername, inviteCode,
 }: GameResultModalProps) {
   const handleClose = useCallback(() => onOpenChange(false), [onOpenChange]);
 
@@ -524,6 +558,10 @@ export function GameResultModal({
               winnerPayout={winnerPayout} explorerUrl={explorerUrl}
               onClose={handleClose} onViewDetails={onViewDetails}
               onRematch={onRematch} isRematchPending={isRematchPending}
+              game={game}
+              opponentUsername={opponentUsername}
+              winnerUsername={winnerUsername}
+              inviteCode={inviteCode}
             />
           )}
           {result === 'lose' && (

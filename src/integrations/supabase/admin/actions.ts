@@ -1,15 +1,12 @@
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from '@/integrations/supabase/client';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = getSupabaseClient();
 
 /**
  * Call edge function for admin actions
  */
 export async function callAdminAction(
-    action: 'force_resolve' | 'force_refund' | 'mark_disputed' | 'ban_player' | 'flag_player' | 'unban_player' | 'banPlayer' | 'unbanPlayer' | 'flagPlayer' | 'unflagPlayer',
+    action: 'force_resolve' | 'force_refund' | 'mark_disputed' | 'ban_player' | 'flag_player' | 'unban_player' | 'unflag_player' | 'banPlayer' | 'unbanPlayer' | 'flagPlayer' | 'unflagPlayer',
     payload: Record<string, any>,
     adminWallet: string
 ) {
@@ -57,6 +54,10 @@ export async function unbanPlayer(playerWallet: string, adminWallet: string) {
     return callAdminAction('unban_player', { playerWallet }, adminWallet);
 }
 
+export async function unflagPlayer(playerWallet: string, adminWallet: string) {
+    return callAdminAction('unflag_player', { playerWallet }, adminWallet);
+}
+
 /**
  * Get wager details
  */
@@ -85,7 +86,7 @@ export async function getAllWagers(status?: string, limit = 50, offset = 0) {
             .from('wagers')
             .select('*', { count: 'exact' });
 
-        if (status && status !== 'all') query = query.eq('status', status);
+        if (status && status !== 'all') query = query.eq('status', status as 'cancelled' | 'created' | 'joined' | 'voting' | 'retractable' | 'disputed' | 'resolved');
 
         const { data, error, count } = await query
             .range(offset, offset + limit - 1)
@@ -161,6 +162,37 @@ export async function getUserDetails(walletAddress: string) {
         return data;
     } catch (error) {
         console.error('[Admin Queries] Error fetching user details:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get wagers that are potentially stuck:
+ * - Both players have deposited (funds are locked on-chain)
+ * - Status is NOT resolved or cancelled
+ * - Created before the given threshold (default: 2 hours ago)
+ *
+ * `thresholdHours` is configurable so the admin can widen the window
+ * (e.g. 1h, 6h, 24h, 72h, 168h = 7 days).
+ */
+export async function getStuckWagers(limit = 10, offset = 0, thresholdHours = 2) {
+    try {
+        const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000).toISOString();
+
+        const { data, error, count } = await supabase
+            .from('wagers')
+            .select('*', { count: 'exact' })
+            .eq('deposit_player_a', true)
+            .eq('deposit_player_b', true)
+            .not('status', 'in', '("resolved","cancelled")')
+            .lt('created_at', cutoff)
+            .range(offset, offset + limit - 1)
+            .order('created_at', { ascending: true }); // oldest first — most urgent
+
+        if (error) throw error;
+        return { data: data || [], total: count || 0 };
+    } catch (error) {
+        console.error('[Admin Queries] Error fetching stuck wagers:', error);
         throw error;
     }
 }

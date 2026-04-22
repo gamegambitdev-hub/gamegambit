@@ -2,9 +2,11 @@
 import { createClient } from '@supabase/supabase-js';
 import { AdminSession } from '@/types/admin';
 
+// Must use the service role key — admin_sessions is protected by RLS and the
+// anon key will receive an empty result set (silent auth failure → 401 loop).
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
 
 /**

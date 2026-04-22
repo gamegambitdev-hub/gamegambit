@@ -1,10 +1,36 @@
 /**
  * useSolanaProgram.ts
  *
- * Mobile fix:
- *  - Always use sendTransaction — Mobile Wallet Adapter handles opening Phantom
- *    and signing internally. Calling signTransaction separately breaks it.
- *  - signTransaction has been removed from sendAndConfirmViaAdapter entirely.
+ * FIXES IN THIS VERSION:
+ *
+ * Fix 1 — Remove skipPreflight: true from sendAndConfirmViaAdapter
+ *   skipPreflight told Phantom to skip its own simulation entirely. Without
+ *   simulation it can't model the SOL transfer and falls back to showing just
+ *   the raw network fee (~0.00001 SOL for Player A). Removed the opts object
+ *   so Phantom simulates normally and shows the real stake amount.
+ *
+ * Fix 2 — joinWager now uses conditional batch (same as createWager)
+ *   The old joinWager called ensurePlayerProfileExists as a SEPARATE prior
+ *   transaction, then sent joinIx alone. When Phantom simulated joinIx, it
+ *   needed the profile account to exist on its own RPC node — but devnet RPC
+ *   propagation lag meant it often wasn't indexed yet. Simulation failed →
+ *   Phantom showed only fees (~0.00008 SOL) for Player B.
+ *   Fix: check if profile exists on-chain, then bundle [initProfileIx, joinIx]
+ *   or just [joinIx] atomically. Phantom simulates both instructions together,
+ *   sees the full stake movement, shows the correct amount.
+ *
+ * Fix 3 — Raise compute unit limit to 200_000
+ *   50_000 was fine for single instructions but unreliable for batched
+ *   initProfile + join/create on congested devnet slots. Phantom also uses
+ *   this limit to estimate priority fees — too low made the estimate look wrong.
+ *   200_000 is the standard safe default for Anchor programs.
+ *
+ * Carried forward from previous version:
+ *  - createWager conditional batch (only include initProfileIx if profile missing)
+ *  - create_wager encodes only matchId + stakeAmount (no lichessGameId/requiresModerator)
+ *  - recordOnChainCreate/Join throw on failure instead of silent console.warn
+ *  - Stake sanity check guard (throws if stakeLamports < 1000)
+ *  - Full debug logging throughout
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -15,6 +41,7 @@ import {
   TransactionInstruction,
   SystemProgram,
   LAMPORTS_PER_SOL,
+  ComputeBudgetProgram,
 } from '@solana/web3.js';
 import { getSupabaseClient } from '@/integrations/supabase/client';
 import { useWalletAuth } from './useWalletAuth';
@@ -48,6 +75,20 @@ function buildInstructionData(
   discriminator: readonly number[],
   ...args: (bigint | boolean | string | PublicKey)[]
 ): Buffer {
+  if (args.length > 0) {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[buildInstructionData] encoding args:', args.map((a) =>
+        typeof a === 'bigint'
+          ? { type: 'bigint', value: a.toString(), asSol: Number(a) / LAMPORTS_PER_SOL }
+          : typeof a === 'boolean'
+            ? { type: 'bool', value: a }
+            : typeof a === 'string'
+              ? { type: 'string', value: a }
+              : { type: 'PublicKey', value: (a as PublicKey).toBase58() }
+      ));
+    }
+  }
+
   const parts: Uint8Array[] = [new Uint8Array(discriminator as number[])];
 
   for (const arg of args) {
@@ -107,12 +148,34 @@ export function normalizeSolanaError(err: unknown): string {
   if (lower.includes('already in use') || lower.includes('already deposited'))
     return 'already_deposited';
 
-  return msg;
+  // ERR-01: catch-all — never expose raw RPC noise to users
+  return 'Transaction failed — please try again.';
 }
 
 // ── Send tx via wallet adapter ────────────────────────────────────────────────
 // Always use sendTransaction — Mobile Wallet Adapter handles Phantom opening
 // and signing internally. Never call signTransaction separately.
+
+// FIX 4: buildFullTransaction is extracted so that BOTH the pre-send simulation
+// AND the actual sendTransaction call use the EXACT same transaction structure
+// (including ComputeBudget instructions). Previously, simTx was built without
+// priorityFeeIx / computeLimitIx while the sent tx included them — Phantom's
+// own simulation saw a different tx than what was pre-simulated, which could
+// cause it to fall back to showing only the raw network fee (<0.00001 SOL).
+function buildFullTransaction(
+  instructions: TransactionInstruction[],
+  payer: PublicKey,
+  blockhash: string,
+): Transaction {
+  const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 });
+  const computeLimitIx = ComputeBudgetProgram.setComputeUnitLimit({ units: 200_000 });
+  const tx = new Transaction();
+  tx.add(priorityFeeIx, computeLimitIx);
+  instructions.forEach(ix => tx.add(ix));
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = payer;
+  return tx;
+}
 
 async function sendAndConfirmViaAdapter(
   instructions: TransactionInstruction | TransactionInstruction[],
@@ -121,57 +184,31 @@ async function sendAndConfirmViaAdapter(
   connection: any,
 ): Promise<string> {
   const ixs = Array.isArray(instructions) ? instructions : [instructions];
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[sendAndConfirmViaAdapter] fetching latest blockhash…');
+  }
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
 
-  const tx = new Transaction();
-  ixs.forEach(ix => tx.add(ix));
-  tx.recentBlockhash = blockhash;
-  tx.feePayer = payer;
+  // FIX 4: uses buildFullTransaction so the sent tx matches the pre-simulated one.
+  const tx = buildFullTransaction(ixs, payer, blockhash);
 
-  const signature = await sendTransaction(tx, connection, {
-    skipPreflight: true,
-    preflightCommitment: 'confirmed',
-  });
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[sendAndConfirmViaAdapter] sending tx, payer:', payer.toBase58(), 'blockhash:', blockhash);
+  }
+
+  const signature = await sendTransaction(tx, connection);
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[sendAndConfirmViaAdapter] tx sent, signature:', signature, '— confirming…');
+  }
 
   await connection.confirmTransaction(
     { signature, blockhash, lastValidBlockHeight },
     'confirmed'
   );
+
+  console.log('[sendAndConfirmViaAdapter] ✅ confirmed:', signature);
   return signature;
-}
-
-// ── Init player profile — separate tx, never batched ─────────────────────────
-
-async function ensurePlayerProfileExists(
-  player: PublicKey,
-  sendTransaction: (tx: Transaction, connection: any, opts?: any) => Promise<string>,
-  connection: any,
-): Promise<void> {
-  const [profilePda] = derivePlayerProfilePda(player);
-
-  let existing = null;
-  try { existing = await connection.getAccountInfo(profilePda); } catch { /* ok */ }
-  if (existing) return;
-
-  toast.info('Creating your on-chain profile (one-time setup)…');
-
-  const ix = new TransactionInstruction({
-    programId: new PublicKey(PROGRAM_ID),
-    keys: [
-      { pubkey: profilePda, isSigner: false, isWritable: true },
-      { pubkey: player, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data: Buffer.from(INSTRUCTION_DISCRIMINATORS.initialize_player as number[]),
-  });
-
-  try {
-    await sendAndConfirmViaAdapter(ix, player, sendTransaction, connection);
-    toast.success('Profile created!');
-  } catch (err: unknown) {
-    const normalized = normalizeSolanaError(err);
-    if (!normalized.includes('already')) throw err;
-  }
 }
 
 // ── 1. Initialize player profile ──────────────────────────────────────────────
@@ -242,13 +279,36 @@ export function useCreateWagerOnChain() {
       requiresModerator?: boolean;
       wagerId: string;
     }) => {
+      console.log('[createWager] ▶ mutationFn ENTRY', {
+        wagerId,
+        matchId,
+        stakeLamports,
+        stake_sol: stakeLamports / LAMPORTS_PER_SOL,
+        lichessGameId,
+        requiresModerator,
+        wallet: publicKey?.toBase58() ?? 'NOT CONNECTED',
+      });
+
       if (!publicKey || !sendTransaction) throw new Error('Wallet not connected');
+
+      if (!stakeLamports || stakeLamports < 1_000) {
+        const msg = `[createWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). Aborting.`;
+        console.error(msg);
+        throw new Error(
+          `Invalid stake amount (${stakeLamports / LAMPORTS_PER_SOL} SOL). Please close and reopen the Ready Room — this is a data sync issue, not a wallet problem.`
+        );
+      }
 
       const matchIdBigInt = BigInt(matchId);
       const stakeAmount = BigInt(stakeLamports);
 
       const [wagerPda] = deriveWagerPda(publicKey, matchIdBigInt);
       const [playerProfilePda] = derivePlayerProfilePda(publicKey);
+
+      console.log('[createWager] PDAs derived', {
+        wagerPda: wagerPda.toBase58(),
+        playerProfilePda: playerProfilePda.toBase58(),
+      });
 
       let existingPda = null;
       try { existingPda = await connection.getAccountInfo(wagerPda); } catch { /* ok */ }
@@ -259,8 +319,29 @@ export function useCreateWagerOnChain() {
         console.log('[createWager] PDA exists — skipping tx, notifying DB');
         signature = 'already_deposited';
       } else {
-        await ensurePlayerProfileExists(publicKey, sendTransaction, connection);
+        // Conditional batch: only include initProfileIx if profile doesn't exist yet.
+        // If profile exists and we blindly include initProfileIx, Phantom's independent
+        // simulation sees it trying to re-init an existing account → red "reverted"
+        // banner → Phantom can't model SOL movement → shows only network fee.
+        let profileExists = false;
+        try {
+          const profileInfo = await connection.getAccountInfo(playerProfilePda);
+          profileExists = profileInfo !== null;
+        } catch { /* ok — assume doesn't exist */ }
 
+        const initProfileIx = new TransactionInstruction({
+          programId: new PublicKey(PROGRAM_ID),
+          keys: [
+            { pubkey: playerProfilePda, isSigner: false, isWritable: true },
+            { pubkey: publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          data: Buffer.from(INSTRUCTION_DISCRIMINATORS.initialize_player as number[]),
+        });
+
+        // create_wager takes ONLY (match_id: u64, stake_lamports: u64).
+        // Do NOT pass lichessGameId or requiresModerator — they corrupt the
+        // instruction data and cause the contract to misread stake_lamports.
         const createIx = new TransactionInstruction({
           programId: new PublicKey(PROGRAM_ID),
           keys: [
@@ -273,39 +354,69 @@ export function useCreateWagerOnChain() {
             INSTRUCTION_DISCRIMINATORS.create_wager,
             matchIdBigInt,
             stakeAmount,
-            lichessGameId,
-            requiresModerator
           ),
         });
 
+        const instructions = profileExists ? [createIx] : [initProfileIx, createIx];
+
+        // Simulate before sending to surface real Anchor errors early.
+        // FIX 4: use buildFullTransaction so the simulation includes the same
+        // ComputeBudget instructions that sendAndConfirmViaAdapter will send.
+        // Phantom's own simulation runs on the exact tx it receives — if our
+        // pre-sim used a stripped-down tx and Phantom's sim used the full one,
+        // they could diverge and cause Phantom to show only network fees.
+        {
+          const simBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          const simTx = buildFullTransaction(instructions, publicKey, simBlockhash);
+          const simResult = await connection.simulateTransaction(simTx);
+          console.log('[createWager] SIMULATION RESULT:', JSON.stringify(simResult.value, null, 2));
+          if (simResult.value.err) {
+            console.error('[createWager] SIMULATION FAILED — err:', JSON.stringify(simResult.value.err));
+            console.error('[createWager] SIMULATION LOGS:', simResult.value.logs);
+            throw new Error(
+              `Transaction simulation failed. Logs: ${(simResult.value.logs ?? []).join(' | ')}`
+            );
+          }
+        }
+
+        console.log(
+          profileExists
+            ? '[createWager] sending create_wager only (profile exists), stake:'
+            : '[createWager] sending batched init_profile + create_wager, stake:',
+          stakeAmount.toString(), 'lamports'
+        );
         signature = await sendAndConfirmViaAdapter(
-          createIx, publicKey, sendTransaction, connection
+          instructions, publicKey, sendTransaction, connection
         );
       }
 
       const token = await getSessionToken();
-      console.log('[debug] session token:', token ? 'ok' : 'NULL — skipping recordOnChain');
-      if (token) {
-        try {
-          const supabase = getSupabaseClient();
-          const { error } = await supabase.functions.invoke('secure-wager', {
-            body: {
-              action: 'recordOnChainCreate',
-              wagerId,
-              playerAWallet: publicKey.toBase58(),
-              matchId,
-              stakeLamports,
-              wagerPda: wagerPda.toBase58(),
-              txSignature: signature,
-            },
-            headers: { 'X-Session-Token': token },
-          });
-          if (error) console.warn('[createWager] recordOnChainCreate failed:', error.message);
-        } catch (dbErr) {
-          console.warn('[createWager] recordOnChainCreate threw:', dbErr);
-        }
+      console.log('[createWager] session token:', token ? 'ok' : 'NULL');
+      if (!token) {
+        throw new Error('Session expired — please reconnect your wallet and try again.');
       }
 
+      console.log('[createWager] calling recordOnChainCreate', { wagerId, stakeLamports, matchId });
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.functions.invoke('secure-wager', {
+        body: {
+          action: 'recordOnChainCreate',
+          wagerId,
+          playerAWallet: publicKey.toBase58(),
+          matchId,
+          stakeLamports,
+          wagerPda: wagerPda.toBase58(),
+          txSignature: signature,
+        },
+        headers: { 'X-Session-Token': token },
+      });
+
+      if (error) {
+        console.error('[createWager] recordOnChainCreate failed:', error);
+        throw new Error(`Failed to record deposit: ${error.message}`);
+      }
+
+      console.log('[createWager] ✅ complete', { signature, stakeLamports });
       return { signature, wagerPda: wagerPda.toBase58(), matchId, stakeLamports };
     },
     onSuccess: (data) => {
@@ -315,7 +426,11 @@ export function useCreateWagerOnChain() {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
     onError: (error: Error) => {
-      console.error('[createWager]', normalizeSolanaError(error));
+      const msg = normalizeSolanaError(error);
+      console.error('[createWager] onError:', msg);
+      if (msg !== 'already_deposited') {
+        toast.error('Deposit failed', { description: msg });
+      }
     },
   });
 }
@@ -340,7 +455,24 @@ export function useJoinWagerOnChain() {
       stakeLamports: number;
       wagerId: string;
     }) => {
+      console.log('[joinWager] ▶ mutationFn ENTRY', {
+        wagerId,
+        matchId,
+        stakeLamports,
+        stake_sol: stakeLamports / LAMPORTS_PER_SOL,
+        playerAWallet,
+        wallet: publicKey?.toBase58() ?? 'NOT CONNECTED',
+      });
+
       if (!publicKey || !sendTransaction) throw new Error('Wallet not connected');
+
+      if (!stakeLamports || stakeLamports < 1_000) {
+        const msg = `[joinWager] STAKE SANITY FAIL: stakeLamports=${stakeLamports} (${stakeLamports / LAMPORTS_PER_SOL} SOL). Aborting.`;
+        console.error(msg);
+        throw new Error(
+          `Invalid stake amount (${stakeLamports / LAMPORTS_PER_SOL} SOL). Please close and reopen the Ready Room — this is a data sync issue, not a wallet problem.`
+        );
+      }
 
       const playerA = new PublicKey(playerAWallet);
       const matchIdBigInt = BigInt(matchId);
@@ -349,8 +481,14 @@ export function useJoinWagerOnChain() {
       const [wagerPda] = deriveWagerPda(playerA, matchIdBigInt);
       const [playerBProfilePda] = derivePlayerProfilePda(publicKey);
 
+      console.log('[joinWager] PDAs derived', {
+        wagerPda: wagerPda.toBase58(),
+        playerBProfilePda: playerBProfilePda.toBase58(),
+      });
+
       let pdaBalance = 0;
       try { pdaBalance = await connection.getBalance(wagerPda); } catch { /* ok */ }
+      console.log('[joinWager] current PDA balance:', pdaBalance, 'lamports —', pdaBalance / LAMPORTS_PER_SOL, 'SOL');
 
       let signature: string;
 
@@ -358,7 +496,37 @@ export function useJoinWagerOnChain() {
         console.log('[joinWager] PDA already fully funded — skipping tx, notifying DB');
         signature = 'already_deposited';
       } else {
-        await ensurePlayerProfileExists(publicKey, sendTransaction, connection);
+        // FIX 2: Conditional batch — same pattern as createWager.
+        //
+        // Old approach: ensurePlayerProfileExists sent initProfileIx as a SEPARATE
+        // prior transaction, then joinIx was sent alone. When Phantom simulated
+        // joinIx by itself, it needed the profile account to already exist on its
+        // own RPC node. Due to devnet RPC propagation lag, the freshly-created
+        // profile often wasn't indexed on Phantom's node yet — simulation failed,
+        // and Phantom showed only the bare network fee (~0.00008 SOL) for Player B.
+        //
+        // New approach: check if the profile exists, then atomically bundle
+        // [initProfileIx, joinIx] or just [joinIx]. Phantom simulates both
+        // instructions in the same tx — profile is guaranteed to exist when
+        // join_wager runs, and Phantom correctly shows the full stake amount.
+
+        let profileExists = false;
+        try {
+          const profileInfo = await connection.getAccountInfo(playerBProfilePda);
+          profileExists = profileInfo !== null;
+        } catch { /* ok — assume doesn't exist */ }
+
+        console.log('[joinWager] Player B profile exists:', profileExists);
+
+        const initProfileIx = new TransactionInstruction({
+          programId: new PublicKey(PROGRAM_ID),
+          keys: [
+            { pubkey: playerBProfilePda, isSigner: false, isWritable: true },
+            { pubkey: publicKey, isSigner: true, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          ],
+          data: Buffer.from(INSTRUCTION_DISCRIMINATORS.initialize_player as number[]),
+        });
 
         const joinIx = new TransactionInstruction({
           programId: new PublicKey(PROGRAM_ID),
@@ -371,13 +539,39 @@ export function useJoinWagerOnChain() {
           data: buildInstructionData(INSTRUCTION_DISCRIMINATORS.join_wager, stakeAmount),
         });
 
+        const instructions = profileExists ? [joinIx] : [initProfileIx, joinIx];
+
+        // Simulate before sending to surface real Anchor errors early.
+        // FIX 4: use buildFullTransaction — same reason as createWager above.
+        {
+          const simBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          const simTx = buildFullTransaction(instructions, publicKey, simBlockhash);
+          const simResult = await connection.simulateTransaction(simTx);
+          console.log('[joinWager] SIMULATION RESULT:', JSON.stringify(simResult.value, null, 2));
+          if (simResult.value.err) {
+            console.error('[joinWager] SIMULATION FAILED — err:', JSON.stringify(simResult.value.err));
+            console.error('[joinWager] SIMULATION LOGS:', simResult.value.logs);
+            throw new Error(
+              `Transaction simulation failed. Logs: ${(simResult.value.logs ?? []).join(' | ')}`
+            );
+          }
+        }
+
+        console.log(
+          profileExists
+            ? '[joinWager] sending join_wager only (profile exists), stake:'
+            : '[joinWager] sending batched init_profile + join_wager, stake:',
+          stakeAmount.toString(), 'lamports'
+        );
+
         try {
           signature = await sendAndConfirmViaAdapter(
-            joinIx, publicKey, sendTransaction, connection
+            instructions, publicKey, sendTransaction, connection
           );
         } catch (err: unknown) {
           const normalized = normalizeSolanaError(err);
           if (normalized === 'already_deposited') {
+            console.log('[joinWager] already_deposited error — treating as success');
             signature = 'already_deposited';
           } else {
             throw err;
@@ -386,27 +580,30 @@ export function useJoinWagerOnChain() {
       }
 
       const token = await getSessionToken();
-      console.log('[debug] session token:', token ? 'ok' : 'NULL — skipping recordOnChain');
-
-      if (token) {
-        try {
-          const supabase = getSupabaseClient();
-          const { error } = await supabase.functions.invoke('secure-wager', {
-            body: {
-              action: 'recordOnChainJoin',
-              wagerId,
-              playerBWallet: publicKey.toBase58(),
-              stakeLamports,
-              txSignature: signature,
-            },
-            headers: { 'X-Session-Token': token },
-          });
-          if (error) console.warn('[joinWager] recordOnChainJoin failed:', error.message);
-        } catch (dbErr) {
-          console.warn('[joinWager] recordOnChainJoin threw:', dbErr);
-        }
+      console.log('[joinWager] session token:', token ? 'ok' : 'NULL');
+      if (!token) {
+        throw new Error('Session expired — please reconnect your wallet and try again.');
       }
 
+      console.log('[joinWager] calling recordOnChainJoin', { wagerId, stakeLamports });
+      const supabase = getSupabaseClient();
+      const { error } = await supabase.functions.invoke('secure-wager', {
+        body: {
+          action: 'recordOnChainJoin',
+          wagerId,
+          playerBWallet: publicKey.toBase58(),
+          stakeLamports,
+          txSignature: signature,
+        },
+        headers: { 'X-Session-Token': token },
+      });
+
+      if (error) {
+        console.error('[joinWager] recordOnChainJoin failed:', error);
+        throw new Error(`Failed to record deposit: ${error.message}`);
+      }
+
+      console.log('[joinWager] ✅ complete', { signature, wagerId });
       return { signature, wagerId };
     },
     onSuccess: () => {
@@ -416,12 +613,19 @@ export function useJoinWagerOnChain() {
       queryClient.invalidateQueries({ queryKey: ['wagers'] });
     },
     onError: (error: Error) => {
-      console.error('[joinWager]', normalizeSolanaError(error));
+      const msg = normalizeSolanaError(error);
+      console.error('[joinWager] onError:', msg);
+      if (msg !== 'already_deposited') {
+        toast.error('Deposit failed', { description: msg });
+      }
     },
   });
 }
 
 // ── 4. Submit vote ────────────────────────────────────────────────────────────
+// NOTE: The new contract has no submit_vote instruction — voting is handled
+// entirely off-chain via Supabase (useSubmitGameVote in useWagers.ts).
+// This hook is kept only as a fallback stub. Do NOT call it from VotingModal.
 
 export function useSubmitVoteOnChain() {
   const { publicKey, sendTransaction } = useWallet();
@@ -471,6 +675,8 @@ export function useSubmitVoteOnChain() {
 }
 
 // ── 5. Retract vote ───────────────────────────────────────────────────────────
+// NOTE: Same as submit_vote — no on-chain retract in the new contract.
+// Retraction is handled via useRetractVote in useWagers.ts (Supabase).
 
 export function useRetractVoteOnChain() {
   const { publicKey, sendTransaction } = useWallet();

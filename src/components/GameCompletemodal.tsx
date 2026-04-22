@@ -17,8 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-    CheckCircle2, Clock, Loader2, Swords, Shield, Hourglass, AlertTriangle,
-    ArrowDown,
+    CheckCircle2, Clock, Loader2, Swords, Shield, Hourglass,
 } from 'lucide-react'
 import { Wager } from '@/hooks/useWagers'
 import { useMarkGameComplete } from '@/hooks/useGameComplete'
@@ -253,19 +252,14 @@ export function GameCompleteModal({
                                         </div>
                                         <Badge
                                             variant={p.confirmed ? 'success' : 'secondary'}
-                                            className="text-[10px] flex items-center gap-1"
+                                            className="text-[10px]"
                                         >
-                                            {p.confirmed ? (
-                                                <>Confirmed <CheckCircle2 className="h-2.5 w-2.5" /></>
-                                            ) : p.isMe ? (
-                                                localConfirmed || myConfirmed ? (
-                                                    <>Confirmed <CheckCircle2 className="h-2.5 w-2.5" /></>
-                                                ) : (
-                                                    <>Tap below <ArrowDown className="h-2.5 w-2.5" /></>
-                                                )
-                                            ) : (
-                                                'Waiting…'
-                                            )}
+                                            {p.confirmed
+                                                ? 'Confirmed ✓'
+                                                : p.isMe
+                                                    ? (localConfirmed || myConfirmed ? 'Confirmed ✓' : 'Tap below ↓')
+                                                    : 'Waiting…'
+                                            }
                                         </Badge>
                                     </div>
                                 </div>
@@ -299,7 +293,7 @@ export function GameCompleteModal({
                     {/* Warning */}
                     {!myConfirmed && !localConfirmed && (
                         <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                            <p className="text-xs text-amber-300 font-medium mb-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Only confirm if your game is done</p>
+                            <p className="text-xs text-amber-300 font-medium mb-1">⚠️ Only confirm if your game is done</p>
                             <p className="text-[10px] text-muted-foreground">
                                 Both players must confirm before voting begins. False confirmations may result in a dispute.
                             </p>

@@ -117,6 +117,13 @@ Then run the v1.5.0 migrations **in order** (blocks 001 through 005 from `DB_SCH
 Supabase Dashboard → SQL Editor → run each block in sequence
 ```
 
+Then run the v1.8.0 migrations:
+
+```
+Supabase Dashboard → SQL Editor → paste supabase/migrations/task6_referral.sql → Run
+Supabase Dashboard → SQL Editor → paste supabase/migrations/task10_side_bets.sql → Run
+```
+
 > **Do not** use `supabase db push` for initial setup — run the SQL files directly in the dashboard.
 
 ### Verify Database Setup
@@ -188,7 +195,7 @@ supabase link --project-ref <project_ref>
 # Deploy all functions
 supabase functions deploy secure-wager
 supabase functions deploy secure-player
-supabase functions deploy admin-action
+supabase functions deploy secure-bet
 supabase functions deploy resolve-wager
 supabase functions deploy verify-wallet
 supabase functions deploy check-chess-games
@@ -212,6 +219,7 @@ Set all secrets in **Supabase Dashboard → Edge Functions → Secrets** (not in
 | `VAPID_PRIVATE_KEY` | VAPID private key for Web Push |
 | `VAPID_PUBLIC_KEY` | VAPID public key (must match `NEXT_PUBLIC_VAPID_PUBLIC_KEY`) |
 | `ADMIN_WALLET` | Admin wallet address used by `admin-action` |
+| `PLATFORM_WALLET_PRIVATE_KEY` | Platform wallet keypair as JSON byte array — required by `secure-bet` for side bet payouts and refunds |
 
 > ⚠️ **`AUTHORITY_WALLET_SECRET` format:** Must be a JSON array of bytes — e.g. `[12,34,56,78,...]` — **not** a base58 string or hex. The edge functions parse it as:
 > ```typescript
@@ -340,7 +348,8 @@ SUPABASE_SERVICE_ROLE_KEY=xxxxx
 # App URL (used for Lichess OAuth PKCE redirect)
 NEXT_PUBLIC_SITE_URL=https://yourdomain.com
 
-# Authority keypair — required for Next.js API route session validation
+# OG image base URL (used for dynamic per-wager og:image links — Task 11)
+NEXT_PUBLIC_APP_URL=https://thegamegambit.vercel.app — required for Next.js API route session validation
 # Must be the same JSON byte array as AUTHORITY_WALLET_SECRET in Supabase secrets
 AUTHORITY_WALLET_SECRET=[12,34,56,78,...]
 
@@ -356,6 +365,15 @@ ADMIN_SMTP_PASSWORD=your-app-password
 
 # PWA Push Notifications
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<your_vapid_public_key>
+
+# Required for Twitch stream embeds — sets the `parent` domain param in the Twitch player iframe URL.
+# Without this, Twitch embeds fail silently on custom domains. No https://, no trailing slash.
+NEXT_PUBLIC_APP_DOMAIN=yourdomain.com
+
+# WalletConnect (optional) — required if you want WalletConnect wallet support.
+# Without it, WalletConnect wallets won't appear in the connect modal.
+# Get a project ID at https://cloud.walletconnect.com
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=<your_walletconnect_project_id>
 
 # PUBG API (optional — enables live username verification in GameAccountCard)
 # If not set, PUBG binding falls back to manual confirmation (same as CODM/Free Fire)
@@ -507,6 +525,9 @@ solana program show E2Vd3U91kMrgwp8JCXcLSn7bt3NowDmGwoBYsVRhGfMR \
 2. Log in with superadmin credentials
 3. Confirm wager list loads and dispute resolution is accessible
 4. Confirm the disputes page loads and shows the moderation queue
+5. Navigate to `/itszaadminlogin/on-chain` — confirm it loads and the PDA lookup field is visible
+6. Navigate to `/itszaadminlogin/pda-scanner` — confirm it loads (first scan may return empty if no deposits yet)
+7. Navigate to `/itszaadminlogin/stuck-wagers` — confirm it loads and the threshold filter renders
 
 ---
 
@@ -621,6 +642,18 @@ For high traffic:
 3. **Use caching aggressively** — leaderboard, player stats, and open wager lists are the highest read volume and can be cached for 30-60 seconds without user impact
 
 4. **Scale cron frequency carefully** — `check-chess-games` calls the PUBG/chess APIs per active wager. If concurrent chess wager counts exceed ~50, consider batching or staggering the cron interval.
+
+---
+
+## Known Production Limitations
+
+### In-Memory Rate Limiter
+
+> ⚠️ **`src/lib/rate-limiting.ts` uses an in-memory `Map` store — not a distributed store.** This means rate limit counts reset on every Vercel cold start and are not shared across concurrent function instances. Under normal single-instance load this is acceptable, but under burst traffic you may see limits bypassed.
+>
+> For production-grade distributed rate limiting, replace the in-memory store with Upstash Redis sliding window (tracked as "C1 in the fix plan" in the codebase). The `REDIS_URL` and `REDIS_TOKEN` env vars are already stubbed in the Vercel config for this upgrade.
+>
+> The DB-level `rate_limit_logs` table used by edge functions is a separate mechanism and is not affected by this limitation.
 
 ---
 
@@ -756,4 +789,4 @@ Currently pending regeneration (v1.5.0 tables and columns are not yet in `types.
 
 ---
 
-**Last Updated**: April 3, 2026 — v1.7.0
+**Last Updated**: April 2026 — v1.8.0

@@ -3,13 +3,13 @@
 import { use } from 'react'
 import { motion } from 'framer-motion'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { User, Trophy, Swords, Clock, Copy, Check, Gamepad2 } from 'lucide-react'
+import { User, Trophy, Swords, Clock, Copy, Check, Users } from 'lucide-react'
 import { ProfilePageSkeleton } from '@/components/skeletons/GamingSkeletonLoader'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { GAMES, truncateAddress, formatSol } from '@/lib/constants'
-import { toast } from 'sonner'  // ✅ was: import { toast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 import { usePlayerByWallet } from '@/hooks/usePlayer'
 import { useLichessUser } from '@/hooks/useLichess'
 import { GameAccountCard } from '@/components/GameAccountCard'
@@ -17,6 +17,9 @@ import { NFTGallery } from '@/components/NFTGallery'
 import { AchievementBadges } from '@/components/AchievementBadges'
 import { useState } from 'react'
 import { redirect } from 'next/navigation'
+import { FriendButton } from '@/components/FriendButton'
+import { FollowButton } from '@/components/FollowButton'
+import { useFollows } from '@/hooks/useFollows'
 
 interface ProfilePageProps {
   params: Promise<{ walletAddress: string }>
@@ -33,6 +36,8 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
 
   const { data: player, isLoading } = usePlayerByWallet(walletAddress)
   const { data: lichessUserData } = useLichessUser(player?.lichess_username)
+  const { useFollowCounts } = useFollows()
+  const { followers, following } = useFollowCounts(walletAddress)
 
   const [copiedAddress, setCopiedAddress] = useState(false)
 
@@ -103,10 +108,12 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
                       ({truncateAddress(walletAddress, 4)})
                     </span>
                   )}
-                  <Badge variant="outline" className="ml-2">Viewing Profile</Badge>
+
                   <Button variant="ghost" size="icon" onClick={copyAddress}>
                     {copiedAddress ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
                   </Button>
+                  <FriendButton targetWallet={walletAddress} />
+                  <FollowButton targetWallet={walletAddress} />
                 </div>
                 <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                   <span className="flex items-center gap-1">
@@ -120,6 +127,10 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
                   <span className="flex items-center gap-1">
                     <Clock className="h-4 w-4" />
                     Joined {new Date(player.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Users className="h-4 w-4" />
+                    {followers} followers · {following} following
                   </span>
                 </div>
               </div>
@@ -136,7 +147,7 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
             <Card variant="gaming">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Gamepad2 className="h-5 w-5 text-primary" />
+                  <span className="text-xl">{'🎮'}</span>
                   Game Accounts
                 </CardTitle>
               </CardHeader>
@@ -165,9 +176,9 @@ export default function ProfileByWalletPage({ params }: ProfilePageProps) {
             {lichessUserData && (
               <Card variant="gaming" className="mt-6">
                 <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Swords className="h-5 w-5 text-primary" />
-                  Lichess Stats
+                  <CardTitle className="flex items-center gap-2">
+                    <span className="text-xl">{'♟️'}</span>
+                    Lichess Stats
                     {lichessUserData.online && (
                       <Badge variant="live" className="ml-2">Online</Badge>
                     )}

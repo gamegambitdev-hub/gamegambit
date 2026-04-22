@@ -5,8 +5,26 @@ import { hashToken, extractTokenFromHeader } from '@/lib/admin/auth';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
+// Fail loudly at module-load time so a misconfigured deployment produces a
+// clear server log instead of a cryptic "TypeError: Failed to parse URL" 500.
+if (!supabaseUrl) {
+    console.error('[Admin API] FATAL: NEXT_PUBLIC_SUPABASE_URL is not set');
+}
+if (!supabaseServiceKey) {
+    console.error('[Admin API] FATAL: SUPABASE_SERVICE_ROLE_KEY is not set');
+}
+
 export async function POST(request: NextRequest) {
     try {
+        // Guard: bail out early with a useful message rather than letting
+        // fetch() throw "TypeError: Failed to parse URL" when env vars are absent.
+        if (!supabaseUrl || !supabaseServiceKey) {
+            return NextResponse.json(
+                { success: false, error: 'Server misconfiguration: missing Supabase env vars' },
+                { status: 500 }
+            );
+        }
+
         // ── Session auth — same pattern as every other admin route ───────────────
         let token = request.cookies.get('admin_token')?.value;
 
@@ -63,6 +81,7 @@ export async function POST(request: NextRequest) {
             unflagPlayer: 'unflagPlayer',
             checkPdaBalance: 'checkPdaBalance',
             addNote: 'addNote',
+            recoverStuckPda: 'recoverStuckPda',
         };
 
         const edgeAction = actionMap[action];
@@ -116,7 +135,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, message: `${edgeAction} completed successfully`, ...data });
 
     } catch (error) {
-        console.error('[Admin API] Error:', error);
+        // Log the full error (including stack) so the real cause is visible in
+        // server logs — previously only error.message was logged, hiding TypeError
+        // and other non-Error throws entirely.
+        console.error('[Admin API] Unhandled error:', error instanceof Error ? error.stack : error);
         return NextResponse.json(
             { success: false, error: error instanceof Error ? error.message : 'Failed to process admin action' },
             { status: 500 }

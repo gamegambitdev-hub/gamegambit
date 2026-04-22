@@ -69,18 +69,12 @@ function ProposalCard({
                     {isMine ? 'Your proposal' : 'Incoming proposal'}
                 </span>
                 <span className={cn(
-                    'text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1',
+                    'text-[10px] font-medium px-1.5 py-0.5 rounded',
                     isAccepted ? 'bg-success/20 text-success' :
                         isRejected ? 'bg-muted text-muted-foreground' :
                             'bg-amber-500/20 text-amber-400'
                 )}>
-                    {isAccepted ? (
-                        <><Check className="h-2.5 w-2.5" /> Accepted</>
-                    ) : isRejected ? (
-                        <><X className="h-2.5 w-2.5" /> Rejected</>
-                    ) : (
-                        'Pending'
-                    )}
+                    {isAccepted ? '✓ Accepted' : isRejected ? '✗ Rejected' : 'Pending'}
                 </span>
             </div>
 
@@ -150,7 +144,8 @@ function ChatBubble({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function WagerChat({ wager, currentWallet, opponentWallet }: WagerChatProps) {
-    const [collapsed, setCollapsed] = useState(false)
+    // ✅ Bug 2 fix — was useState(false), chat was open by default. Now starts collapsed.
+    const [collapsed, setCollapsed] = useState(true)
     const [input, setInput] = useState('')
     const { messages, loading, sending, sendMessage, respondToProposal, pendingProposals, bottomRef } = useWagerChat(wager.id)
 

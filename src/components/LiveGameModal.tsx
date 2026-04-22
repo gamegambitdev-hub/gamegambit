@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ExternalLink, Trophy, Loader2, RefreshCw, Clock, Play, Crown, Minus, Dices, Handshake, AlertTriangle, ShieldCheck, Flag, Target, Flame, Gamepad2, Coins } from 'lucide-react';
+import { ExternalLink, Trophy, Loader2, RefreshCw, Clock, Play, Crown, Minus } from 'lucide-react';
 import { Wager, useCheckGameComplete } from '@/hooks/useWagers';
-import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
+import { GAMES, formatSol, truncateAddress, calculatePlatformFee, getFeeTierLabel } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
 import {
@@ -61,10 +61,9 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
     currentWallet !== resolvedWinnerWallet;
   const isParticipant = currentWallet === wager?.player_a_wallet || currentWallet === wager?.player_b_wallet;
 
-  const PLATFORM_FEE = 0.10;
   const totalPot = (wager?.stake_lamports ?? 0) * 2;
-  const winnerPayout = Math.floor(totalPot * (1 - PLATFORM_FEE));
-  const platformFee = totalPot - winnerPayout;
+  const platformFee = calculatePlatformFee(totalPot / 2);
+  const winnerPayout = totalPot - platformFee;
 
   const winnerUsername =
     resolvedWinnerWallet === wager?.player_a_wallet ? playerA?.username :
@@ -82,7 +81,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
     setHasShownResult(true);
     if (isCurrentPlayerWinner) {
       confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-      toast.success(<span className="flex items-center gap-1"><Trophy className="w-4 h-4 text-yellow-400" /> You won! Funds are being sent to your wallet.</span>);
+      toast.success('🎉 You won! Funds are being sent to your wallet.');
     } else if (isDraw) {
       toast.info('Game ended in a draw — stakes will be returned.');
     } else if (isCurrentPlayerLoser) {
@@ -169,7 +168,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
                 <>
                   <Crown className={`h-10 w-10 mx-auto mb-3 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`} />
                   <p className="text-xl font-gaming font-bold">
-                    {isCurrentPlayerWinner ? <span className="flex items-center justify-center gap-1"><Trophy className="w-5 h-5 text-yellow-400" /> You Won!</span> : isCurrentPlayerLoser ? 'You Lost' : 'Match Over'}
+                    {isCurrentPlayerWinner ? '🎉 You Won!' : isCurrentPlayerLoser ? 'You Lost' : 'Match Over'}
                   </p>
                   {resolvedWinnerWallet && (
                     <p className="text-sm text-muted-foreground mt-1">
@@ -180,7 +179,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
                     {isCurrentPlayerWinner ? `+${formatSol(winnerPayout)} SOL` : `Winner received ${formatSol(winnerPayout)} SOL`}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Platform fee: {formatSol(platformFee)} SOL (10%)
+                    Platform fee: {formatSol(platformFee)} SOL ({getFeeTierLabel(totalPot / 2)})
                   </p>
                 </>
               )}
@@ -273,8 +272,7 @@ export function LiveGameModal({ wager, open, onOpenChange, currentWallet }: Live
             {gameFinished && isCurrentPlayerWinner && (
               <Button variant="neon" className="flex-1" onClick={() => { toast.success('Funds have been automatically sent to your wallet!'); onOpenChange(false); }}>
                 <Trophy className="h-4 w-4 mr-2" />
-                Collect Your Reward
-                <Coins className="h-4 w-4 ml-2" />
+                Collect Your Reward💰
               </Button>
             )}
             <Button variant="outline" className={gameFinished && isCurrentPlayerWinner ? 'flex-1' : 'w-full'} onClick={() => onOpenChange(false)}>

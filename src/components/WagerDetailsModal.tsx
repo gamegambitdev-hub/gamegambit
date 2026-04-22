@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Clock, ExternalLink, Swords, Trophy, User, Crown, Minus, Edit, Gamepad2, Flag, Flame, Target, Trash2, Handshake } from 'lucide-react';
+import { Clock, ExternalLink, Swords, Trophy, User, Crown, Minus, Edit, Share2, Check } from 'lucide-react';
 import { Wager, useEditWager } from '@/hooks/useWagers';
-import { GAMES, formatSol, truncateAddress } from '@/lib/constants';
+import { GAMES, formatSol, truncateAddress, calculatePlatformFee } from '@/lib/constants';
 import { usePlayerByWallet } from '@/hooks/usePlayer';
 import { PlayerLink } from '@/components/PlayerLink';
 import { useWallet } from '@solana/wallet-adapter-react';
@@ -90,6 +90,7 @@ export function WagerDetailsModal({
 
   const [editOpen, setEditOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const editWager = useEditWager();
   const { sendProposal, sending: sendingProposal } = useWagerChat(wager?.id ?? null);
 
@@ -113,7 +114,7 @@ export function WagerDetailsModal({
     ? playerA?.username
     : playerB?.username;
 
-  const platformFee = Math.floor(wager.stake_lamports * 2 * 0.10);
+  const platformFee = calculatePlatformFee(wager.stake_lamports);
   const winnerPayout = wager.stake_lamports * 2 - platformFee;
 
   const isChess = wager.game === 'chess';
@@ -167,6 +168,14 @@ export function WagerDetailsModal({
 
   const handleEditClick = () => setEditOpen(true);
 
+  const handleShareLink = () => {
+    const url = `${window.location.origin}/wager/${wager.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  };
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -176,14 +185,26 @@ export function WagerDetailsModal({
           className="sm:max-w-md border-primary/30 bg-card max-h-[92vh] overflow-y-auto"
         >
           <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="text-3xl sm:text-4xl">{game.icon}</div>
-              <div>
-                <DialogTitle className="text-lg sm:text-xl font-gaming">{game.name} Wager</DialogTitle>
-                <Badge variant={(STATUS_BADGE[wager.status] || 'default') as any}>
-                  {STATUS_LABEL[wager.status] || wager.status}
-                </Badge>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="text-3xl sm:text-4xl">{game.icon}</div>
+                <div>
+                  <DialogTitle className="text-lg sm:text-xl font-gaming">{game.name} Wager</DialogTitle>
+                  <Badge variant={(STATUS_BADGE[wager.status] || 'default') as any}>
+                    {STATUS_LABEL[wager.status] || wager.status}
+                  </Badge>
+                </div>
               </div>
+              <button
+                onClick={handleShareLink}
+                className="flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors border border-border/40"
+                title="Copy spectator link"
+              >
+                {linkCopied
+                  ? <><Check className="h-3.5 w-3.5 text-green-400" /><span className="text-green-400">Copied!</span></>
+                  : <><Share2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Share</span></>
+                }
+              </button>
             </div>
           </DialogHeader>
 
@@ -202,7 +223,7 @@ export function WagerDetailsModal({
                   <>
                     <Crown className={`h-8 w-8 mx-auto mb-2 ${isCurrentPlayerWinner ? 'text-accent' : 'text-muted-foreground'}`} />
                     <p className="font-gaming text-lg">
-                      {isCurrentPlayerWinner ? <span className="flex items-center gap-1"><Trophy className="w-4 h-4 text-yellow-400" /> You Won!</span> : isCurrentPlayerLoser ? 'You Lost' : `${winnerUsername || truncateAddress(winnerWallet!)} Wins`}
+                      {isCurrentPlayerWinner ? '🎉 You Won!' : isCurrentPlayerLoser ? 'You Lost' : `${winnerUsername || truncateAddress(winnerWallet!)} Wins`}
                     </p>
                     {winnerWallet && (
                       <p className="text-xs text-muted-foreground mt-1">
@@ -387,7 +408,7 @@ export function WagerDetailsModal({
                 </>
               ) : canJoin && wager.status === 'created' ? (
                 <Button variant="neon" className="w-full h-12 text-base" onClick={() => wager && onJoin?.(wager.id)} disabled={isJoining}>
-                  {isJoining ? 'Joining...' : <span className="flex items-center gap-1"><Swords className="w-4 h-4" /> Accept Challenge</span>}
+                  {isJoining ? 'Joining...' : '⚔️ Accept Challenge'}
                 </Button>
               ) : (
                 <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>Close</Button>

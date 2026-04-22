@@ -2,7 +2,7 @@
 
 import { useWallet } from '@solana/wallet-adapter-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, User, Copy, Check, Smartphone, Swords, LayoutDashboard, Dice5, Trophy, BarChart2, Settings } from 'lucide-react'
+import { Menu, X, User, Copy, Check, Smartphone, Swords, LayoutDashboard, Dice5, Trophy, BarChart2, Settings, Rss, MessageCircle, Gift } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -13,6 +13,7 @@ import { truncateAddress } from '@/lib/constants'
 import dynamic from 'next/dynamic'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { WalletButton } from '@/components/WalletButton'
+import { useUnreadDmCount } from '@/hooks/useFriends'
 
 const NotificationsDropdown = dynamic(
   () => import('@/components/NotificationsDropdown').then(m => ({ default: m.NotificationsDropdown })),
@@ -20,10 +21,12 @@ const NotificationsDropdown = dynamic(
 )
 
 const navItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: <BarChart2 className="w-4 h-4" />, LucideIcon: BarChart2 },
-  { label: 'Arena', href: '/arena', icon: <Swords className="w-4 h-4" />, LucideIcon: Swords },
-  { label: 'My Wagers', href: '/my-wagers', icon: <Dice5 className="w-4 h-4" />, LucideIcon: Dice5 },
-  { label: 'Leaderboard', href: '/leaderboard', icon: <Trophy className="w-4 h-4" />, LucideIcon: Trophy },
+  { label: 'Dashboard', href: '/dashboard', icon: '📊', LucideIcon: BarChart2 },
+  { label: 'Feed', href: '/feed', icon: '📡', LucideIcon: Rss },
+  { label: 'Arena', href: '/arena', icon: '⚔️', LucideIcon: Swords },
+  { label: 'My Wagers', href: '/my-wagers', icon: '🎲', LucideIcon: Dice5 },
+  { label: 'Leaderboard', href: '/leaderboard', icon: '🏆', LucideIcon: Trophy },
+  { label: 'Events', href: '/events', icon: '🎁', LucideIcon: Gift },
 ]
 
 export function Header() {
@@ -31,6 +34,7 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [hoveredIcon, setHoveredIcon] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const unreadDms = useUnreadDmCount()
 
   const handleCopyAddress = useCallback(() => {
     if (!publicKey) return
@@ -92,7 +96,6 @@ export function Header() {
                       )}
                     >
                       <span className="text-base">{item.icon}</span>
-                      
                       <span className="hidden lg:inline">{item.label}</span>
                     </Link>
                     {hoveredIcon === item.href && (
@@ -106,12 +109,45 @@ export function Header() {
             </nav>
 
             {/* ── Right Side ────────────────────────────────────────────────── */}
-            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0 overflow-visible">
               <ThemeToggle />
 
               {connected && (
                 <>
                   <NotificationsDropdown />
+
+                  {/* Messages icon — desktop only (mobile handled in drawer) */}
+                  <div
+                    className="relative hidden sm:block"
+                    onMouseEnter={() => setHoveredIcon('/messages')}
+                    onMouseLeave={() => setHoveredIcon(null)}
+                  >
+                    <Link href="/messages">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          'h-8 w-8 sm:h-9 sm:w-9 relative',
+                          pathname === '/messages'
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:text-foreground'
+                        )}
+                        aria-label="Messages"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                        {unreadDms > 0 && (
+                          <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                            {unreadDms > 9 ? '9+' : unreadDms}
+                          </span>
+                        )}
+                      </Button>
+                    </Link>
+                    {hoveredIcon === '/messages' && (
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 px-2 py-1 bg-card border border-border rounded text-xs whitespace-nowrap text-foreground pointer-events-none z-50">
+                        Messages
+                      </div>
+                    )}
+                  </div>
 
                   {/* Settings icon — desktop only */}
                   <div
@@ -300,6 +336,27 @@ export function Header() {
                         {truncateAddress(publicKey.toBase58(), 6)}
                       </span>
                     </div>
+
+                    {/* FIXED: Messages link added to mobile menu */}
+                    <Link
+                      href="/messages"
+                      onClick={() => setMobileMenuOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium",
+                        "transition-all duration-200 border border-transparent",
+                        pathname === '/messages'
+                          ? "bg-primary/15 text-primary border-primary/30"
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/70"
+                      )}
+                    >
+                      <MessageCircle className="h-4 w-4 flex-shrink-0" />
+                      <span className="font-gaming tracking-wide">Messages</span>
+                      {unreadDms > 0 && (
+                        <span className="ml-auto min-w-[20px] h-5 px-1 rounded-full bg-destructive text-white text-[10px] font-bold flex items-center justify-center">
+                          {unreadDms > 9 ? '9+' : unreadDms}
+                        </span>
+                      )}
+                    </Link>
 
                     <Link
                       href="/profile"

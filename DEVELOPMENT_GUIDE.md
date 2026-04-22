@@ -53,6 +53,17 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3000
 # Required for push notifications
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=<your_vapid_public_key>
 
+# OG image URL (used for dynamic per-wager og:image)
+NEXT_PUBLIC_APP_URL=https://thegamegambit.vercel.app
+
+# Required for Twitch stream embeds — sets the `parent` domain param in the Twitch player iframe URL.
+# Without this, Twitch iframes fail silently on custom domains. Falls back to window.location.hostname for local dev.
+NEXT_PUBLIC_APP_DOMAIN=thegamegambit.vercel.app
+
+# Required for WalletConnect adapter — without this, wallet modal loads but WalletConnect silently fails to connect.
+# Get a project ID at https://cloud.walletconnect.com
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=<your_walletconnect_project_id>
+
 # Optional — enables live PUBG username verification
 # Without this, PUBG binding falls back to manual confirmation
 PUBG_API_KEY=<your_pubg_api_key>
@@ -103,17 +114,30 @@ gamegambit/
 │   │   │   ├── behaviour-flags/       # Phase 6 — player risk scores, false vote/dispute loss events
 │   │   │   ├── username-appeals/      # Phase 6 — review username ownership appeals
 │   │   │   ├── username-changes/      # Phase 6 — review username change requests
+│   │   │   ├── on-chain/              # Live on-chain wager/player inspector — PDA lookup by wager UUID, match ID, or wallet address (force-dynamic)
+│   │   │   ├── pda-scanner/           # Bulk PDA scanner — classifies each deposited wager as STUCK_FUNDS / ACTIVE_FUNDED / DISTRIBUTED / NOT_FOUND / PENDING_DEPOSIT / RPC_ERROR; configurable threshold + batch recovery UI
+│   │   │   ├── stuck-wagers/          # Filtered view of wagers with funds stuck on-chain; configurable age threshold (1h–7d); bulk force-resolve / force-refund
 │   │   │   └── unauthorized/
 │   │   ├── arena/                     # Wager creation & lobby
 │   │   ├── dashboard/
+│   │   ├── events/                    # Airdrop / campaign page (v1.8.0)
 │   │   ├── faq/
+│   │   ├── feed/                      # Social feed — For You / Friends / Live Now (v1.8.0)
+│   │   ├── invite/
+│   │   │   └── [code]/                # Referral landing page (v1.8.0)
 │   │   ├── leaderboard/
+│   │   ├── messages/                  # DM inbox + realtime chat (v1.8.0)
 │   │   ├── my-wagers/
 │   │   ├── privacy/
 │   │   ├── profile/
 │   │   │   └── [walletAddress]/
 │   │   ├── settings/                  # Player settings page (notifications, moderation)
 │   │   ├── terms/
+│   │   ├── wager/
+│   │   │   └── [id]/
+│   │   │       ├── page.tsx           # Spectator page + SideBetsPanel (v1.8.0)
+│   │   │       ├── layout.tsx         # generateMetadata — dynamic OG title/desc (v1.8.0)
+│   │   │       └── opengraph-image.tsx # Per-wager 1200×630 PNG via next/og (v1.8.0)
 │   │   └── page.tsx                   # Landing page
 │   │
 │   ├── components/
@@ -130,6 +154,19 @@ gamegambit/
 │   │   ├── Votingmodal.tsx            # Non-chess: peer vote with 5-min countdown
 │   │   ├── WagerChat.tsx
 │   │   ├── WagerDetailsModal.tsx
+│   │   ├── ModerationOrchestrator.tsx # Mounts once in Providers; coordinates popup → panel state
+│   │   ├── ModerationRequestModal.tsx # 30s accept/decline popup with countdown ring
+│   │   ├── ModerationPanel.tsx        # 5-step guided verdict workflow
+│   │   ├── DisputeGraceModal.tsx      # Phase 6 — concession prompt before moderator search
+│   │   ├── PunishmentNoticeModal.tsx  # Phase 6 — shown to dispute loser; offense count, tier, escalation ladder, "Report unfair verdict" button
+│   │   ├── ReportModeratorModal.tsx   # Phase 6 — POST /api/moderation/report; min 10 chars; 409 treated as success (idempotent)
+│   │   ├── SuspensionBanner.tsx       # Phase 6 — sticky top banner when player.is_suspended === true; shows time remaining; session-dismissible
+│   │   ├── FollowButton.tsx           # Follow / Following (hover to unfollow); uses useFollows
+│   │   ├── PlayerLink.tsx             # Renders a wallet address as /profile/[wallet] link with username or truncated address
+│   │   ├── ShareCards.tsx             # Canvas-based 1200×630 PNG share cards (Win card + Airdrop card)
+│   │   ├── PageTransition.tsx         # Framer Motion page-level fade-in wrapper
+│   │   ├── ScrollToTop.tsx            # Auto-scrolls to top on route change
+│   │   ├── ThemeToggle.tsx            # Dark/light mode toggle (app defaults to dark)
 │   │   ├── NotificationsDropdown.tsx
 │   │   ├── NFTGallery.tsx
 │   │   ├── TransactionHistory.tsx
@@ -147,8 +184,11 @@ gamegambit/
 │   │   │   ├── useAdminWagers.ts
 │   │   │   └── useAdminWallet.ts
 │   │   ├── useAutoCreatePlayer.ts     # Auto-registers player on first wallet connect
+│   │   ├── useDisputeGrace.ts         # Phase 6 — useConcede mutation for grace period concession
+│   │   ├── useFollows.ts              # Asymmetric follow graph — follow/unfollow, follower/following counts, Realtime sync on follows:{wallet}. DISTINCT from useFriends (mutual approval). Powers feed "Friends & Following" tab
 │   │   ├── useGameComplete.ts         # markGameComplete mutation (non-chess flow)
 │   │   ├── useLichess.ts              # OAuth PKCE flow
+│   │   ├── useModeration.ts           # ModerationRequest queries + accept/decline/verdict mutations
 │   │   ├── useNFTs.ts
 │   │   ├── useNotifications.ts        # Bell dropdown + Web Push subscription
 │   │   ├── usePlayer.ts
@@ -156,18 +196,24 @@ gamegambit/
 │   │   ├── useQuickMatch.ts
 │   │   ├── useSolanaProgram.ts        # Anchor program interaction
 │   │   ├── useTransactions.ts         # wager_transactions queries
+│   │   ├── useUsernameBinding.ts      # Phase 6 — exports useBindUsername, useUsernameAppeal, useSubmitChangeRequest mutations for game account bind/appeal/change flows
 │   │   ├── useVoting.ts               # submitVote, retractVote, deriveVoteOutcome
 │   │   ├── useWagerChat.ts            # Ready room chat + proposals
 │   │   ├── useWagers.ts               # Wager queries + invokeSecureWager helper
 │   │   ├── useWalletAuth.ts           # Ed25519 session token management
-│   │   └── useWalletBalance.ts
+│   │   ├── useWalletBalance.ts
+│   │   ├── useFriends.ts              # Mutual friend graph — sendRequest, accept/decline/remove, friendsList. Requires acceptance. Powers DMs + challenge invites. DISTINCT from useFollows (v1.8.0)
+│   │   ├── useDirectMessages.ts       # DM channel queries + realtime (v1.8.0)
+│   │   ├── useFeed.ts                 # Feed posts + reactions (v1.8.0)
+│   │   └── useSideBets.ts             # Place/counter/accept/cancel side bets (v1.8.0)
 │   │
 │   ├── contexts/
+│   │   ├── AdminAuthContext.tsx       # Single source of truth for admin session state — mounted once in admin layout. All admin hooks (useAdminAuth, useAdminSession) read from here. Never call /api/admin/auth/verify directly; use useAdminAuth() instead
 │   │   ├── GameEventContext.tsx       # Global Realtime listener — keeps wager cache fresh
 │   │   ├── WalletContext.tsx
 │   │   ├── ModalContext.tsx
 │   │   ├── PWAContext.tsx
-│   │   └── BalanceAnimationContext.tsx
+│   │   └── BalanceAnimationContext.tsx  # Queues win/loss SOL delta to sessionStorage for wallet balance flash animation. GameResultModal calls queueAnimation({ delta, wagerId, type }) before navigating; balance display consumes it on next mount via useBalanceAnimation()
 │   │
 │   ├── lib/
 │   │   ├── admin/
@@ -177,9 +223,12 @@ gamegambit/
 │   │   │   ├── validators.ts
 │   │   │   └── wallet-verify.ts       # Ed25519 signature verification
 │   │   ├── idl/                       # Solana IDL (gamegambit.json + gamegambit.ts)
-│   │   ├── solana-config.ts           # Program IDs, discriminators, fee config
-│   │   ├── constants.ts
-│   │   ├── rate-limiting.ts
+│   │   ├── solana-config.ts           # Canonical PROGRAM_ID, AUTHORITY_PUBKEY, PLATFORM_WALLET_PUBKEY, PLATFORM_FEE_BPS, RETRACT_WINDOW_SECONDS, INSTRUCTION_DISCRIMINATORS, EVENT_DISCRIMINATORS, ACCOUNT_DISCRIMINATORS, WAGER_JOIN_EXPIRY_SECONDS. Single source of truth for all on-chain constants
+│   │   ├── constants.ts               # GAMES config, WAGER_STATUS enum, STATUS_LABELS, MANUAL_GAMES, fee helpers (calculatePlatformFee, getPlatformFeeBps, getFeeTierLabel), formatSol, truncateAddress. ⚠️ Also exports a stale PROGRAM_ID — never import it; always use solana-config.ts
+│   │   ├── rate-limiting.ts           # Sliding-window rate limiter. ⚠️ Uses in-memory Map store — resets on every Vercel cold start; not shared across concurrent function instances. Replace with Upstash Redis for distributed production limiting (tracked as C1 in fix plan)
+│   │   ├── streamEmbed.ts             # getStreamEmbed(url) converts YouTube (full + youtu.be) and Twitch channel URLs into embeddable iframe src strings. Twitch embeds require NEXT_PUBLIC_APP_DOMAIN for the parent param; falls back to window.location.hostname
+│   │   ├── confetti.ts                # triggerConfetti() (3s interval burst from both sides) and triggerCelebration() (big burst + two side bursts). Used in GameResultModal, LiveGameModal, UsernameSetupModal
+│   │   ├── validation.ts              # All Zod schemas: usernameSchema, walletAddressSchema, gameTypeSchema, createWagerSchema, submitVoteSchema, bindUsernameSchema, usernameAppealSchema, appealResponseSchema, usernameChangeRequestSchema, updateSettingsSchema. Use validateWithError() throughout — do not define inline Zod schemas elsewhere
 │   │   └── utils.ts
 │   │
 │   └── integrations/supabase/
@@ -188,8 +237,9 @@ gamegambit/
 │       └── admin/                     # Admin DB operations (actions, audit, auth, sessions, wallets)
 │
 ├── supabase/functions/
-│   ├── secure-wager/    # All wager lifecycle actions (18 actions — see table below)
+│   ├── secure-wager/    # All wager lifecycle actions (22 actions — see table below)
 │   ├── secure-player/   # Player create/update/bindGame
+│   ├── secure-bet/      # Spectator side bets: place/counter/accept/cancel/resolveForWager (v1.8.0)
 │   ├── admin-action/    # Admin dispute resolution (forceResolve, forceRefund, markDisputed, banPlayer, etc.)
 │   ├── resolve-wager/   # Low-level on-chain settlement (called by admin-action + Lichess webhook)
 │   ├── check-chess-games/ # Cron-driven: polls active chess wagers every 60s, auto-resolves finished games
@@ -214,7 +264,7 @@ gamegambit/
 
 ### `secure-wager` Actions Reference
 
-All 17 actions handled by the `secure-wager` edge function:
+All 22 actions handled by the `secure-wager` edge function:
 
 | Action | Auth Required | Description |
 |--------|:---:|-------------|
@@ -237,6 +287,9 @@ All 17 actions handled by the `secure-wager` edge function:
 | `submitVote` | ✓ | Non-chess: submit winner vote; resolves or disputes based on both votes |
 | `retractVote` | ✓ | Non-chess: retract own vote (only before opponent has voted) |
 | `concedeDispute` | ✓ | Phase 6: concede during grace period — resolves on-chain instantly, no moderator fee, logs honesty event to `player_behaviour_log` |
+| `finalizeVote` | ✓ | Triggers on-chain `resolve_wager` when wager is in `retractable` status and the 15s retract window has passed without a retraction |
+| `voteTimeout` | ✓ | Called when `vote_deadline` has passed with no resolution — sets status → `disputed` and triggers moderator assignment |
+| `declineChallenge` | ✓ | Player B declines an open wager (status = `created` only); soft-deletes the wager and fires `wager_declined` notification to Player A |
 
 ### `secure-player` Actions Reference
 
@@ -257,6 +310,7 @@ All 17 actions handled by the `secure-wager` edge function:
 | `unbanPlayer` | Clear ban on a player row |
 | `flagPlayer` | Set `flagged_for_review = true` with a reason |
 | `checkPdaBalance` | Inspect the on-chain WagerAccount PDA balance for a wager |
+| `unflagPlayer` | Clear `flagged_for_review` and `flag_reason` on a player row |
 | `addNote` | Insert a row into `admin_notes` for a player or wager |
 
 > The admin panel's `/api/admin/action` route proxies these to the `admin-action` edge function. It accepts both snake_case (`force_resolve`) and camelCase (`forceResolve`) action names and normalises them before forwarding.
@@ -419,6 +473,54 @@ Four tables have Realtime enabled: `wagers`, `wager_transactions`, `notification
   <WagerChat messages={messages} onSend={sendMessage} />  // receives props
 ```
 
+### 10. Follow vs Friends — Two Separate Systems
+
+`useFollows` and `useFriends` are **not interchangeable**. They read from separate tables and have different semantics:
+
+- **`useFollows`** — Asymmetric. No approval needed. Player A can follow Player B without B following back. Writes to the `follows` table. Powers the feed's "Friends & Following" tab and the `FollowButton` component. Fires `new_follower` notification.
+- **`useFriends`** — Mutual. Requires acceptance. Both players must agree before a friendship is recorded. Powers DMs (`useDirectMessages`) and challenge invites. Fires `friend_request` / `friend_accepted` notifications.
+
+Do NOT conflate them. The feed tab is intentionally called "Friends & Following" because it merges both graphs — mutual friends and one-way follows — but each is queried separately.
+
+---
+
+### 11. `AdminAuthContext` — Don't Call `verify()` Directly
+
+`AdminAuthContext` (`src/contexts/AdminAuthContext.tsx`) is mounted once in `src/app/itszaadminlogin/layout.tsx`. It is the single source of truth for admin session state — it calls `/api/admin/auth/verify` on mount and on tab focus.
+
+All admin hooks (`useAdminAuth`, `useAdminSession`) read from this context. They do **not** each make their own verify call.
+
+```typescript
+// ✓ Correct — read from context via the hook
+const { admin, isAuthenticated } = useAdminAuth()
+
+// ❌ Wrong — bypasses context, causes duplicate verify calls and stale state
+const res = await fetch('/api/admin/auth/verify', { ... })
+```
+
+If you add a new admin page, wrap it in `ProtectedRoute` (which reads `isAuthenticated` from this context). Never call `verify()` manually from a page or component.
+
+---
+
+### 12. `useWalletReady` — Gate Wallet-Dependent UI Without Hydration Flicker
+
+`useWalletReady()` (exported from `src/providers.tsx`) returns `true` once the wallet adapter is connected, or after an 800ms timeout — whichever comes first.
+
+Use this to gate UI that depends on wallet state rather than checking `connected` directly:
+
+```typescript
+// ✓ Correct — no flicker, no SSR mismatch
+const walletReady = useWalletReady()
+if (!walletReady) return <Skeleton />
+
+// ❌ Avoid — `connected` is false on first SSR render, causes layout shift
+if (!connected) return null
+```
+
+The 800ms timeout ensures that if the user isn't connecting a wallet, wallet-gated UI still renders (in its disconnected state) rather than staying blank indefinitely.
+
+---
+
 ### 9. Type Safety
 
 Types have two sources:
@@ -533,7 +635,7 @@ PLATFORM_WALLET_PUBKEY  // 3hwPwugeuZ33HWJ3SoJkDN2JT3Be9fH62r19ezFiCgYY
 PLATFORM_FEE_BPS   // 1000 (10%)
 RETRACT_WINDOW_SECONDS  // 15 (matches lib.rs)
 MODERATOR_POPUP_SECONDS // 30 (auto-reject window for moderation requests)
-MODERATOR_FEE_SHARE_PERCENT // 40 (moderator gets 40% of platform fee = 4% of pot)
+MODERATOR_FEE_SHARE_PERCENT // 30 (moderator gets 30% of platform fee)
 ```
 
 The instruction discriminators are also here — if you ever redeploy the Anchor program, update these from the new IDL. Using a stale discriminator will cause silent transaction failures.
@@ -740,4 +842,4 @@ Application-level rate limits are enforced in edge functions. `notifyChat` is ca
 
 ---
 
-**Last Updated**: April 3, 2026 — v1.7.0
+**Last Updated**: April 2026 — v1.8.0
